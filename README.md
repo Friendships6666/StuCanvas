@@ -1,47 +1,55 @@
-# Svelte + TS + Vite
+# StuCanvas 🎨
 
-This template should help get you started developing with Svelte and TypeScript in Vite.
+**一个为新时代科学教育打造的交互式可视化引擎。**
 
-## Recommended IDE Setup
+---
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode).
+> **⚠️ 项目状态：早期开发阶段 (Early Development Stage)**
+>
+> StuCanvas 目前正处于核心架构的搭建和原型验证阶段。下面描述的许多功能代表了项目的长期愿景和目标，尚未完全实现。欢迎关注我们的进展！
 
-## Need an official Svelte framework?
+## 简介
 
-Check out [SvelteKit](https://github.com/sveltejs/kit#readme), which is also powered by Vite. Deploy anywhere with its serverless-first approach and adapt to various platforms, with out of the box support for TypeScript, SCSS, and Less, and easily-added support for mdsvex, GraphQL, PostCSS, Tailwind CSS, and more.
+**StuCanvas** 是一个雄心勃勃的原创可视化 Web 应用，旨在成为大型教育网站StuWiki的核心内容生产与交互引擎。
 
-## Technical considerations
+我们摒弃了传统的“制作10小时，输出10分钟”的视频模式，致力于打造一个完全基于 Web 的、前端优先的实时交互环境。在这里，复杂的物理和数学概念不再是静态的公式和图表，而是可以被亲手触摸、实时演算和直观探索的鲜活宇宙。
 
-**Why use this over SvelteKit?**
+## 核心架构
 
-- It brings its own routing solution which might not be preferable for some users.
-- It is first and foremost a framework that just happens to use Vite under the hood, not a Vite app.
+StuCanvas 的技术核心旨在充分利用现代浏览器的强大能力，提供媲美原生应用的性能和体验：
 
-This template contains as little as possible to get started with Vite + TypeScript + Svelte, while taking into account the developer experience with regards to HMR and intellisense. It demonstrates capabilities on par with the other `create-vite` templates and is a good starting point for beginners dipping their toes into a Vite + Svelte project.
+*   **渲染核心：`WebGPU`**
+    我们采用次世代的 Web 图形 API——WebGPU，以获得对 GPU 的底层访问能力，实现高性能的2D/3D渲染和大规模并行计算，为复杂的物理模拟和数据可视化提供动力。
 
-Should you later need the extended capabilities and extensibility provided by SvelteKit, the template has been structured similarly to SvelteKit so that it is easy to migrate.
+*   **开发语言：`TypeScript`**
+    整个项目使用 TypeScript 构建，以保证代码的类型安全、可维护性和长期可扩展性。
 
-**Why `global.d.ts` instead of `compilerOptions.types` inside `jsconfig.json` or `tsconfig.json`?**
+## 核心功能（愿景）
 
-Setting `compilerOptions.types` shuts out all other types not explicitly listed in the configuration. Using triple-slash references keeps the default TypeScript setting of accepting type information from the entire workspace, while also adding `svelte` and `vite/client` type information.
+StuCanvas 的目标是实现一个融合了 Manim、Algodoo 和 GeoGebra 思想的复合体，其功能规划如下：
 
-**Why include `.vscode/extensions.json`?**
+### 🔬 全保真物理引擎
+- **牛顿运动**：100% 模拟真实世界的板块、传送带、圆周运动等。
+- **电磁学**：100% 模拟任意电磁偏转，包含对洛伦兹力、安培力等的精确计算。
+- **电路**：100% 模拟包含电容、变压器的电路图与实物图。
+- **天体运动**：100% 模拟天体运动，包含相对论效应、日月食、凌日等。
+- **其他**：完美模拟碰撞、反冲、爆炸、切割等物理过程。
 
-Other templates indirectly recommend extensions via the README, but this file allows VS Code to prompt the user to install the recommended extension upon opening the project.
+### 📊 极限交互与可视化
+所有物理过程均可实现 **100% 的数据可视化** (例如 v-t, a-t 图等)，并支持对质量、摩擦系数、空气阻力、电荷、电压、速度等**所有参数的实时交互**。
 
-**Why enable `allowJs` in the TS template?**
+### 📐 深度数学模型
+- **几何**：实现近乎 GeoGebra 的动态几何效果，包括点、曲线、滑条，以及复杂的立体几何（外接/内切球、切线、极线等）。
+- **解析**：提供轨迹的**解析解**，而非数值拟合，服务于更深度的学习需求。
+- **计算**：与 LaTeX 双向兼容，内置符号计算器，实现从幼儿园到科研级别的公式可视化运算过程。
 
-While `allowJs: false` would indeed prevent the use of `.js` files in the project, it does not prevent the use of JavaScript syntax in `.svelte` files. In addition, it would force `checkJs: false`, bringing the worst of both worlds: not being able to guarantee the entire codebase is TypeScript, and also having worse typechecking for the existing JavaScript. In addition, there are valid use cases in which a mixed codebase may be relevant.
+## 服务对象
 
-**Why is HMR not preserving my local component state?**
+StuCanvas 主要服务于两类人群：
 
-HMR state preservation comes with a number of gotchas! It has been disabled by default in both `svelte-hmr` and `@sveltejs/vite-plugin-svelte` due to its often surprising behavior. You can read the details [here](https://github.com/rixo/svelte-hmr#svelte-hmr).
+1.  **学生**：希望通过直观的交互方式，深入理解抽象科学概念的学习者。
+2.  **教育内容创作者**：在 StuWiki 生态中，需要一个强大工具来创造高质量、高互动性教学内容的教师和知识分享者。
 
-If you have state that's important to retain within a component, consider creating an external store which would not be replaced by HMR.
+## 如何贡献
 
-```ts
-// store.ts
-// An extremely simple external store
-import { writable } from 'svelte/store'
-export default writable(0)
-```
+目前项目尚处于早期规划与开发阶段，暂不接受外部贡献。但我们欢迎您通过 **Star** 或 **Watch** 来关注项目的最新动态！当项目进入更成熟的阶段后，我们会发布详细的贡献指南。
