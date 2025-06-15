@@ -6,12 +6,11 @@
     import { rightMenu, formulas } from '../../../stores/ui';
     import { calculateVisibleGridLines, type LabelData, type WorldBounds } from '../logic/grid';
     import { create, all } from 'mathjs';
-    import hash from 'object-hash'; // 使用 object-hash 生成稳定 ID
-    import { schemeCategory10 } from 'd3-scale-chromatic'; // 引入 d3-scale-chromatic
+    import hash from 'object-hash';
+    import { schemeCategory10 } from 'd3-scale-chromatic';
     import { scaleOrdinal } from 'd3-scale';
 
     import GridLineRenderer from '../../../geometry/GridLineRenderer.svelte';
-    // ✅ 引入新的批量渲染器
     import ImplicitFunctionBatchRenderer from '../../../geometry/ImplicitFunctionBatchRenderer.svelte';
     import RightMenu from '../../../rightMenu/RightMenu.svelte';
     import AlgebraWindow from '../../../rightMenu/AlgebraWindow.svelte';
@@ -31,9 +30,8 @@
     let axisVertices = new Float32Array(0);
     let allLabels: LabelData[] = [];
 
-    // ✅ 修改 drawableFormulas 的结构，为每个函数分配一个持久且美观的颜色
     let drawableFormulas: { id: string; wgsl_expression: string; color: {r:number, g:number, b:number, a:number} }[] = [];
-    const colorScale = scaleOrdinal(schemeCategory10); // 创建一个序数颜色比例尺
+    const colorScale = scaleOrdinal(schemeCategory10);
 
     $: {
         const { zoom, x: viewX, y: viewY } = $view;
@@ -49,7 +47,8 @@
             const temp: { minor: number[], major: number[], axis: number[] } = { minor: [], major: [], axis: [] };
             for (const line of lines) {
                 const { position: p, orientation, lineWidth, layer } = line;
-                const half_width = (lineWidth / 2) / zoom;
+                const widthScale = (layer === 2) ? 0.75 : 1.0;
+                const half_width = (lineWidth * widthScale / 2) / zoom;
                 let p1, p2, p3, p4;
                 if (orientation === 'horizontal') {
                     p1 = { x: worldBounds.left, y: p - half_width }; p2 = { x: worldBounds.right, y: p - half_width };
@@ -73,7 +72,6 @@
         }
     }
 
-    // ✅ 修改公式解析逻辑，为每个公式生成颜色
     $: {
         const newFormulas = $formulas.map(f => {
             try {
@@ -91,19 +89,55 @@
                     combinedExpression = `y - (${formulaStr})`;
                 }
 
-                const parsedNode = math.parse(combinedExpression);
-                const wgslExpression = parsedNode.toString();
+                const ast = math.parse(combinedExpression);
 
-                // 使用公式字符串本身作为颜色比例尺的输入，以获得一致的颜色
+                // ✅ *** FINAL, DECISIVE FIX: Using the official `handler` mechanism to prevent infinite recursion. ***
+                const wgslExpression = ast.toString({
+                    parenthesis: 'all',
+                    handler: (node: any, options: any) => {
+                        // Handle numbers to ensure they are floats
+                        if (node.isConstantNode && typeof node.value === 'number') {
+                            return Number.isInteger(node.value) ? node.value.toFixed(1) : node.value.toString();
+                        }
+
+                        // Handle power operator '^'
+                        if (node.isOperatorNode && node.op === '^') {
+                            // The handler is automatically called recursively by `node.args[...].toString(options)`
+                            const base = node.args[0].toString(options);
+                            const exponent = node.args[1].toString(options);
+                            const exponentNum = parseFloat(exponent);
+
+                            if (Number.isFinite(exponentNum) && Number.isInteger(exponentNum)) {
+                                if (exponentNum % 2 !== 0) { // Odd
+                                    return `(sign(${base}) * pow(abs(${base}), ${exponent}))`;
+                                } else { // Even
+                                    return `pow(abs(${base}), ${exponent})`;
+                                }
+                            }
+                            return `pow(${base}, ${exponent})`;
+                        }
+
+                        // Handle logarithm function 'log'
+                        if (node.isFunctionNode && node.name === 'log') {
+                            const value = node.args[0].toString(options);
+                            if (node.args.length === 2) {
+                                const base = node.args[1].toString(options);
+                                return `(log(${value}) / log(${base}))`;
+                            }
+                            return `log(${value})`;
+                        }
+                    }
+                });
+
                 const hexColor = colorScale(formulaStr);
                 const r = parseInt(hexColor.slice(1, 3), 16) / 255;
                 const g = parseInt(hexColor.slice(3, 5), 16) / 255;
                 const b = parseInt(hexColor.slice(5, 7), 16) / 255;
 
                 return {
-                    id: hash(formulaStr), // 使用 hash 生成唯一 ID
+                    id: hash(formulaStr),
                     wgsl_expression: wgslExpression,
-                    color: { r, g, b, a: 0.9 } // 设置颜色和透明度
+                    color: { r, g, b, a: 0.9 }
                 };
             } catch (e) {
                 console.warn(`公式 "${f}" 解析失败:`, e);
@@ -111,12 +145,10 @@
             }
         }).filter(Boolean);
 
-        // 仅在内容实际变化时更新，避免不必要的重渲染
         if (hash(newFormulas) !== hash(drawableFormulas)) {
             drawableFormulas = newFormulas as any;
         }
     }
-
 
     function requestRender() {
         if (renderer) {
@@ -158,8 +190,6 @@
     }
 </script>
 
-<!-- HTML部分 -->
-
 <div class="scene-container" on:contextmenu={handleContextMenu} role="application">
     <canvas bind:this={canvas}></canvas>
 
@@ -189,14 +219,13 @@
             />
             <GridLineRenderer
                     register={renderables}
-                    layer={2} color="#000000"
+                    layer={2} color="#333333"
                     vertices={axisVertices}
                     device={renderer.device}
                     canvasFormat={renderer.canvasFormat}
                     sampleCount={renderer.aaRenderer.sampleCount}
             />
 
-            <!-- ✅ 使用新的批量渲染器，替换掉旧的 #each 循环 -->
             <ImplicitFunctionBatchRenderer
                     register={renderables}
                     formulas={drawableFormulas}
@@ -215,8 +244,6 @@
     <AlgebraWindow />
 
 </div>
-
-<!-- Style部分不变 -->
 
 <style>
     .scene-container {

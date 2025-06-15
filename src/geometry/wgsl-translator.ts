@@ -12,29 +12,31 @@ export function translateJsExpressionToWgsl(jsExpr: string): string {
     wgslExpr = wgslExpr.replace(/\blog2\s*\(([^)]+)\)/g, '(log($1)/log(2.0))');
     wgslExpr = wgslExpr.replace(/log\(([^,]+?),\s*([^)]+?)\)/g, '(log($1) / log($2))');
 
-    // ✅ *** FIX: The regular expression was too restrictive and failed to match simple numeric exponents. ***
-    // This new regex correctly captures identifiers, literals, and parenthesized groups.
-    const powerRegex = /([a-zA-Z_][a-zA-Z0-9_.]*|\d+(?:\.\d*)?|\([^)]+\))\s*\^\s*([a-zA-Z_][a-zA-Z0-9_.]*|\d+(?:\.\d*)?|\([^)]+\))/g;
+    // ✅ *** FIX: Use a while loop to recursively replace the '^' operator for nested expressions. ***
+    const powerRegex = /([a-zA-Z_][a-zA-Z0-9_.]*|\d+(?:\.\d*)?|\([^)]+\))\s*\^\s*([a-zA-Z_][a-zA-Z0-9_.]*|\d+(?:\.\d*)?|\([^)]+\))/;
 
-    wgslExpr = wgslExpr.replace(powerRegex, (match, base, exponentStr) => {
-        const exponentNum = parseFloat(exponentStr);
+    // Keep replacing until no '^' operators are left.
+    while (wgslExpr.includes('^')) {
+        wgslExpr = wgslExpr.replace(powerRegex, (match, base, exponentStr) => {
+            const exponentNum = parseFloat(exponentStr);
 
-        // Check if the exponent is a known, finite integer
-        if (Number.isFinite(exponentNum) && Number.isInteger(exponentNum)) {
-            const intExp = Math.round(exponentNum);
+            // Check if the exponent is a known, finite integer
+            if (Number.isFinite(exponentNum) && Number.isInteger(exponentNum)) {
+                const intExp = Math.round(exponentNum);
 
-            if (intExp % 2 !== 0) {
-                // Odd integer exponent: preserve the sign of the base.
-                return `(sign(${base}) * pow(abs(${base}), ${exponentStr}))`;
-            } else {
-                // Even integer exponent: result is always positive.
-                return `pow(abs(${base}), ${exponentStr})`;
+                if (intExp % 2 !== 0) {
+                    // Odd integer exponent: preserve the sign of the base.
+                    return `(sign(${base}) * pow(abs(${base}), ${exponentStr}))`;
+                } else {
+                    // Even integer exponent: result is always positive.
+                    return `pow(abs(${base}), ${exponentStr})`;
+                }
             }
-        }
 
-        // For non-integer or variable exponents, use the standard pow function.
-        return `pow(${base}, ${exponentStr})`;
-    });
+            // For non-integer or variable exponents, use the standard pow function.
+            return `pow(${base}, ${exponentStr})`;
+        });
+    }
 
     return `(${wgslExpr})`;
 }

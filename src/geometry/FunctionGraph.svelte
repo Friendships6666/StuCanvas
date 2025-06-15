@@ -2,9 +2,8 @@
     import { onDestroy, onMount } from 'svelte';
     import type { View } from '../stores/camera';
     import type { Renderable } from '../coordinate/rectangular/interaction/renderer';
-    import vertexShaderCode from './function.implicit.vertex.wgsl?raw'; // 复用旧的顶点着色器
-    import fragmentShaderTemplate from './function.batch.fragment.wgsl?raw'; // 新的片元着色器模板
-    import { translateJsExpressionToWgsl } from './wgsl-translator'; // 新的表达式转换器
+    import vertexShaderCode from './function.implicit.vertex.wgsl?raw';
+    import fragmentShaderTemplate from './function.batch.fragment.wgsl?raw';
 
     // --- Props ---
     export let register: Set<Renderable>;
@@ -25,45 +24,65 @@
     let bindGroup: GPUBindGroup | null = null;
     let self: Renderable | null = null;
 
-    // 当函数列表变化时，重新构建整个渲染管线
     $: if (device && formulas) {
         initializeBatchPipeline();
     }
 
-    // ✅ *** FIX: Corrected the alpha blending logic inside the generated shader code ***
-    function generateFragmentShader(formulas: any[]): string {
-        if (formulas.length === 0) return "/*__NO_FUNCTIONS__*/";
+    function generateFragmentShader(formulas: any[]): [string, string] {
+        if (formulas.length === 0) return ["", ""];
 
-        const functionEvaluations = formulas.map((f, i) => {
-            const wgslExpr = translateJsExpressionToWgsl(f.wgsl_expression);
+        const definitions = formulas.map((f, i) => {
+            // The expression is now pre-processed in Scene.svelte
+            return `fn eval_F_${i}(x: f32, y: f32) -> f32 { return ${f.wgsl_expression}; }`;
+        }).join('\n');
+
+        const evaluations = formulas.map((_, i) => {
             return `
-    // --- Function ${i}: ${f.id} ---
-    let F_${i} = ${wgslExpr};
-    // Use derivatives for gradient; dpdx/dpdy are often more efficient and stable.
-    let grad_${i} = vec2(dpdx(F_${i}), dpdy(F_${i}));
-    let grad_len_${i} = length(grad_${i});
-    let norm_dist_${i} = abs(F_${i}) / max(grad_len_${i}, 1e-6);
-    let alpha_${i} = smoothstep(target_world_width, 0.0, norm_dist_${i});
+    // --- Function ${i} ---
+    {
+        let h_x = dpdx(x);
+        let h_y = dpdy(y);
 
-    if (alpha_${i} > 0.0) {
-        let func_color = functions.data[${i}].color;
-        let effective_alpha = alpha_${i} * func_color.a;
+        let F_x_plus = eval_F_${i}(x + h_x, y);
+        let F_x_minus = eval_F_${i}(x - h_x, y);
+        let F_y_plus = eval_F_${i}(x, y + h_y);
+        let F_y_minus = eval_F_${i}(x, y - h_y);
 
-        // Perform standard "A-over-B" alpha blending for transparent surfaces.
-        // C_out = C_a + C_b * (1 - a_a)
-        // Here, C_a is the new color (premultiplied), C_b is the accumulated color (final_color).
-        final_color.rgb = func_color.rgb * effective_alpha + final_color.rgb * (1.0 - effective_alpha);
-        final_color.a = effective_alpha + final_color.a * (1.0 - effective_alpha);
+        var df_dx = 0.0;
+        if (h_x != 0.0) {
+            df_dx = (F_x_plus - F_x_minus) / (2.0 * h_x);
+        }
+
+        var df_dy = 0.0;
+        if (h_y != 0.0) {
+            df_dy = (F_y_plus - F_y_minus) / (2.0 * h_y);
+        }
+
+        let grad_len = length(vec2(df_dx, df_dy));
+        let F_center = eval_F_${i}(x, y);
+
+        let norm_dist = abs(F_center) / max(grad_len, 0.0001);
+
+        let alpha = smoothstep(target_world_width, 0.0, norm_dist);
+
+        if (alpha > 0.0) {
+            let func_color = functions.data[${i}].color;
+            let effective_alpha = alpha * func_color.a;
+
+            let blended_rgb = func_color.rgb * effective_alpha + final_color.rgb * (1.0 - effective_alpha);
+            let blended_a = effective_alpha + final_color.a * (1.0 - effective_alpha);
+
+            final_color = vec4<f32>(blended_rgb, blended_a);
+        }
     }
     `;
         }).join('');
 
-        return fragmentShaderTemplate.replace('/*__WGSL_FUNCTION_BATCH_LOGIC__*/', functionEvaluations);
+        return [definitions, evaluations];
     }
 
 
     async function initializeBatchPipeline() {
-        // 清理旧资源
         if (self) {
             register.delete(self);
             self = null;
@@ -77,35 +96,38 @@
         }
 
         try {
-            // 1. 创建通用 Uniform Buffer (相机、画布尺寸)
             uniformBuffer = device.createBuffer({
                 label: `Batch Function Uniforms`,
-                size: 32, // vec4 + vec2
+                size: 32,
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
             });
 
-            // 2. 创建并填充 Storage Buffer (存储每个函数的颜色)
             const functionData = new Float32Array(formulas.flatMap(f => [f.color.r, f.color.g, f.color.b, f.color.a]));
             functionDataBuffer = device.createBuffer({
                 label: `Batch Function Data Storage`,
-                size: Math.max(functionData.byteLength, 16), // 确保最小尺寸
+                size: Math.max(functionData.byteLength, 16),
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
             });
             device.queue.writeBuffer(functionDataBuffer, 0, functionData);
 
-            // 3. 动态生成并编译着色器
-            const finalFragmentCode = generateFragmentShader(formulas);
-            if (finalFragmentCode === "/*__NO_FUNCTIONS__*/") {
+            const [definitions, evaluations] = generateFragmentShader(formulas);
+            if (!definitions) {
                 if (self) register.delete(self);
                 self = null;
                 requestRender();
                 return;
             }
 
+            const finalFragmentCode = fragmentShaderTemplate
+                .replace('/*__WGSL_FUNCTION_DEFINITIONS__*/', definitions)
+                .replace('/*__WGSL_FUNCTION_EVALUATIONS__*/', evaluations);
+
+            // ✅ Log the final generated shader code to the console for debugging.
+            console.log("--- Generated Fragment Shader ---\n", finalFragmentCode);
+
             const fragmentShaderModule = device.createShaderModule({ code: finalFragmentCode });
             const vertexShaderModule = device.createShaderModule({ code: vertexShaderCode });
 
-            // 4. 创建渲染管线
             renderPipeline = await device.createRenderPipelineAsync({
                 label: 'Batch Function Pipeline',
                 layout: 'auto',
@@ -125,7 +147,6 @@
                 multisample: { count: sampleCount },
             });
 
-            // 5. 创建 Bind Group
             bindGroup = device.createBindGroup({
                 label: 'Batch Function Bind Group',
                 layout: renderPipeline.getBindGroupLayout(0),
@@ -135,7 +156,6 @@
                 ],
             });
 
-            // 6. 创建并注册可渲染对象
             self = {
                 draw: (pass: GPURenderPassEncoder) => {
                     if (!renderPipeline || !bindGroup || formulas.length === 0) return;
@@ -150,7 +170,6 @@
 
         } catch (e) {
             console.error("Failed to initialize batch function pipeline:", e);
-            // 清理资源
             renderPipeline = null;
             bindGroup = null;
             uniformBuffer?.destroy();
@@ -158,7 +177,6 @@
         }
     }
 
-    // 当视图变化时，更新 Uniform Buffer
     $: if (uniformBuffer && self) {
         device.queue.writeBuffer(uniformBuffer, 0, new Float32Array([view.x, view.y, view.zoom, aspect]));
         device.queue.writeBuffer(uniformBuffer, 16, new Float32Array([canvasElement.width, canvasElement.height]));
