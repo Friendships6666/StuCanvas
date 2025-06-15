@@ -1,10 +1,10 @@
-<!-- src/coordinate/rectangular/interaction/Scene.svelte (Final Correct Version) -->
+<!-- src/coordinate/rectangular/interaction/Scene.svelte (Fixes for math.js errors) -->
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
     import { initializeRenderer, type Renderer, type Renderable } from './renderer';
     import { initializeInputHandlers, type InputHandler } from './inputHandler';
     import { view } from '../../../stores/camera';
-    import { rightMenu, formulas } from '../../../stores/ui';
+    import { rightMenu, formulas } from '../../../stores/ui'; // formulas store 包含用户输入字符串
     import { calculateVisibleGridLines, type LabelData, type WorldBounds } from '../logic/grid';
     import { create, all } from 'mathjs';
 
@@ -27,7 +27,7 @@
     let majorVertices = new Float32Array(0);
     let axisVertices = new Float32Array(0);
     let allLabels: LabelData[] = [];
-    let drawableFormulas: any[] = [];
+    let drawableFormulas: any[] = []; // 类型待定，包含 id 和 wgsl_expression
 
     $: {
         const { zoom, x: viewX, y: viewY } = $view;
@@ -67,28 +67,44 @@
         }
     }
 
-    // ✅ 简化公式解析逻辑，不再需要导函数
+    // ✅ 修复公式解析逻辑
     $: drawableFormulas = $formulas.map(f => {
         try {
             const formulaStr = f.trim();
-            const parts = formulaStr.split('=').map(p => p.trim());
-            if (parts.length !== 2) return null;
+            // 使用 indexOf 来查找等号，并判断是否存在以及在何处
+            const eqIndex = formulaStr.indexOf('=');
 
-            const [left, right] = parts;
-            if (left === 'y' && right) {
-                math.parse(right); // 仅用 math.js 验证语法
-                return {
-                    id: formulaStr,
-                    expression: right,
-                    left_side: left
-                };
+            let wgslExpression: string; // 最终用于 WGSL 的 F(x,y) 表达式
+            let formulaId: string = formulaStr; // 保持原始字符串作为 ID
+
+            if (eqIndex !== -1) {
+                // 找到了等号，视为 A=B 形式
+                const leftPart = formulaStr.substring(0, eqIndex).trim();
+                const rightPart = formulaStr.substring(eqIndex + 1).trim();
+
+                // 构造 F(x,y) = A - B 的字符串表达式，然后由 math.parse 统一解析
+                // 添加括号以避免操作符优先级问题
+                const combinedExpression = `(${leftPart}) - (${rightPart})`;
+                const parsedNode = math.parse(combinedExpression);
+                wgslExpression = parsedNode.toString(); // 转换为标准字符串形式
+            } else {
+                // 没有等号，视为 y = f(x) 的形式，转换为 y - f(x)
+                // 添加括号以避免操作符优先级问题
+                const combinedExpression = `y - (${formulaStr})`;
+                const parsedNode = math.parse(combinedExpression);
+                wgslExpression = parsedNode.toString(); // 转换为标准字符串形式
             }
-            return null;
+
+            return {
+                id: formulaId,
+                wgsl_expression: wgslExpression,
+            };
         } catch (e) {
-            console.warn(`无法解析公式: "${f}"`, e);
+            console.warn(`公式 "${f}" 解析失败:`, e);
             return null;
         }
     }).filter(Boolean);
+
 
     function requestRender() {
         if (renderer) {
@@ -130,7 +146,7 @@
     }
 </script>
 
-<!-- HTML部分完全不变 -->
+<!-- HTML部分不变 -->
 <div class="scene-container" on:contextmenu={handleContextMenu} role="application">
     <canvas bind:this={canvas}></canvas>
 
@@ -171,13 +187,13 @@
                 <FunctionGraph
                         register={renderables}
                         formula={formulaObj}
-                        device={renderer.device}
-                        canvasFormat={renderer.canvasFormat}
-                        sampleCount={renderer.aaRenderer.sampleCount}
-                        canvasElement={canvas}
-                        view={$view}
-                        {aspect}
-                        {requestRender}
+                device={renderer.device}
+                canvasFormat={renderer.canvasFormat}
+                sampleCount={renderer.aaRenderer.sampleCount}
+                canvasElement={canvas}
+                view={$view}
+                {aspect}
+                {requestRender}
                 />
             {/each}
         {/if}
@@ -187,7 +203,7 @@
     <AlgebraWindow />
 </div>
 
-<!-- Style部分完全不变 -->
+<!-- Style部分不变 -->
 <style>
     .scene-container {
         position: fixed; top: 0; left: 0;
