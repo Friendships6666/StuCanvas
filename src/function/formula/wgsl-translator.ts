@@ -1,49 +1,42 @@
 import { parse, derivative } from 'mathjs';
 import type { MathNode } from 'mathjs';
 
-// ✅ *** 核心修复：创建一个独立的、智能的 pow 函数转换器 ***
+/**
+ * 一个独立的、健壮的辅助函数，专门用于处理乘方节点。
+ */
 function handlePowerNode(node: MathNode, options: any): string | undefined {
-    if (node.type === 'OperatorNode' && node.op === '^') {
-        const base = node.args[0].toString(options);
-        const exponentNode = node.args[1];
-        let exponentValue: number;
+    // 确保我们只处理乘方操作符节点
+    if (node.type !== 'OperatorNode' || node.op !== '^') {
+        return undefined; // 对于其他节点，让默认 handler 处理
+    }
 
-        try {
-            // 尝试对指数进行求值，这能处理像 "2/3" 或 "3" 这样的常量表达式
-            exponentValue = exponentNode.evaluate();
-        } catch (e) {
-            // 如果指数是变量（如 x^y），则无法求值，只能使用标准 pow
-            const exponent = exponentNode.toString(options);
-            return `pow(abs(${base}), ${exponent})`;
-        }
+    const base = node.args[0].toString(options);
+    const exponentNode = node.args[1];
 
-        // 如果指数是整数
+    // 情况 1：指数是一个常量数字
+    if (exponentNode.isConstantNode) {
+        const exponentValue = exponentNode.value;
+
         if (Number.isInteger(exponentValue)) {
-            // 奇数指数 -> 保留符号
+            // 正奇数指数: 保留符号
             if (exponentValue % 2 !== 0) {
                 return `(sign(${base}) * pow(abs(${base}), ${exponentValue.toFixed(1)}))`;
             }
-            // 偶数指数 -> 结果为正
+            // 正偶数指数: 结果为正
             else {
                 return `pow(abs(${base}), ${exponentValue.toFixed(1)})`;
             }
-        }
-        // 如果指数是分数/小数
-        else {
-            // 特殊处理奇数分母的分数，例如 x^(1/3) 或 x^(5/3)
-            // 这是一个简化的检查，通过检查与常见根（如3,5,7）的接近程度
-            // 这对于 `y=x^(1/3)` 的正确渲染至关重要
-            const CUBE_ROOT_EPSILON = 0.001;
-            if (Math.abs(Math.round(1 / exponentValue) % 2) === 1 && Math.abs(1/exponentValue - Math.round(1/exponentValue)) < CUBE_ROOT_EPSILON) {
-                return `(sign(${base}) * pow(abs(${base}), ${exponentValue}))`;
-            }
-
-            // 对于其他所有分数（特别是偶数分子，如 2/3），我们假定结果为正
-            // 这能正确渲染 y = x^(2/3) 在第二象限的图像
-            return `pow(abs(${base}), ${exponentValue})`;
+        } else {
+            // 分数/小数指数: 假定结果为正（渲染第二象限的关键）
+            return `pow(abs(${base}), ${exponentValue.toString()})`;
         }
     }
-    return undefined;
+    // 情况 2：指数是变量或复杂表达式
+    else {
+        const exponent = exponentNode.toString(options);
+        // 退回到最安全的模式，假定底数为正
+        return `pow(abs(${base}), ${exponent})`;
+    }
 }
 
 
@@ -60,9 +53,9 @@ export function translateJsExpressionToWgsl(jsExpr: string, derivativeOf?: 'x' |
         return "(0.0)";
     }
 
-    // ✅ **修正**：现在 `toString` 的 handler 只做一件事：委托给我们的智能 pow 处理器
     let finalWgslExpr = expressionNode.toString({
-        handler: (node: MathNode, options: any) => handlePowerNode(node, options)
+        // ✅ 核心修复：现在 handler 只委托给我们的专业辅助函数
+        handler: handlePowerNode
     });
 
     finalWgslExpr = finalWgslExpr.replace(/(?<![\w.])(\d+)(?![.\w])/g, '$1.0');

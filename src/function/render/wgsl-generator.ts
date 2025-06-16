@@ -33,15 +33,22 @@ export function generateFragmentShader(formulas: any[], clipOffscreen: boolean):
     let df_dy = eval_dFdy_${i}(x, y);
     let grad_len = length(vec2(df_dx, df_dy));
     let F_center = eval_F_${i}(x, y);
-    let norm_dist = abs(F_center) / max(grad_len, 0.0001);
-    let alpha = smoothstep(target_world_width, 0.0, norm_dist);
 
-    if (alpha > 0.0) {
-        let func_color = functions.data[${i}];
-        let effective_alpha = alpha * func_color.a;
-        let blended_rgb = func_color.rgb * effective_alpha + final_color.rgb * (1.0 - effective_alpha);
-        let blended_a = effective_alpha + final_color.a * (1.0 - effective_alpha);
-        final_color = vec4<f32>(blended_rgb, blended_a);
+    let norm_dist = abs(F_center) / max(grad_len, 0.0001);
+
+    // ✅ *** 核心修复：在正确的位置，进行更健壮的检查 ***
+
+    //    并顺便优化掉所有离曲线超过5个像素的点，进一步提高性能。
+    if (norm_dist == norm_dist && norm_dist < target_world_width * 5.0) {
+        let alpha = smoothstep(target_world_width, 0.0, norm_dist);
+
+        if (alpha > 0.0) {
+            let func_color = functions.data[${i}];
+            let effective_alpha = alpha * func_color.a;
+            let blended_rgb = func_color.rgb * effective_alpha + final_color.rgb * (1.0 - effective_alpha);
+            let blended_a = effective_alpha + final_color.a * (1.0 - effective_alpha);
+            final_color = vec4<f32>(blended_rgb, blended_a);
+        }
     }
 }
 `;
