@@ -1,5 +1,5 @@
 // src/coordinate/rectangular/interaction/inputHandler.ts
-import { pan, zoomAtPoint } from '../../../stores/camera';
+import { pan, zoomAtPoint } from '../../stores/camera';
 
 // 定义一个返回类型，方便管理
 export interface InputHandler {

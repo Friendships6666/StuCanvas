@@ -16,7 +16,7 @@ export class FXAARenderer implements IAARenderer {
         this.context = context;
 
         this.sceneTexture = device.createTexture({
-            label: 'FXAA Scene Texture',
+            label: 'FXAA RectangularCore Texture',
             size: [canvasWidth, canvasHeight],
             format: canvasFormat,
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,

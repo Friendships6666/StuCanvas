@@ -1,8 +1,9 @@
+<!--src/function/GridLineRenderer.svelte-->
 <script lang="ts">
     /// <reference types="@webgpu/types" />
     import { onMount, onDestroy } from 'svelte'; // ✅ 修正了这里的拼写错误
-    import { hexToVec4 } from '../utils/color-utils';
-    import type { Renderable } from '../coordinate/rectangular/interaction/renderer';
+    import { hexToVec4 } from '../../../utils/color-utils';
+    import type { Renderable } from '../../../interaction/input/renderer';
 
     // --- Props ---
     export let register: Set<Renderable>;

@@ -1,6 +1,7 @@
+<!--src/menu/RightMenu.svelte-->
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
-    import { rightMenu, algebraWindowVisible } from '../stores/ui';
+    import { rightMenu, algebraWindowVisible } from '../../stores/ui';
 
     function handleClickOutside() {
         rightMenu.set({ visible: false, x: 0, y: 0 });

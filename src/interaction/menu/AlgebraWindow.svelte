@@ -1,7 +1,8 @@
+<!--src/menu/AlgebraWindow.svelte-->
 <script lang="ts">
     // ✅ 1. 确保 onMount 被导入，以便添加生命周期日志
     import { onMount } from 'svelte';
-    import { algebraWindowVisible, formulas } from '../stores/ui';
+    import { algebraWindowVisible, formulas } from '../../stores/ui';
 
     // --- 数据同步逻辑 ---
 

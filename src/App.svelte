@@ -1,10 +1,10 @@
 <!-- src/App.svelte -->
 <script lang="ts">
     // App.svelte 的唯一职责就是加载主场景
-    import Scene from './coordinate/rectangular/interaction/Scene.svelte';
+    import RectangularCore from './coordinate/rectangular/use/rectangularCore.svelte';
 </script>
 
-<Scene />
+<RectangularCore />
 
 <style>
     /* 在这里定义真正的全局样式 */

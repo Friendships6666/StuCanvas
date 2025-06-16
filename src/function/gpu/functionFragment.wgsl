@@ -1,3 +1,4 @@
+/*src/function/functionFragment.wgsl*/
 struct Uniforms {
     viewParams: vec4<f32>, // x, y, zoom, aspect
     canvasSize: vec2<f32>, // width, height
@@ -31,7 +32,7 @@ fn fs_main(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
 
     var final_color = vec4(0.0);
 
-    // ✅ Placeholder for the evaluation logic that calls the functions above
+    // ✅ Placeholder for the evaluation grid that calls the functions above
     /*__WGSL_FUNCTION_EVALUATIONS__*/
 
     if (final_color.a <= 0.0) {

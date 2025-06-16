@@ -1,7 +1,7 @@
 // src/coordinate/rectangular/interaction/renderer.ts (最终正确版)
-import type { IAARenderer } from '../../../aa/aa-interface';
-import { MSAARenderer } from '../../../aa/msaa-renderer';
-import { initializeWebGPU } from '../../../utils/webgpu-helpers';
+import type { IAARenderer } from '../../aa/aa-interface';
+import { MSAARenderer } from '../../aa/msaa-renderer';
+import { initializeWebGPU } from '../../utils/webgpu-helpers';
 
 // ✅ FIX: 明确定义 compute 方法接收一个 GPUComputePassEncoder
 export interface Renderable {
