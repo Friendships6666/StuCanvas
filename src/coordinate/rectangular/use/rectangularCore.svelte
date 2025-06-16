@@ -96,6 +96,18 @@
 
             <!-- 隐函数渲染 -->
             <FunctionCore register={renderables} formulas={$drawableFormulas} device={renderer.device} canvasFormat={renderer.canvasFormat} sampleCount={renderer.aaRenderer.sampleCount} canvasElement={canvas} view={$view} aspect={$aspect} {requestRender} />
+            <FunctionCore
+                    register={renderables}
+                    formulas={$drawableFormulas}
+                    device={renderer.device}
+                    canvasFormat={renderer.canvasFormat}
+                    sampleCount={renderer.aaRenderer.sampleCount}
+                    canvasElement={canvas}
+                    view={$view}
+                    aspect={$aspect}
+                    {requestRender}
+                    clipOffscreen={true}
+            />
         {/if}
     </div>
 

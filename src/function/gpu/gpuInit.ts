@@ -1,5 +1,3 @@
-// src/function/gpu/gpuInit.ts
-
 import type { Renderable } from '../../interaction/input/renderer';
 import { generateFragmentShader } from '../render/wgsl-generator';
 import vertexShaderCode from './functionVertex.wgsl?raw';
@@ -13,21 +11,23 @@ export interface BatchRendererGpuResources {
     renderable: Renderable;
 }
 
-/**
- * 初始化WebGPU相关资源
- */
 export async function initializeGpuResources(
     device: GPUDevice,
     canvasFormat: GPUTextureFormat,
     sampleCount: number,
-    formulas: any[]
+    formulas: any[],
+    // ✅ 新增: 接收 clipOffscreen 参数
+    clipOffscreen: boolean
 ): Promise<BatchRendererGpuResources | null> {
     if (formulas.length === 0) return null;
 
     try {
         const uniformBuffer = device.createBuffer({
             label: `Batch Function Uniforms`,
-            size: 32,
+            // ✅ **核心修改**: 扩大缓冲区尺寸以容纳新数据
+            // 原来是 32 (vec4 + vec2)，现在加一个 float。根据 WGSL 内存对齐规则，
+            // 需扩展到 48 (32 + 16 for a padded vec4)
+            size: 48,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
@@ -39,8 +39,8 @@ export async function initializeGpuResources(
         });
         device.queue.writeBuffer(functionDataBuffer, 0, functionData);
 
-        const [definitions, evaluations] = generateFragmentShader(formulas);
-        if (!definitions) return null;
+        // ✅ 新增: 将 clipOffscreen 传递给着色器生成器
+        const [definitions, evaluations] = generateFragmentShader(formulas, clipOffscreen);
 
         const finalFragmentCode = fragmentShaderTemplate
             .replace('/*__WGSL_FUNCTION_DEFINITIONS__*/', definitions)
@@ -84,7 +84,7 @@ export async function initializeGpuResources(
                 pass.setBindGroup(0, bindGroup);
                 pass.draw(6);
             },
-            layer: 3, // 假设 layer 是固定的，或者可以作为参数传入
+            layer: 3,
         };
 
         return { renderPipeline, uniformBuffer, functionDataBuffer, bindGroup, renderable };

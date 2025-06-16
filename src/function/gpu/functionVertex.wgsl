@@ -1,37 +1,53 @@
-/*src/function/gpu/functionVertex.wgsl*/
+// 我们需要和片段着色器一样的 Uniforms 结构体
+struct Uniforms {
+    view: vec4<f32>,     // .x: view.x, .y: view.y, .z: view.zoom, .w: aspect
+    canvas: vec2<f32>,
+    clip_params: vec4<f32>
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+// ✅ *** 核心修复 ***
+// 定义一个输出结构体，这是顶点和片段着色器之间的“合同”
+struct VertexOutput {
+    // @builtin(position) 是必须的，它告诉 GPU 顶点最终在屏幕上的位置
+    @builtin(position) clip_position: vec4<f32>,
+
+    // @location(0) 是我们自定义的输出，必须和片段着色器的输入匹配
+    @location(0) world_position: vec2<f32>,
+};
+
 @vertex
-fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
-    // ✅ 最终修正: 使用 switch 语句替代数组，以获得最大兼容性
-    var position: vec2<f32>;
+fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
+    // 定义一个覆盖全屏的矩形（由两个三角形组成）的六个顶点
+    // 这些是在标准化设备坐标 (NDC) 中，从 -1 到 1
+    var positions = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0), // 左下
+        vec2<f32>(1.0, -1.0),  // 右下
+        vec2<f32>(-1.0, 1.0),  // 左上
+        vec2<f32>(-1.0, 1.0),  // 左上
+        vec2<f32>(1.0, -1.0),  // 右下
+        vec2<f32>(1.0, 1.0)   // 右上
+    );
 
-    switch (vertexIndex) {
-        // 第一个三角形
-        case 0u: {
-            position = vec2<f32>(-1.0, -1.0);
-        }
-        case 1u: {
-            position = vec2<f32>(1.0, -1.0);
-        }
-        case 2u: {
-            position = vec2<f32>(-1.0, 1.0);
-        }
+    let ndc_pos = positions[idx];
 
-        // 第二个三角形，与第一个构成一个覆盖全屏的矩形
-        case 3u: {
-            position = vec2<f32>(-1.0, 1.0);
-        }
-        case 4u: {
-            position = vec2<f32>(1.0, -1.0);
-        }
-        case 5u: {
-            position = vec2<f32>(1.0, 1.0);
-        }
+    var output: VertexOutput;
 
-        // 默认情况，理论上不会执行
-        default: {
-            position = vec2<f32>(0.0, 0.0);
-        }
-    }
+    // 1. 设置内置的 clip_position，用于光栅化。z=0, w=1 适用于 2D
+    output.clip_position = vec4<f32>(ndc_pos, 0.0, 1.0);
 
-    return vec4<f32>(position, 0.0, 1.0);
+    // 2. 计算并设置要传递给片段着色器的 world_position
+    // 这是核心的逆变换：从 NDC 坐标反推回世界坐标
+    let aspect = uniforms.view.w;
+    let zoom = uniforms.view.z;
+    let view_x = uniforms.view.x;
+    let view_y = uniforms.view.y;
+
+    // 水平方向：从 NDC (-1, 1) 映射到世界坐标
+    output.world_position.x = view_x + ndc_pos.x * aspect / zoom;
+    // 垂直方向：从 NDC (-1, 1) 映射到世界坐标
+    output.world_position.y = view_y + ndc_pos.y / zoom;
+
+    return output;
 }
