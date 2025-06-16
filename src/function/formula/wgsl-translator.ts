@@ -1,4 +1,4 @@
-/*src/function/wgsl-translator.ts*/
+/*src/function/formula/wgsl-translator.ts*/
 export function translateJsExpressionToWgsl(jsExpr: string): string {
     let wgslExpr = jsExpr.trim();
 

@@ -1,3 +1,4 @@
+<!--src/coordinate/rectangular/label/Label.svelte-->
 <script lang="ts">
     import { view } from '../../../stores/camera';
 

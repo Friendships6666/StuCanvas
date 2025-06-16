@@ -1,4 +1,4 @@
-// src/lib/color-utils.ts
+// src/utils/color-utils.ts
 
 /**
  * 将CSS十六进制颜色字符串 (e.g., '#ff0000') 转换为

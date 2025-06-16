@@ -1,4 +1,4 @@
-// src/function/gpuInit.ts
+// src/function/gpu/gpuInit.ts
 
 import type { Renderable } from '../../interaction/input/renderer';
 import { generateFragmentShader } from '../render/wgsl-generator';

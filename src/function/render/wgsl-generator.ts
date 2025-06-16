@@ -1,4 +1,4 @@
-// src/function/wgsl-generator.ts
+// src/function/render/wgsl-generator.ts
 
 import { translateJsExpressionToWgsl } from '../formula/wgsl-translator';
 

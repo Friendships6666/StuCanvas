@@ -1,3 +1,4 @@
+/*src/coordinate/rectangular/use/use-grid-lines.ts*/
 import { derived, type Readable } from 'svelte/store';
 import type { View } from '../../../stores/camera';
 import { calculateVisibleGridLines, type LabelData, type WorldBounds } from '../grid/grid';

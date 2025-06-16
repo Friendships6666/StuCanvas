@@ -1,4 +1,4 @@
-<!-- src/function/functionCore.svelte -->
+<!-- src/function/render/functionCore.svelte -->
 <script lang="ts">
     import { onDestroy, onMount, type SvelteComponent } from 'svelte';
     import type { View } from '../../stores/camera';

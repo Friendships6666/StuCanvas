@@ -1,3 +1,4 @@
+/*src/coordinate/rectangular/grid/grid.ts*/
 import { formatNumber } from '../label/formatter';
 
 /**

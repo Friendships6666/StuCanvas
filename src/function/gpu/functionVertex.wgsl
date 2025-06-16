@@ -1,4 +1,4 @@
-/*src/function/functionVertex.wgsl*/
+/*src/function/gpu/functionVertex.wgsl*/
 @vertex
 fn vs_main(@builtin(vertex_index) vertexIndex: u32) -> @builtin(position) vec4<f32> {
     // ✅ 最终修正: 使用 switch 语句替代数组，以获得最大兼容性

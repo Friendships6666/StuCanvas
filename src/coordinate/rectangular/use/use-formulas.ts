@@ -1,3 +1,4 @@
+/*src/coordinate/rectangular/use/use-formulas.ts*/
 import { derived, type Readable } from 'svelte/store';
 import { create, all } from 'mathjs';
 import hash from 'object-hash';

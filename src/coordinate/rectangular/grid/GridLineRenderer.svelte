@@ -1,4 +1,4 @@
-<!--src/function/GridLineRenderer.svelte-->
+<!--src/coordinate/rectangular/grid/GridLineRenderer.svelte-->
 <script lang="ts">
     /// <reference types="@webgpu/types" />
     import { onMount, onDestroy } from 'svelte'; // ✅ 修正了这里的拼写错误

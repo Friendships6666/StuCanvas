@@ -1,4 +1,4 @@
-<!--src/menu/RightMenu.svelte-->
+<!--src/interaction/menu/RightMenu.svelte-->
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
     import { rightMenu, algebraWindowVisible } from '../../stores/ui';

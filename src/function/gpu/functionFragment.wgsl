@@ -1,4 +1,4 @@
-/*src/function/functionFragment.wgsl*/
+/*src/function/gpu/functionFragment.wgsl*/
 struct Uniforms {
     viewParams: vec4<f32>, // x, y, zoom, aspect
     canvasSize: vec2<f32>, // width, height

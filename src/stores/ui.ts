@@ -1,3 +1,4 @@
+/*src/stores/ui.ts*/
 import { writable } from 'svelte/store';
 
 /**
