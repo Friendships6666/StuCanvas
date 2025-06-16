@@ -1,4 +1,3 @@
-<!--src/coordinate/rectangular/use/rectangularCore.svelte-->
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
     import { writable } from 'svelte/store';
@@ -7,46 +6,53 @@
     import { view } from '../../../stores/camera';
     import { rightMenu, formulas } from '../../../stores/ui';
 
-    // 导入新的 hooks
+    // 导入我们强大的响应式 "hooks"
     import { useGridLines } from './use-grid-lines';
     import { useFormulas } from './use-formulas';
 
-    // 导入子组件
+    // 导入所有子组件
     import GridLineRenderer from '../grid/GridLineRenderer.svelte';
     import FunctionCore from '../../../function/render/functionCore.svelte';
     import RightMenu from '../../../interaction/menu/RightMenu.svelte';
     import AlgebraWindow from '../../../interaction/menu/AlgebraWindow.svelte';
     import Label from '../label/Label.svelte';
 
+    // --- 组件内部状态 ---
     let canvas: HTMLCanvasElement;
     let renderer: Renderer | null = null;
     let inputHandler: InputHandler | null = null;
     let resizeObserver: ResizeObserver;
     const aspect = writable(1.0);
 
+    // 一个 Set，用于收集所有需要被渲染的对象
     let renderables = new Set<Renderable>();
 
-    // 使用 hooks 获取响应式数据
+    // --- 响应式数据流 ---
+    // 当 view 或 aspect 变化时，gridData 会自动重新计算
     const gridData = useGridLines(view, aspect);
+    // 当 formulas store 变化时，drawableFormulas 会自动重新解析和重构
     const drawableFormulas = useFormulas(formulas);
 
-    // 渲染请求函数
+    // --- 核心渲染函数 ---
     function requestRender() {
         if (renderer) {
+            // 按 layer 排序，确保渲染顺序正确
             const sortedRenderables = Array.from(renderables).sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
             requestAnimationFrame(() => renderer?.render(sortedRenderables));
         }
     }
 
-    // 组件生命周期
+    // --- 组件生命周期管理 ---
     onMount(async () => {
         const init = await initializeRenderer(canvas);
         if (!init) return;
         renderer = init;
         inputHandler = initializeInputHandlers(canvas, () => $aspect, requestRender);
 
+        // 订阅 view store 的变化，任何相机移动都触发重绘
         view.subscribe(() => requestRender());
 
+        // 监听父容器尺寸变化，实现响应式布局
         resizeObserver = new ResizeObserver(entries => {
             for (const entry of entries) {
                 const { width, height } = entry.contentRect;
@@ -64,12 +70,13 @@
     });
 
     onDestroy(() => {
+        // 销毁所有资源，防止内存泄漏
         if (resizeObserver) resizeObserver.disconnect();
         inputHandler?.destroy();
         renderer?.destroy();
     });
 
-    // 右键菜单处理
+    // --- UI 事件处理 ---
     function handleContextMenu(e: MouseEvent) {
         e.preventDefault();
         rightMenu.set({ visible: true, x: e.clientX, y: e.clientY });
@@ -79,14 +86,19 @@
 <div class="scene-container" on:contextmenu={handleContextMenu} role="application">
     <canvas bind:this={canvas}></canvas>
 
-    <!-- 标签覆盖层 -->
+    <!-- 标签和UI覆盖层 -->
     <div class="overlay-container">
         {#each $gridData.allLabels as label (label.id)}
             <Label {...label} aspect={$aspect} />
         {/each}
+
+        <!-- Zoom 值显示组件 -->
+        <div class="zoom-display">
+            Zoom: {$view.zoom.toFixed(2)}x
+        </div>
     </div>
 
-    <!-- 逻辑渲染组件 -->
+    <!-- 逻辑渲染组件 (不可见，仅用于挂载和传递props) -->
     <div class="logical-components">
         {#if renderer}
             <!-- 网格线渲染 -->
@@ -94,8 +106,7 @@
             <GridLineRenderer register={renderables} layer={1} color="#cccccc" vertices={$gridData.majorVertices} device={renderer.device} canvasFormat={renderer.canvasFormat} sampleCount={renderer.aaRenderer.sampleCount} />
             <GridLineRenderer register={renderables} layer={2} color="#333333" vertices={$gridData.axisVertices} device={renderer.device} canvasFormat={renderer.canvasFormat} sampleCount={renderer.aaRenderer.sampleCount} />
 
-            <!-- 隐函数渲染 -->
-            <FunctionCore register={renderables} formulas={$drawableFormulas} device={renderer.device} canvasFormat={renderer.canvasFormat} sampleCount={renderer.aaRenderer.sampleCount} canvasElement={canvas} view={$view} aspect={$aspect} {requestRender} />
+            <!-- 隐函数渲染 (使用我们最终的、包含所有优化的版本) -->
             <FunctionCore
                     register={renderables}
                     formulas={$drawableFormulas}
@@ -111,7 +122,7 @@
         {/if}
     </div>
 
-    <!-- UI 组件 -->
+    <!-- UI 窗口组件 -->
     <RightMenu />
     <AlgebraWindow />
 </div>
@@ -133,4 +144,17 @@
         pointer-events: none;
     }
     .logical-components { visibility: hidden; }
+    .zoom-display {
+        position: absolute;
+        bottom: 20px;
+        left: 20px;
+        background-color: rgba(0, 0, 0, 0.65);
+        color: white;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-family: monospace, sans-serif;
+        font-size: 14px;
+        user-select: none;
+        z-index: 10;
+    }
 </style>

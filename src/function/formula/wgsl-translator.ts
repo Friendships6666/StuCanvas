@@ -1,48 +1,87 @@
-import { parse, derivative } from 'mathjs';
+import {
+    parse,
+    derivative,
+    isConstantNode,
+    isSymbolNode,
+    isOperatorNode,
+    isFunctionNode,
+    isParenthesisNode
+} from 'mathjs';
 import type { MathNode } from 'mathjs';
 
 /**
- * 一个独立的、健壮的辅助函数，专门用于处理乘方节点。
+ * 一个完整的、递归的 AST 遍历器，负责将 math.js 的 AST 节点转换为 WGSL 代码字符串。
+ * 此版本使用了完整的类型守卫和正确的属性访问，以保证 TypeScript 的静态类型安全。
  */
-function handlePowerNode(node: MathNode, options: any): string | undefined {
-    // 确保我们只处理乘方操作符节点
-    if (node.type !== 'OperatorNode' || node.op !== '^') {
-        return undefined; // 对于其他节点，让默认 handler 处理
+function astToWgsl(node: MathNode): string {
+    if (isConstantNode(node)) {
+        return Number.isInteger(node.value) ? node.value.toFixed(1) : node.value.toString();
     }
+    if (isSymbolNode(node)) {
+        if (node.name.toLowerCase() === 'pi') return '3.1415926535';
+        return node.name;
+    }
+    if (isFunctionNode(node)) {
+        const args = node.args.map(arg => astToWgsl(arg));
 
-    const base = node.args[0].toString(options);
-    const exponentNode = node.args[1];
+        // ✅ 核心修复：访问 node.fn.name 而不是 node.name
+        const functionName = node.fn.name;
 
-    // 情况 1：指数是一个常量数字
-    if (exponentNode.isConstantNode) {
-        const exponentValue = exponentNode.value;
-
-        if (Number.isInteger(exponentValue)) {
-            // 正奇数指数: 保留符号
-            if (exponentValue % 2 !== 0) {
-                return `(sign(${base}) * pow(abs(${base}), ${exponentValue.toFixed(1)}))`;
-            }
-            // 正偶数指数: 结果为正
-            else {
-                return `pow(abs(${base}), ${exponentValue.toFixed(1)})`;
-            }
-        } else {
-            // 分数/小数指数: 假定结果为正（渲染第二象限的关键）
-            return `pow(abs(${base}), ${exponentValue.toString()})`;
+        switch (functionName) {
+            case 'log':
+                if (args.length === 2) {
+                    return `(log(${args[0]}) / log(${args[1]}))`;
+                }
+                return `log(${args[0]})`;
+            case 'log10':
+                return `(log(${args[0]}) / log(10.0))`;
+            case 'log2':
+                return `(log(${args[0]}) / log(2.0))`;
+            default:
+                // ✅ 核心修复：使用正确的 functionName
+                return `${functionName}(${args.join(', ')})`;
         }
     }
-    // 情况 2：指数是变量或复杂表达式
-    else {
-        const exponent = exponentNode.toString(options);
-        // 退回到最安全的模式，假定底数为正
-        return `pow(abs(${base}), ${exponent})`;
+    if (isOperatorNode(node)) {
+        const args = node.args.map(arg => astToWgsl(arg));
+        if (node.op === '^') {
+            const base = args[0];
+            const exponentNode = node.args[1];
+            let exponentValue: number;
+            try {
+                exponentValue = exponentNode.evaluate();
+            } catch (e) {
+                return `pow(abs(${base}), ${args[1]})`;
+            }
+            if (Number.isInteger(exponentValue)) {
+                return (exponentValue % 2 !== 0)
+                    ? `(sign(${base}) * pow(abs(${base}), ${exponentValue.toFixed(1)}))`
+                    : `pow(abs(${base}), ${exponentValue.toFixed(1)})`;
+            } else {
+                const CUBE_ROOT_EPSILON = 0.001;
+                const invExp = 1 / exponentValue;
+                if (Math.abs(Math.round(invExp) % 2) === 1 && Math.abs(invExp - Math.round(invExp)) < CUBE_ROOT_EPSILON) {
+                    return `(sign(${base}) * pow(abs(${base}), ${exponentValue}))`;
+                }
+                return `pow(abs(${base}), ${exponentValue})`;
+            }
+        }
+        if (args.length === 2) {
+            return `(${args[0]} ${node.op} ${args[1]})`;
+        }
+        if (args.length === 1) {
+            return `(${node.op}${args[0]})`;
+        }
     }
-}
+    if (isParenthesisNode(node)) {
+        return `(${astToWgsl(node.content)})`;
+    }
 
+    throw new Error(`Unsupported node type in astToWgsl: ${'type' in node ? node.type : 'unknown'}`);
+}
 
 export function translateJsExpressionToWgsl(jsExpr: string, derivativeOf?: 'x' | 'y'): string {
     let expressionNode: MathNode;
-
     try {
         expressionNode = parse(jsExpr);
         if (derivativeOf) {
@@ -52,17 +91,5 @@ export function translateJsExpressionToWgsl(jsExpr: string, derivativeOf?: 'x' |
         console.error(`Failed to parse or differentiate "${jsExpr}":`, error);
         return "(0.0)";
     }
-
-    let finalWgslExpr = expressionNode.toString({
-        // ✅ 核心修复：现在 handler 只委托给我们的专业辅助函数
-        handler: handlePowerNode
-    });
-
-    finalWgslExpr = finalWgslExpr.replace(/(?<![\w.])(\d+)(?![.\w])/g, '$1.0');
-    finalWgslExpr = finalWgslExpr.replace(/\bpi\b/g, '3.1415926535');
-    finalWgslExpr = finalWgslExpr.replace(/\blog10\s*\(([^)]+)\)/g, '(log($1)/log(10.0))');
-    finalWgslExpr = finalWgslExpr.replace(/\blog2\s*\(([^)]+)\)/g, '(log($1)/log(2.0))');
-    finalWgslExpr = finalWgslExpr.replace(/log\(([^,]+?),\s*([^)]+?)\)/g, '(log($1) / log($2))');
-
-    return `(${finalWgslExpr})`;
+    return astToWgsl(expressionNode);
 }
