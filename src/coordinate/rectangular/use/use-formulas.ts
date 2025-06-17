@@ -1,7 +1,6 @@
 import { derived, type Readable } from 'svelte/store';
-// 导入我们全新的、简化的数据类型
+// 导入我们全新的、结构化的数据类型
 import type { FormulaEntry } from '../../../stores/ui';
-// 导入 mathjs 和我们需要的类型守卫
 import {
     create, all,
     isConstantNode,
@@ -11,20 +10,17 @@ import {
 } from 'mathjs';
 import type { MathNode } from 'mathjs';
 import hash from 'object-hash';
-// 导入 d3 相关库，用于自动分配颜色
 import { scaleOrdinal } from 'd3-scale';
 import { schemeCategory10 } from 'd3-scale-chromatic';
 
 const math = create(all);
 const colorScale = scaleOrdinal(schemeCategory10);
 
-// 定义域区间的接口，这是我们内部使用的数据结构
 export interface DomainInterval {
     min: number;
     max: number;
 }
 
-// 最终传递给渲染核心的数据结构
 export interface DrawableFormula {
     id: string;
     wgsl_expression: string;
@@ -32,19 +28,12 @@ export interface DrawableFormula {
     domain: DomainInterval[] | null;
 }
 
-/**
- * 一个独立的、类型安全的辅助函数，专门用于对指数函数进行分析性重构。
- * @param node - 公式的根 AST 节点。
- * @returns 重构后的表达式字符串，如果无需重构则返回 null。
- */
 function refactorExponential(node: MathNode): string | null {
     if (isAssignmentNode(node)) {
         const leftSide = node.object;
         const rightSide = node.value;
-
         if (isSymbolNode(leftSide) && leftSide.name === 'y' && isOperatorNode(rightSide) && rightSide.op === '^') {
             const baseNode = rightSide.args[0];
-
             if (isConstantNode(baseNode)) {
                 const base = baseNode.value;
                 const exponentExpression = rightSide.args[1].toString();
@@ -60,23 +49,13 @@ function refactorExponential(node: MathNode): string | null {
     return null;
 }
 
-/**
- * 核心算法：合并重叠或相邻的区间。
- * @param intervals - 一个未排序的区间数组。
- * @returns 一个新的、已合并的、不重叠的区间数组。
- */
 function mergeIntervals(intervals: DomainInterval[]): DomainInterval[] {
-    if (intervals.length <= 1) {
-        return intervals;
-    }
-
+    if (intervals.length <= 1) return intervals;
     const sorted = intervals.sort((a, b) => a.min - b.min);
     const merged: DomainInterval[] = [sorted[0]];
-
     for (let i = 1; i < sorted.length; i++) {
         const lastMerged = merged[merged.length - 1];
         const current = sorted[i];
-
         if (current.min <= lastMerged.max) {
             lastMerged.max = Math.max(lastMerged.max, current.max);
         } else {
@@ -86,20 +65,17 @@ function mergeIntervals(intervals: DomainInterval[]): DomainInterval[] {
     return merged;
 }
 
-/**
- * 一个 Svelte "hook"，负责将从 UI 传来的结构化 FormulaEntry 对象数组，
- * 转换为渲染核心所需的、包含 WGSL 表达式的 DrawableFormula 对象数组。
- * @param formulas - 包含用户输入的 FormulaEntry 对象的 store。
- * @returns 一个 derived store，其值为一个包含可绘制公式对象的数组。
- */
 export function useFormulas(formulas: Readable<FormulaEntry[]>): Readable<DrawableFormula[]> {
     return derived(formulas, $formulas => {
         return $formulas.filter(f => f.enabled).map(f => {
             try {
+                // ✅ *** 核心修复：直接从结构化数据中获取表达式和定义域 ***
                 const coreExpression = f.expression.trim();
                 if (!coreExpression) return null;
 
                 let domain: DomainInterval[] | null = null;
+
+                // 1. 直接遍历 f.domains 数组，不再需要任何字符串分割
                 if (f.domains && f.domains.length > 0) {
                     const parsedDomains: DomainInterval[] = [];
                     for (const d of f.domains) {
@@ -123,6 +99,7 @@ export function useFormulas(formulas: Readable<FormulaEntry[]>): Readable<Drawab
                     }
                 }
 
+                // 2. 对干净的 coreExpression 进行后续处理
                 const node: MathNode = math.parse(coreExpression);
                 let combinedExpression: string;
 

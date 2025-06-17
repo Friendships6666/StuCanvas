@@ -94,7 +94,7 @@
 
         <!-- Zoom 值显示组件 -->
         <div class="zoom-display">
-            Zoom: {$view.zoom.toFixed(2)}x
+            Zoom: {$view.zoom.toFixed(7)}x
         </div>
     </div>
 

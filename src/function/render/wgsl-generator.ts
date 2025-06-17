@@ -10,8 +10,10 @@ export function generateFragmentShader(formulas: any[], clipOffscreen: boolean):
     const definitions = formulas.map((f, i) => {
         try {
             const originalNode: MathNode = parse(f.wgsl_expression);
+
             const dFdxNode: MathNode = derivative(originalNode, 'x');
             const dFdyNode: MathNode = derivative(originalNode, 'y');
+
             const d2Fdx2Node: MathNode = derivative(dFdxNode, 'x');
             const d2Fdy2Node: MathNode = derivative(dFdyNode, 'y');
             const d2FxyNode: MathNode = derivative(dFdxNode, 'y');
@@ -54,23 +56,22 @@ export function generateFragmentShader(formulas: any[], clipOffscreen: boolean):
         }
 
         const boundaryAlphaCalculation = hasDomain ? `
-                // ✅ *** 核心修复：使用 var 声明一个可变数组 ***
                 var boundary_alphas = array<f32, ${f.domain.length}>();
                 ${f.domain.map((interval: any, j: number) => {
             let alphaMin = "1.0";
             let alphaMax = "1.0";
             if (interval.min !== -Infinity) {
-                alphaMin = `smoothstep(0.0, 2.0, (x - ${interval.min.toFixed(4)}) * grad_len / target_world_width)`;
+                alphaMin = `smoothstep(0.0, 2.0, (x - ${interval.min.toFixed(4)}) / target_world_width)`;
             }
             if (interval.max !== Infinity) {
-                alphaMax = `smoothstep(0.0, 2.0, (${interval.max.toFixed(4)} - x) * grad_len / target_world_width)`;
+                alphaMax = `smoothstep(0.0, 2.0, (${interval.max.toFixed(4)} - x) / target_world_width)`;
             }
             return `boundary_alphas[${j}] = min(${alphaMin}, ${alphaMax});`;
         }).join('\n')}
                 
                 var boundary_alpha = 0.0;
-                for (var j = 0; j < ${f.domain.length}; j = j + 1) {
-                    boundary_alpha = max(boundary_alpha, boundary_alphas[j]);
+                for (var k = 0; k < ${f.domain.length}; k = k + 1) {
+                    boundary_alpha = max(boundary_alpha, boundary_alphas[k]);
                 }
                 final_alpha = final_alpha * boundary_alpha;
                 ` : '';
