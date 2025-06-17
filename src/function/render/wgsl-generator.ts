@@ -1,5 +1,5 @@
+import { math } from '../../utils/math-instance'; // 导入共享的、已经配置好的 math 实例
 import { translateJsExpressionToWgsl } from '../formula/wgsl-translator';
-import { derivative, parse } from 'mathjs';
 import type { MathNode } from 'mathjs';
 
 export function generateFragmentShader(formulas: any[], clipOffscreen: boolean): [string, string] {
@@ -9,14 +9,15 @@ export function generateFragmentShader(formulas: any[], clipOffscreen: boolean):
 
     const definitions = formulas.map((f, i) => {
         try {
-            const originalNode: MathNode = parse(f.wgsl_expression);
+            // 使用共享实例的 parse 和 derivative 方法
+            const originalNode: MathNode = math.parse(f.wgsl_expression);
 
-            const dFdxNode: MathNode = derivative(originalNode, 'x');
-            const dFdyNode: MathNode = derivative(originalNode, 'y');
+            const dFdxNode: MathNode = math.derivative(originalNode, 'x');
+            const dFdyNode: MathNode = math.derivative(originalNode, 'y');
 
-            const d2Fdx2Node: MathNode = derivative(dFdxNode, 'x');
-            const d2Fdy2Node: MathNode = derivative(dFdyNode, 'y');
-            const d2FxyNode: MathNode = derivative(dFdxNode, 'y');
+            const d2Fdx2Node: MathNode = math.derivative(dFdxNode, 'x');
+            const d2Fdy2Node: MathNode = math.derivative(dFdyNode, 'y');
+            const d2FxyNode: MathNode = math.derivative(dFdxNode, 'y');
 
             const wgslExpr = translateJsExpressionToWgsl(originalNode.toString());
             const wgslDfdxExpr = translateJsExpressionToWgsl(dFdxNode.toString());
@@ -85,32 +86,62 @@ export function generateFragmentShader(formulas: any[], clipOffscreen: boolean):
         let Fy = eval_dFdy_${i}(x, y);
 
         if (abs(F_center) < SAFE_F32_MAX && abs(Fx) < SAFE_F32_MAX && abs(Fy) < SAFE_F32_MAX) {
-            let grad_len_sq = Fx * Fx + Fy * Fy;
-            if (grad_len_sq > 1.0e-9) {
-                let grad_len = sqrt(grad_len_sq);
-                let norm_dist = abs(F_center) / grad_len;
+            
+            // --- FMA-Proof Calculation of grad_len_sq ---
+            let fx_sq = Fx * Fx;
+            let fy_sq = Fy * Fy;
+            let grad_len_sq = fx_sq + fy_sq;
+            
+            if (grad_len_sq > 1.0e-19) {
+                var final_alpha = 0.0;
                 
                 let Fxx = eval_d2Fdx2_${i}(x, y);
                 let Fyy = eval_d2Fdy2_${i}(x, y);
                 let Fxy = eval_d2Fxy_${i}(x, y);
-                var corrected_dist = norm_dist;
 
                 if (abs(Fxx) < SAFE_F32_MAX && abs(Fyy) < SAFE_F32_MAX && abs(Fxy) < SAFE_F32_MAX) {
-                    let numerator = abs(Fxx * Fy*Fy - 2.0 * Fxy * Fx*Fy + Fyy * Fx*Fx);
-                    let denominator = grad_len * grad_len_sq;
-                    let kappa = numerator / max(denominator, 1.0e-9);
-                    corrected_dist = norm_dist * (1.0 + kappa * target_world_width);
+                    let grad_len = sqrt(grad_len_sq);
+
+                    // --- FMA-Proof Calculation of K_numerator ---
+                    let k_term1_a = Fx * Fx;
+                    let k_term1 = Fxx * k_term1_a;
+                    let k_term2_a = 2.0 * Fxy;
+                    let k_term2_b = k_term2_a * Fx;
+                    let k_term2 = k_term2_b * Fy;
+                    let k_term3_a = Fy * Fy;
+                    let k_term3 = Fyy * k_term3_a;
+                    let k_sum1 = k_term1 + k_term2;
+                    let K_numerator = k_sum1 + k_term3;
+                    
+                    let K = K_numerator / grad_len_sq;
+
+                    // --- FMA-Proof Calculation of discriminant ---
+                    let disc_term_a = 2.0 * K;
+                    let disc_term_b = disc_term_a * F_center;
+                    let discriminant = grad_len_sq - disc_term_b;
+
+                    if (discriminant >= 0.0) {
+                        // --- SAFE REGION ---
+                        let denominator = grad_len + sqrt(discriminant);
+                        let final_dist = abs(2.0 * F_center / max(abs(denominator), 1.0e-9));
+                        final_alpha = smoothstep(target_world_width, 0.0, final_dist);
+                    }
                 }
-                
-                var final_alpha = smoothstep(target_world_width, 0.0, corrected_dist);
                 
                 ${boundaryAlphaCalculation}
 
                 if (final_alpha > 0.0) {
                     let func_color = functions.data[${i}];
                     let effective_alpha = final_alpha * func_color.a;
-                    let blended_rgb = func_color.rgb * effective_alpha + final_color.rgb * (1.0 - effective_alpha);
-                    let blended_a = effective_alpha + final_color.a * (1.0 - effective_alpha);
+
+                    // --- FMA-Proof Color Blending ---
+                    let inv_alpha = 1.0 - effective_alpha;
+                    let rgb_term1 = func_color.rgb * effective_alpha;
+                    let rgb_term2 = final_color.rgb * inv_alpha;
+                    let blended_rgb = rgb_term1 + rgb_term2;
+                    let alpha_term = final_color.a * inv_alpha;
+                    let blended_a = effective_alpha + alpha_term;
+
                     final_color = vec4<f32>(blended_rgb, blended_a);
                 }
             }

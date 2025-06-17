@@ -1,19 +1,15 @@
 import { derived, type Readable } from 'svelte/store';
-// 导入我们全新的、结构化的数据类型
 import type { FormulaEntry } from '../../../stores/ui';
+// 导入共享的、已经配置好的 math 实例
+import { math } from '../../../utils/math-instance'; // 假设路径为 ../utils/math-instance
 import {
-    create, all,
-    isConstantNode,
-    isOperatorNode,
+    isAssignmentNode,
     isSymbolNode,
-    isAssignmentNode
+    type MathNode,
 } from 'mathjs';
-import type { MathNode } from 'mathjs';
-import hash from 'object-hash';
 import { scaleOrdinal } from 'd3-scale';
 import { schemeCategory10 } from 'd3-scale-chromatic';
 
-const math = create(all);
 const colorScale = scaleOrdinal(schemeCategory10);
 
 export interface DomainInterval {
@@ -26,27 +22,6 @@ export interface DrawableFormula {
     wgsl_expression: string;
     color: { r: number; g: number; b: number; a: number };
     domain: DomainInterval[] | null;
-}
-
-function refactorExponential(node: MathNode): string | null {
-    if (isAssignmentNode(node)) {
-        const leftSide = node.object;
-        const rightSide = node.value;
-        if (isSymbolNode(leftSide) && leftSide.name === 'y' && isOperatorNode(rightSide) && rightSide.op === '^') {
-            const baseNode = rightSide.args[0];
-            if (isConstantNode(baseNode)) {
-                const base = baseNode.value;
-                const exponentExpression = rightSide.args[1].toString();
-                if (base > 0) {
-                    const logBase = Math.log(base);
-                    return `log(y) - ((${exponentExpression}) * ${logBase})`;
-                } else {
-                    return `y - (${rightSide.toString()})`;
-                }
-            }
-        }
-    }
-    return null;
 }
 
 function mergeIntervals(intervals: DomainInterval[]): DomainInterval[] {
@@ -69,13 +44,11 @@ export function useFormulas(formulas: Readable<FormulaEntry[]>): Readable<Drawab
     return derived(formulas, $formulas => {
         return $formulas.filter(f => f.enabled).map(f => {
             try {
-                // ✅ *** 核心修复：直接从结构化数据中获取表达式和定义域 ***
                 const coreExpression = f.expression.trim();
                 if (!coreExpression) return null;
 
                 let domain: DomainInterval[] | null = null;
 
-                // 1. 直接遍历 f.domains 数组，不再需要任何字符串分割
                 if (f.domains && f.domains.length > 0) {
                     const parsedDomains: DomainInterval[] = [];
                     for (const d of f.domains) {
@@ -99,26 +72,26 @@ export function useFormulas(formulas: Readable<FormulaEntry[]>): Readable<Drawab
                     }
                 }
 
-                // 2. 对干净的 coreExpression 进行后续处理
-                const node: MathNode = math.parse(coreExpression);
-                let combinedExpression: string;
+                let expressionToParse: string;
+                const eqIndex = coreExpression.indexOf('=');
 
-                const refactored = refactorExponential(node);
+                if (eqIndex !== -1) {
+                    const leftPart = coreExpression.substring(0, eqIndex).trim();
+                    const rightPart = coreExpression.substring(eqIndex + 1).trim();
 
-                if (refactored !== null) {
-                    combinedExpression = refactored;
+                    // 处理不完整的输入，如 "y ="
+                    if (!rightPart) {
+                        throw new Error("Equation has no right-hand side.");
+                    }
+                    expressionToParse = `(${leftPart}) - (${rightPart})`;
                 } else {
-                    const eqIndex = coreExpression.indexOf('=');
-                    if (eqIndex !== -1) {
-                        const leftPart = coreExpression.substring(0, eqIndex).trim();
-                        const rightPart = coreExpression.substring(eqIndex + 1).trim();
-                        combinedExpression = `(${leftPart}) - (${rightPart})`;
+                    const tempNode = math.parse(coreExpression);
+                    if (isAssignmentNode(tempNode) && isSymbolNode(tempNode.object) && tempNode.object.name === 'y') {
+                        expressionToParse = `(y) - (${tempNode.value.toString()})`;
+                    } else if (!/\by\b/.test(coreExpression)) {
+                        expressionToParse = `y - (${coreExpression})`;
                     } else {
-                        if (!/\by\b/.test(coreExpression)) {
-                            combinedExpression = `y - (${coreExpression})`;
-                        } else {
-                            combinedExpression = coreExpression;
-                        }
+                        expressionToParse = coreExpression;
                     }
                 }
 
@@ -129,7 +102,7 @@ export function useFormulas(formulas: Readable<FormulaEntry[]>): Readable<Drawab
 
                 return {
                     id: f.id,
-                    wgsl_expression: combinedExpression,
+                    wgsl_expression: expressionToParse,
                     color: { r, g, b, a: 0.9 },
                     domain: domain
                 };
