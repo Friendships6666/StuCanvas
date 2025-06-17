@@ -1,3 +1,4 @@
+/*src/function/gpu/functionVertex.wgsl*/
 // 我们需要和片段着色器一样的 Uniforms 结构体
 struct Uniforms {
     view: vec4<f32>,     // .x: view.x, .y: view.y, .z: view.zoom, .w: aspect

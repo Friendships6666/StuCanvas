@@ -1,3 +1,4 @@
+/*src/function/render/wgsl-generator.ts*/
 import { math } from '../../utils/math-instance'; // 导入共享的、已经配置好的 math 实例
 import { translateJsExpressionToWgsl } from '../formula/wgsl-translator';
 import type { MathNode } from 'mathjs';

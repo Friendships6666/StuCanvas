@@ -1,3 +1,4 @@
+/*src/coordinate/rectangular/use/use-formulas.ts*/
 import { derived, type Readable } from 'svelte/store';
 import type { FormulaEntry } from '../../../stores/ui';
 // 导入共享的、已经配置好的 math 实例

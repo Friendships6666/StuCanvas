@@ -1,3 +1,4 @@
+<!--src/interaction/menu/AlgebraWindow.svelte-->
 <script lang="ts">
     import { formulas, algebraWindowVisible } from '../../stores/ui';
     import type { FormulaEntry, FormulaDomain } from '../../stores/ui';

@@ -1,3 +1,4 @@
+/*src/function/formula/wgsl-translator.ts*/
 import {
     parse,
     derivative,
