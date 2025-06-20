@@ -17,6 +17,7 @@
     "@types/mathjs": "^9.4.1",
     "@types/object-hash": "^3.0.6",
     "@webgpu/types": "^0.1.61",
+    "dependency-cruiser": "^16.10.3",
     "svelte": "^5.28.1",
     "svelte-check": "^4.1.6",
     "typescript": "~5.8.3",

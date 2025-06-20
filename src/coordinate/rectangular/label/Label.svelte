@@ -19,7 +19,7 @@
         const clip_pos_y = view_pos_y;
 
         // 扩大一点边界，防止标签在边缘突然消失
-        visible = Math.abs(clip_pos_x) <= 1.1 && Math.abs(clip_pos_y) <= 1.1;
+        visible = Math.abs(clip_pos_x) <= 1.2 && Math.abs(clip_pos_y) <= 1.2;
 
         const screen_percent_x = (clip_pos_x + 1) / 2 * 100;
         const screen_percent_y = (-clip_pos_y + 1) / 2 * 100;

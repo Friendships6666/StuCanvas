@@ -19,7 +19,7 @@ export function formatNumber(num: number): string {
     // 检查数字的绝对值是否大于等于100,000 或 小于等于 0.0001
     if (Math.abs(cleanedNum) >= 100000 || (Math.abs(cleanedNum) > 0 && Math.abs(cleanedNum) <= 0.0001)) {
         const exponentialStr = cleanedNum.toExponential();
-        return exponentialStr.replace('.0e', 'e');
+        return exponentialStr.replace('.0e', 'e').toString();
     }
 
     return cleanedNum.toString();

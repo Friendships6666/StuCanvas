@@ -1,15 +1,15 @@
 <!--src/coordinate/rectangular/use/rectangularCore.svelte-->
 <script lang="ts">
-    import { onMount, onDestroy } from 'svelte';
-    import { writable } from 'svelte/store';
-    import { initializeRenderer, type Renderer, type Renderable } from '../../../interaction/input/renderer';
-    import { initializeInputHandlers, type InputHandler } from '../../../interaction/input/inputHandler';
-    import { view } from '../../../stores/camera';
-    import { rightMenu, formulas } from '../../../stores/ui';
+    import {onMount , onDestroy} from 'svelte';
+    import {writable} from 'svelte/store';
+    import {initializeRenderer , type Renderer , type Renderable} from '../../../interaction/input/renderer';
+    import {initializeInputHandlers , type InputHandler} from '../../../interaction/input/inputHandler';
+    import {view} from '../../../stores/camera';
+    import {rightMenu , formulas} from '../../../stores/ui';
 
     // 导入我们强大的响应式 "hooks"
-    import { useGridLines } from './use-grid-lines';
-    import { useFormulas } from './use-formulas';
+    import {useGridLines} from './use-grid-lines';
+    import {useFormulas} from './use-formulas';
 
     // 导入所有子组件
     import GridLineRenderer from '../grid/GridLineRenderer.svelte';
@@ -19,68 +19,75 @@
     import Label from '../label/Label.svelte';
 
     // --- 组件内部状态 ---
-    let canvas: HTMLCanvasElement;
-    let renderer: Renderer | null = null;
-    let inputHandler: InputHandler | null = null;
-    let resizeObserver: ResizeObserver;
-    const aspect = writable(1.0);
+    let canvas : HTMLCanvasElement;
+    let renderer : Renderer | null = null;
+    let inputHandler : InputHandler | null = null;
+    let resizeObserver : ResizeObserver;
+    const aspect = writable ( 1.0 );
 
     // 一个 Set，用于收集所有需要被渲染的对象
-    let renderables = new Set<Renderable>();
+    let renderables = new Set<Renderable> ();
 
     // --- 响应式数据流 ---
     // 当 view 或 aspect 变化时，gridData 会自动重新计算
-    const gridData = useGridLines(view, aspect);
+    const gridData = useGridLines ( view , aspect );
     // 当 formulas store 变化时，drawableFormulas 会自动重新解析和重构
-    const drawableFormulas = useFormulas(formulas);
+    const drawableFormulas = useFormulas ( formulas );
 
     // --- 核心渲染函数 ---
-    function requestRender() {
-        if (renderer) {
+    function requestRender () {
+        if ( renderer ) {
             // 按 layer 排序，确保渲染顺序正确
-            const sortedRenderables = Array.from(renderables).sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
-            requestAnimationFrame(() => renderer?.render(sortedRenderables));
+            const sortedRenderables = Array.from ( renderables ).sort ( ( a , b ) => (a.layer ?? 0) - (b.layer ?? 0) );
+            requestAnimationFrame ( () => renderer?.render ( sortedRenderables ) );
         }
     }
 
     // --- 组件生命周期管理 ---
-    onMount(async () => {
-        const init = await initializeRenderer(canvas);
-        if (!init) return;
+    onMount ( async () => {
+        const init = await initializeRenderer ( canvas );
+        if ( !init ) return;
         renderer = init;
-        inputHandler = initializeInputHandlers(canvas, () => $aspect, requestRender);
+        inputHandler = initializeInputHandlers ( canvas , () => $aspect , requestRender );
 
         // 订阅 view store 的变化，任何相机移动都触发重绘
-        view.subscribe(() => requestRender());
+        view.subscribe ( () => requestRender () );
 
         // 监听父容器尺寸变化，实现响应式布局
-        resizeObserver = new ResizeObserver(entries => {
+        resizeObserver = new ResizeObserver ( entries => {
             for (const entry of entries) {
-                const { width, height } = entry.contentRect;
-                if (width > 0 && height > 0) {
+                const {
+                    width ,
+                    height
+                } = entry.contentRect;
+                if ( width > 0 && height > 0 ) {
                     canvas.width = width;
                     canvas.height = height;
-                    aspect.set(width / height); // 更新 aspect store
-                    renderer?.resize(width, height);
-                    requestRender();
+                    aspect.set ( width / height ); // 更新 aspect store
+                    renderer?.resize ( width , height );
+                    requestRender ();
                 }
             }
-        });
-        if (canvas.parentElement) resizeObserver.observe(canvas.parentElement);
-        requestRender();
-    });
+        } );
+        if ( canvas.parentElement ) resizeObserver.observe ( canvas.parentElement );
+        requestRender ();
+    } );
 
-    onDestroy(() => {
+    onDestroy ( () => {
         // 销毁所有资源，防止内存泄漏
-        if (resizeObserver) resizeObserver.disconnect();
-        inputHandler?.destroy();
-        renderer?.destroy();
-    });
+        if ( resizeObserver ) resizeObserver.disconnect ();
+        inputHandler?.destroy ();
+        renderer?.destroy ();
+    } );
 
     // --- UI 事件处理 ---
-    function handleContextMenu(e: MouseEvent) {
-        e.preventDefault();
-        rightMenu.set({ visible: true, x: e.clientX, y: e.clientY });
+    function handleContextMenu ( e : MouseEvent ) {
+        e.preventDefault ();
+        rightMenu.set ( {
+            visible : true ,
+            x : e.clientX ,
+            y : e.clientY
+        } );
     }
 </script>
 
@@ -90,7 +97,7 @@
     <!-- 标签和UI覆盖层 -->
     <div class="overlay-container">
         {#each $gridData.allLabels as label (label.id)}
-            <Label {...label} aspect={$aspect} />
+            <Label {...label} aspect={$aspect}/>
         {/each}
 
         <!-- Zoom 值显示组件 -->
@@ -103,9 +110,15 @@
     <div class="logical-components">
         {#if renderer}
             <!-- 网格线渲染 -->
-            <GridLineRenderer register={renderables} layer={0} color="#e0e0e0" vertices={$gridData.minorVertices} device={renderer.device} canvasFormat={renderer.canvasFormat} sampleCount={renderer.aaRenderer.sampleCount} />
-            <GridLineRenderer register={renderables} layer={1} color="#cccccc" vertices={$gridData.majorVertices} device={renderer.device} canvasFormat={renderer.canvasFormat} sampleCount={renderer.aaRenderer.sampleCount} />
-            <GridLineRenderer register={renderables} layer={2} color="#333333" vertices={$gridData.axisVertices} device={renderer.device} canvasFormat={renderer.canvasFormat} sampleCount={renderer.aaRenderer.sampleCount} />
+            <GridLineRenderer register={renderables} layer={0} color="#e0e0e0" vertices={$gridData.minorVertices}
+                              device={renderer.device} canvasFormat={renderer.canvasFormat}
+                              sampleCount={renderer.aaRenderer.sampleCount}/>
+            <GridLineRenderer register={renderables} layer={1} color="#cccccc" vertices={$gridData.majorVertices}
+                              device={renderer.device} canvasFormat={renderer.canvasFormat}
+                              sampleCount={renderer.aaRenderer.sampleCount}/>
+            <GridLineRenderer register={renderables} layer={2} color="#333333" vertices={$gridData.axisVertices}
+                              device={renderer.device} canvasFormat={renderer.canvasFormat}
+                              sampleCount={renderer.aaRenderer.sampleCount}/>
 
             <!-- 隐函数渲染 (使用我们最终的、包含所有优化的版本) -->
             <FunctionCore
@@ -124,27 +137,45 @@
     </div>
 
     <!-- UI 窗口组件 -->
-    <RightMenu />
-    <AlgebraWindow />
+    <RightMenu/>
+    <AlgebraWindow/>
 </div>
 
 <style>
     .scene-container {
-        position: fixed; top: 0; left: 0;
-        width: 100vw; height: 100vh;
-        overflow: hidden; background-color: #ffffff;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        background-color: #ffffff;
     }
+
     canvas {
-        display: block; width: 100%; height: 100%;
+        display: block;
+        width: 100%;
+        height: 100%;
         cursor: grab;
     }
-    canvas:active { cursor: grabbing; }
+
+    canvas:active {
+        cursor: grabbing;
+    }
+
     .overlay-container, .logical-components {
-        position: absolute; top: 0; left: 0;
-        width: 100%; height: 100%;
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
         pointer-events: none;
     }
-    .logical-components { visibility: hidden; }
+
+    .logical-components {
+        visibility: hidden;
+    }
+
     .zoom-display {
         position: absolute;
         bottom: 20px;
