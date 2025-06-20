@@ -1,5 +1,5 @@
 /*src/function/gpu/functionRenderer.ts*/
-import type {Renderable} from '../../interaction/input/renderer';
+import type {Renderable} from '../../renderCore/renderer';
 import {generateFragmentShader} from '../render/wgsl-generator';
 import vertexShaderCode from './functionVertex.wgsl?raw';
 import fragmentShaderTemplate from './functionFragment.wgsl?raw';

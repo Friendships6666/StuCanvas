@@ -1,8 +1,9 @@
+<!--src/coordinate/rectangular/grid/GridLineRenderer.svelte-->
 <script lang="ts">
     /// <reference types="@webgpu/types" />
     import { onMount, onDestroy } from 'svelte';
     import { hexToVec4 } from '../../../utils/color-utils';
-    import type { Renderable } from '../../../interaction/input/renderer';
+    import type { Renderable } from '../../../renderCore/renderer';
 
     // --- Props (组件的输入属性) ---
 

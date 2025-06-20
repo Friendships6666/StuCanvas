@@ -2,7 +2,7 @@
 <script lang="ts">
     import {onMount , onDestroy} from 'svelte';
     import {writable} from 'svelte/store';
-    import {initializeRenderer , type Renderer , type Renderable} from '../../../interaction/input/renderer';
+    import {initializeRenderer , type Renderer , type Renderable} from '../../../renderCore/renderer';
     import {initializeInputHandlers , type InputHandler} from '../../../interaction/input/inputHandler';
     import {view} from '../../../stores/camera';
     import {rightMenu , formulas} from '../../../stores/ui';

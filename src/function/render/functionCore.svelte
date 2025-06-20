@@ -1,8 +1,8 @@
-<!--src/function/render/functionCore.svelte-->
+<!--src/function/renderCore/functionCore.svelte-->
 <script lang="ts">
     import { onDestroy } from 'svelte';
     import type { View } from '../../stores/camera';
-    import type { Renderable } from '../../interaction/input/renderer';
+    import type { Renderable } from '../../renderCore/renderer';
     import { initializeGpuResources, type BatchRendererGpuResources } from '../gpu/functionRenderer';
     import type { DrawableFormula } from '../../coordinate/rectangular/use/use-formulas';
 
