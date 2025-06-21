@@ -128,7 +128,7 @@
                     canvasFormat={renderer.canvasFormat}
                     sampleCount={renderer.aaRenderer.sampleCount}
                     canvasElement={canvas}
-                    view={$view}
+                    view={view}
                     aspect={$aspect}
                     {requestRender}
                     clipOffscreen={true}
