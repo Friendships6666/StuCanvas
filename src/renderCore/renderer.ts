@@ -1,13 +1,13 @@
-// src/interaction/input/renderer.ts (最终正确版)
 import type { IAARenderer } from '../aa/aa-interface';
 import { MSAARenderer } from '../aa/msaa-renderer';
 import { initializeWebGPU } from './webgpu-helpers';
 
-// ✅ FIX: 明确定义 compute 方法接收一个 GPUComputePassEncoder
 export interface Renderable {
     draw: (pass: GPURenderPassEncoder) => void;
     compute?: (pass: GPUComputePassEncoder) => void;
     layer?: number;
+    // 新增：让Renderable对象可以暴露它需要被清空的纹理
+    texturesToClear?: GPUTexture[];
 }
 
 export interface Renderer {
@@ -31,19 +31,32 @@ export async function initializeRenderer(canvas: HTMLCanvasElement): Promise<Ren
     const aaRenderer = new MSAARenderer(4);
     aaRenderer.initialize(device, context, canvasFormat, canvas.width, canvas.height);
 
-    // ✅ FIX: 实现经典、正确的两通道渲染循环
     const render = (components: Renderable[]) => {
         const encoder = device.createCommandEncoder({ label: "Main Command Encoder" });
         const sortedComponents = components.sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
 
-        // --- 阶段一: 执行所有计算任务 ---
+        // 在所有操作开始前，清空所有需要清空的纹理
+        for (const component of sortedComponents) {
+            if (component.texturesToClear) {
+                for (const texture of component.texturesToClear) {
+                    encoder.beginRenderPass({
+                        colorAttachments: [{
+                            view: texture.createView(),
+                            loadOp: 'clear',
+                            storeOp: 'store',
+                            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+                        }],
+                    }).end();
+                }
+            }
+        }
+
         const computePass = encoder.beginComputePass({ label: "Main Compute Pass" });
         for (const component of sortedComponents) {
             component.compute?.(computePass);
         }
         computePass.end();
 
-        // --- 阶段二: 执行所有绘制任务 ---
         const renderPass = aaRenderer.beginScenePass(encoder, backgroundColor);
         for (const component of sortedComponents) {
             component.draw(renderPass);
