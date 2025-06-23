@@ -1,12 +1,16 @@
-// src/interaction/input/renderer.ts (最终正确版)
+// src/renderCore/renderer.ts (请用下面的完整代码覆盖)
+
 import type { IAARenderer } from '../aa/aa-interface';
 import { MSAARenderer } from '../aa/msaa-renderer';
 import { initializeWebGPU } from './webgpu-helpers';
+import type { View } from '../stores/camera'; // 引入View类型
 
-// ✅ FIX: 明确定义 compute 方法接收一个 GPUComputePassEncoder
+// ✅ 1. 修改 Renderable 接口，加入一个正式的 update 方法
 export interface Renderable {
-    draw: (pass: GPURenderPassEncoder) => void;
+    update?: (device: GPUDevice, view: View, aspect: number, canvas: HTMLCanvasElement) => void;
+    preCompute?: (encoder: GPUCommandEncoder) => void;
     compute?: (pass: GPUComputePassEncoder) => void;
+    draw: (pass: GPURenderPassEncoder) => void;
     layer?: number;
 }
 
@@ -15,7 +19,8 @@ export interface Renderer {
     context: GPUCanvasContext;
     aaRenderer: IAARenderer;
     canvasFormat: GPUTextureFormat;
-    render: (components: Renderable[]) => void;
+    // ✅ 2. 修改 render 函数签名，让它接收每一帧的最新状态
+    render: (components: Renderable[], view: View, aspect: number) => void;
     destroy: () => void;
     resize: (width: number, height: number) => void;
 }
@@ -31,19 +36,30 @@ export async function initializeRenderer(canvas: HTMLCanvasElement): Promise<Ren
     const aaRenderer = new MSAARenderer(4);
     aaRenderer.initialize(device, context, canvasFormat, canvas.width, canvas.height);
 
-    // ✅ FIX: 实现经典、正确的两通道渲染循环
-    const render = (components: Renderable[]) => {
+    // ✅ 3. 实现新的、包含 update 阶段的渲染循环
+    const render = (components: Renderable[], view: View, aspect: number) => {
         const encoder = device.createCommandEncoder({ label: "Main Command Encoder" });
         const sortedComponents = components.sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
 
-        // --- 阶段一: 执行所有计算任务 ---
+        // --- 阶段零: 更新 (Update) ---
+        // 在本帧所有GPU操作开始前，强制所有组件更新它们的GPU状态（如Uniform Buffer）
+        for (const component of sortedComponents) {
+            component.update?.(device, view, aspect, canvas);
+        }
+
+        // --- 阶段一: 预计算 (Pre-Compute) ---
+        for (const component of sortedComponents) {
+            component.preCompute?.(encoder);
+        }
+
+        // --- 阶段二: 计算 (Compute) ---
         const computePass = encoder.beginComputePass({ label: "Main Compute Pass" });
         for (const component of sortedComponents) {
             component.compute?.(computePass);
         }
         computePass.end();
 
-        // --- 阶段二: 执行所有绘制任务 ---
+        // --- 阶段三: 绘制 (Draw) ---
         const renderPass = aaRenderer.beginScenePass(encoder, backgroundColor);
         for (const component of sortedComponents) {
             component.draw(renderPass);

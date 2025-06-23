@@ -6,6 +6,7 @@
     import {initializeInputHandlers , type InputHandler} from '../../../interaction/input/inputHandler';
     import {view} from '../../../stores/camera';
     import {rightMenu , formulas} from '../../../stores/ui';
+    import ScatterMaskRendererFS from '../../../function/mask/ScatterMaskRendererFS.svelte';
 
     // 导入我们强大的响应式 "hooks"
     import {useGridLines} from './use-grid-lines';
@@ -37,11 +38,13 @@
     // --- 核心渲染函数 ---
     function requestRender () {
         if ( renderer ) {
-            // 按 layer 排序，确保渲染顺序正确
             const sortedRenderables = Array.from ( renderables ).sort ( ( a , b ) => (a.layer ?? 0) - (b.layer ?? 0) );
-            requestAnimationFrame ( () => renderer?.render ( sortedRenderables ) );
+            // ✅ 2. 将最新的 view 和 aspect 数据传入 render 方法
+            requestAnimationFrame ( () => renderer?.render ( sortedRenderables, $view, $aspect ) );
         }
     }
+    view.subscribe(() => requestRender());
+    aspect.subscribe(() => requestRender());
 
     // --- 组件生命周期管理 ---
     onMount ( async () => {
@@ -132,6 +135,14 @@
                     aspect={$aspect}
                     {requestRender}
                     clipOffscreen={true}
+            />
+            <ScatterMaskRendererFS
+                    register={renderables}
+                    device={renderer.device}
+                    canvasFormat={renderer.canvasFormat}
+                    sampleCount={renderer.aaRenderer.sampleCount}
+                    {requestRender}
+                    layer={4}
             />
         {/if}
     </div>
