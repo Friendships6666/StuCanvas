@@ -1,4 +1,3 @@
-<!--src/coordinate/rectangular/use/rectangularCore.svelte-->
 <script lang="ts">
     import {onMount , onDestroy} from 'svelte';
     import {writable} from 'svelte/store';
@@ -28,6 +27,10 @@
     // 一个 Set，用于收集所有需要被渲染的对象
     let renderables = new Set<Renderable> ();
 
+    // ✅ --- Debugging State ---
+    let isDebugMode = false;
+    let discriminantValue: string | null = null;
+
     // --- 响应式数据流 ---
     // 当 view 或 aspect 变化时，gridData 会自动重新计算
     const gridData = useGridLines ( view , aspect );
@@ -48,7 +51,21 @@
         const init = await initializeRenderer ( canvas );
         if ( !init ) return;
         renderer = init;
-        inputHandler = initializeInputHandlers ( canvas , () => $aspect , requestRender );
+
+        // ✅ *** 核心修复 ***
+        // 初始化 inputHandler，并传入一个新的回调函数来接收调试值
+        inputHandler = initializeInputHandlers (
+            canvas,
+            renderer,
+            () => $aspect,
+            requestRender,
+            (value) => { // 这个回调会在 inputHandler 读取到值后被调用
+                // 只有在调试模式开启时才更新UI，避免不必要的状态变化
+                if (isDebugMode) {
+                    discriminantValue = value.toFixed(4);
+                }
+            }
+        );
 
         // 订阅 view store 的变化，任何相机移动都触发重绘
         view.subscribe ( () => requestRender () );
@@ -100,9 +117,19 @@
             <Label {...label} aspect={$aspect}/>
         {/each}
 
-        <!-- Zoom 值显示组件 -->
         <div class="zoom-display">
             Zoom: {$view.zoom.toFixed(7)}x
+        </div>
+
+        <!-- ✅ UI for Debugging -->
+        <div class="debug-display">
+            <label>
+                <input type="checkbox" bind:checked={isDebugMode} />
+                Show Discriminant
+            </label>
+            {#if isDebugMode && discriminantValue !== null}
+                <div class="debug-value">Value: {discriminantValue}</div>
+            {/if}
         </div>
     </div>
 
@@ -120,7 +147,7 @@
                               device={renderer.device} canvasFormat={renderer.canvasFormat}
                               sampleCount={renderer.aaRenderer.sampleCount}/>
 
-            <!-- 隐函数渲染 (使用我们最终的、包含所有优化的版本) -->
+            <!-- 隐函数渲染 -->
             <FunctionCore
                     register={renderables}
                     formulas={$drawableFormulas}
@@ -132,6 +159,7 @@
                     aspect={$aspect}
                     {requestRender}
                     clipOffscreen={true}
+                    bind:isDebugMode={isDebugMode}
             />
         {/if}
     </div>
@@ -188,5 +216,24 @@
         font-size: 14px;
         user-select: none;
         z-index: 10;
+    }
+
+    .debug-display {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background-color: rgba(0, 0, 0, 0.65);
+        color: white;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-family: monospace, sans-serif;
+        font-size: 14px;
+        user-select: none;
+        z-index: 10;
+        pointer-events: auto; /* 允许点击复选框 */
+    }
+
+    .debug-value {
+        margin-top: 5px;
     }
 </style>

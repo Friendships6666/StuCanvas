@@ -11,7 +11,6 @@ export interface IAARenderer {
         canvasHeight: number
     ): void;
 
-    // ✅ 新增：要求所有 AA 渲染器都必须能响应尺寸变化
     resize(newWidth: number, newHeight: number): void;
 
     beginScenePass(encoder: GPUCommandEncoder, clearValue: GPUColor): GPURenderPassEncoder;
@@ -19,4 +18,7 @@ export interface IAARenderer {
     execute(encoder: GPUCommandEncoder): void;
 
     destroy(): void;
+
+    // ✅ 新增: 要求所有 AA 渲染器都必须能返回其主渲染视图
+    getTextureView(): GPUTextureView;
 }

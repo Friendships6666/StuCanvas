@@ -1,4 +1,3 @@
-<!--src/coordinate/rectangular/grid/GridLineRenderer.svelte-->
 <script lang="ts">
     /// <reference types="@webgpu/types" />
     import { onMount, onDestroy } from 'svelte';
@@ -66,22 +65,31 @@
         const shaderModule = device.createShaderModule({
             label: `GridLine Shader (Layer ${layer})`,
             code: `
-                // 定义 uniform buffer 的结构体
                 struct Uniforms {
-                    color: vec4f // f32 的别名
+                    color: vec4f
                 };
                 @group(0) @binding(0) var<uniform> u: Uniforms;
 
-                // 顶点着色器：接收 NDC 坐标并直接透传
+                // ✅ *** 核心修复 1/2 ***
+                // 定义一个包含两个输出的结构体，以匹配渲染通道的期望。
+                struct FragmentOutput {
+                    @location(0) color: vec4f,
+                    // 我们不使用这个输出，但必须声明它以保证管线兼容性。
+                    @location(1) dummy_debug: f32,
+                };
+
                 @vertex
                 fn vs_main(@location(0) clip_pos: vec2f) -> @builtin(position) vec4f {
                     return vec4f(clip_pos, 0.0, 1.0);
                 }
 
-                // 片元着色器：为线上的每个像素返回统一的颜色
                 @fragment
-                fn fs_main() -> @location(0) vec4f {
-                  return u.color;
+                fn fs_main() -> FragmentOutput {
+                  var output: FragmentOutput;
+                  output.color = u.color;
+                  // 必须为所有输出赋值。我们写入一个无意义的默认值。
+                  output.dummy_debug = 0.0;
+                  return output;
                 }
             `,
         });
@@ -90,7 +98,7 @@
         const bindGroupLayout = device.createBindGroupLayout({
             entries: [{
                 binding: 0,
-                visibility: GPUShaderStage.FRAGMENT, // 颜色只在片元着色器中使用
+                visibility: GPUShaderStage.FRAGMENT,
                 buffer: { type: 'uniform' }
             }]
         });
@@ -114,11 +122,15 @@
             fragment: {
                 module: shaderModule,
                 entryPoint: 'fs_main',
-                targets: [{ format: canvasFormat }] // 输出颜色格式与画布匹配
+                // ✅ *** 核心修复 2/2 ***
+                // 明确告诉管线它将输出到两个目标，以匹配主渲染通道的配置。
+                targets: [
+                    { format: canvasFormat }, // 目标0: 颜色
+                    { format: 'r32float' }    // 目标1: 调试值
+                ]
             },
             primitive: {
-                // ✅ 核心改变：告诉 GPU 如何解释顶点数据
-                topology: 'line-list' // 将每两个顶点绘制成一条独立的线段
+                topology: 'line-list'
             },
             multisample: { count: sampleCount },
         });
@@ -135,21 +147,13 @@
     }
 
     // --- 响应式更新逻辑 ($: 语句) ---
-    // 这个 $: 代码块会“监听” device 和 vertices 的变化。
-    // 当它们任何一个有效时，就会执行此逻辑。
     $: if (device && vertices) {
-        // 1. 如果 pipeline 不存在，说明是首次运行，立即进行初始化。
         if (!pipeline) {
             initialize();
         }
 
-        // 2. 动态管理顶点缓冲区 (Vertex Buffer) 的大小
-        // 如果没有缓冲区，或者新的顶点数据装不下了，就创建一个更大的新缓冲区
         if (!vertexBuffer || vertices.byteLength > vertexBuffer.size) {
-            // 如果旧缓冲区存在，先销毁它释放 GPU 内存
             vertexBuffer?.destroy();
-
-            // 为了避免频繁地重新创建，我们给新缓冲区 1.5 倍的容量
             const newCapacity = Math.max(64, vertices.byteLength * 1.5);
             vertexBuffer = device.createBuffer({
                 label: `GridLine Vertex Buffer (Layer ${layer})`,
@@ -158,49 +162,33 @@
             });
         }
 
-        // 3. 将最新的数据写入 GPU 的 Buffer 中
-        // 这是每一帧或每次数据更新时都会发生的操作
         device.queue.writeBuffer(vertexBuffer, 0, vertices);
-        device.queue.writeBuffer(uniformBuffer, 0, hexToVec4(color)); // 颜色也可能动态改变
+        device.queue.writeBuffer(uniformBuffer, 0, hexToVec4(color));
     }
 
     // --- Renderable 接口的实现 ---
-    /**
-     * 定义一个 draw 函数，它会被主渲染循环调用。
-     * 它的职责纯粹而高效：下达绘制命令。
-     */
     function draw(pass: GPURenderPassEncoder) {
-        // 如果资源未就绪或没有顶点可画，则直接返回
         if (!pipeline || !vertexBuffer || vertices.length === 0) return;
 
         pass.setPipeline(pipeline);
         pass.setVertexBuffer(0, vertexBuffer);
         pass.setBindGroup(0, bindGroup);
-        // 这里的 draw 调用现在绘制的是线段
-        pass.draw(vertices.length / 2); // 顶点总数 (每个顶点有x, y两个分量)
+        pass.draw(vertices.length / 2);
     }
 
     // --- Svelte 生命周期钩子 ---
     onMount(() => {
-        // 创建一个符合 Renderable 接口的对象
         const self: Renderable = {
             draw,
-            layer // 把 layer 属性也放进去
+            layer
         };
-
-        // 将自己“注册”到父组件的渲染列表中
         register.add(self);
-
-        // onMount 可以返回一个函数，这个函数会在组件销毁时被调用
-        // 这是一种非常优雅的清理模式
         return () => {
             register.delete(self);
         };
     });
 
     onDestroy(() => {
-        // 当组件被销毁时，确保异步地释放所有 GPU 资源，防止内存泄漏。
-        // onSubmittedWorkDone() 确保在销毁前，GPU 已经完成了对这些资源的最后使用。
         device?.queue.onSubmittedWorkDone().then(() => {
             vertexBuffer?.destroy();
             uniformBuffer?.destroy();
