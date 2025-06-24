@@ -1,3 +1,4 @@
+/*src/function/render/wgsl-generator.ts*/
 import { math } from '../../utils/math-instance';
 import { translateJsExpressionToWgsl } from '../formula/wgsl-translator';
 import type { MathNode } from 'mathjs';
@@ -18,11 +19,11 @@ export function generateFragmentShader(formulas: DrawableFormula[], clipOffscree
     const definitions = formulas.map((f, i) => {
         try {
             const originalNode: MathNode = math.parse(f.wgsl_expression);
-            const dFdxNode: MathNode = math.derivative(originalNode, 'x');
-            const dFdyNode: MathNode = math.derivative(originalNode, 'y');
-            const d2Fdx2Node: MathNode = math.derivative(dFdxNode, 'x');
-            const d2Fdy2Node: MathNode = math.derivative(dFdyNode, 'y');
-            const d2FxyNode: MathNode = math.derivative(dFdxNode, 'y');
+            const dFdxNode: MathNode = math.simplify(math.derivative(originalNode, 'x'));
+            const dFdyNode: MathNode = math.simplify(math.derivative(originalNode, 'y'));
+            const d2Fdx2Node: MathNode = math.simplify(math.derivative(math.derivative(originalNode, 'x'), 'x'));
+            const d2Fdy2Node: MathNode = math.simplify(math.derivative(math.derivative(originalNode, 'y'), 'y'));
+            const d2FxyNode: MathNode = math.simplify(math.derivative(math.derivative(originalNode, 'x'), 'y'));
 
             const wgslExpr = translateJsExpressionToWgsl(originalNode.toString());
             const wgslDfdxExpr = translateJsExpressionToWgsl(dFdxNode.toString());
@@ -108,7 +109,7 @@ export function generateFragmentShader(formulas: DrawableFormula[], clipOffscree
                     let discriminant = grad_len_sq - 2.0 * K * F_center;
                     if (discriminant >= 0.0) {
                         let denominator = grad_len + sqrt(discriminant);
-                        let final_dist = abs(2.0 * F_center / max(abs(denominator), 1.0e-9));
+                        let final_dist = abs(23.0 * F_center / max(abs(denominator), 1.0e-9));
                         var final_alpha = smoothstep(target_world_width, 0.0, final_dist);
                         ${boundaryAlphaCalculation}
                         if (final_alpha > 0.0) {
