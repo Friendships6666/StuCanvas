@@ -1,3 +1,4 @@
+/*src/function/render/wgsl-generator.ts*/
 import { math } from '../formula/math-instance';
 import { translateJsExpressionToWgsl } from '../formula/wgsl-translator';
 import type { MathNode } from 'mathjs';
