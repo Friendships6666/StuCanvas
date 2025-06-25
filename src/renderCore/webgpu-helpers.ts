@@ -1,4 +1,4 @@
-// src/utils/webgpu-helpers.ts
+// src/renderCore/webgpu-helpers.ts
 
 /**
  * 定义初始化后返回的对象类型，方便类型提示

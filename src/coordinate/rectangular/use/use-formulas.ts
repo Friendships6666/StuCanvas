@@ -2,7 +2,7 @@
 import { derived, type Readable } from 'svelte/store';
 import type { FormulaEntry } from '../../../stores/ui';
 // 导入共享的、已经配置好的 math 实例
-import { math } from '../../../utils/math-instance'; // 假设路径为 ../utils/math-instance
+import { math } from '../../../function/formula/math-instance'; // 假设路径为 ../utils/math-instance
 import {
     isAssignmentNode,
     isSymbolNode,

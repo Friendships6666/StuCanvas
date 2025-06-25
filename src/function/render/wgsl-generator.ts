@@ -1,4 +1,4 @@
-import { math } from '../../utils/math-instance';
+import { math } from '../formula/math-instance';
 import { translateJsExpressionToWgsl } from '../formula/wgsl-translator';
 import type { MathNode } from 'mathjs';
 

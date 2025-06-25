@@ -3,7 +3,7 @@
     import type { Writable } from 'svelte/store';
     import type { View } from '../../stores/camera';
     import type { Renderable } from '../../renderCore/renderer';
-    import { initializeGpuResources, type BatchRendererGpuResources } from '../gpu/functionRenderer';
+    import { initializeGpuResources, type BatchRendererGpuResources } from '../SDF/functionRenderer';
     import type { DrawableFormula } from '../../coordinate/rectangular/use/use-formulas';
 
     // --- Props ---

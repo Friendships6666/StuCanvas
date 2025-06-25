@@ -1,4 +1,4 @@
-/*src/utils/math-instance.ts*/
+/*src/function/formula/math-instance.ts*/
 import {
     create, all,
     type MathNode,

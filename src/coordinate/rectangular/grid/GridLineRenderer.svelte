@@ -1,3 +1,4 @@
+<!--src/coordinate/rectangular/label-->
 <script lang="ts">
     /// <reference types="@webgpu/types" />
     import { onMount, onDestroy } from 'svelte';

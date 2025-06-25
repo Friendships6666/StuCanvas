@@ -1,3 +1,4 @@
+<!--src/coordinate/rectangular/use/rectangularCore.svelte-->
 <script lang="ts">
     import {onMount , onDestroy} from 'svelte';
     import {writable} from 'svelte/store';

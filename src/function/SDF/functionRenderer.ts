@@ -1,3 +1,4 @@
+/*src/function/SDF/functionRenderer.ts*/
 import type {Renderable} from '../../renderCore/renderer';
 import {generateFragmentShader} from '../render/wgsl-generator';
 import vertexShaderCode from './functionVertex.wgsl?raw';

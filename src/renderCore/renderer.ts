@@ -1,3 +1,4 @@
+/*src/renderCore/renderer.ts*/
 import type { IAARenderer } from '../aa/aa-interface';
 import { MSAARenderer } from '../aa/msaa-renderer';
 import { initializeWebGPU } from './webgpu-helpers';
