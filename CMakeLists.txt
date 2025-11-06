@@ -1,0 +1,69 @@
+# 设置所需的最低 CMake 版本 (为 target_precompile_headers 提高到 3.16)
+cmake_minimum_required(VERSION 3.16)
+
+# 定义项目名称和语言
+project(WasmTBBTest CXX)
+
+# 设置 C++ 标准为 C++23 (保持您原有的设置)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 定义可执行文件目标。
+# 重要的是，要将 pch.h 和 pch.cpp 也加入源文件列表，
+# 这样 CMake 和 CLion 才能正确地跟踪它们。
+add_executable(WasmTBBTest main.cpp
+        pch.h
+        pch.cpp
+        cas.cpp)
+
+# --------------------------------------------------------------------
+# --- 关键部分：启用预编译头文件 ---
+# --------------------------------------------------------------------
+# target_precompile_headers 是 CMake 3.16+ 的现代标准命令。
+# 它告诉 CMake，WasmTBBTest 这个目标将使用 pch.h 作为预编译头文件。
+# PRIVATE 意味着这个设置只应用于 WasmTBBTest 自身。
+target_precompile_headers(WasmTBBTest PRIVATE pch.h)
+
+
+# --- 查找并包含 xsimd (这是一个纯头文件库) ---
+# 将 find_package 提前，因为 pch.h 依赖它
+find_package(xsimd CONFIG REQUIRED)
+
+if(TARGET xsimd::xsimd)
+    message(STATUS "Found modern xsimd target: xsimd::xsimd")
+    target_link_libraries(WasmTBBTest PRIVATE xsimd::xsimd)
+else()
+    message(STATUS "Using legacy xsimd include directory: ${xsimd_INCLUDE_DIRS}")
+    target_include_directories(WasmTBBTest PRIVATE ${xsimd_INCLUDE_DIRS})
+endif()
+
+
+# --- 平台专属配置 (保持您原有的逻辑) ---
+if(EMSCRIPTEN)
+    message(STATUS "Emscripten toolchain detected. Applying WASM-specific flags.")
+
+    # 启用 TBB, Pthreads, SIMD, 和内存增长
+    target_link_options(WasmTBBTest PRIVATE
+            -s USE_TBB=1
+            -s PTHREADS=1
+            -s ALLOW_MEMORY_GROWTH=1
+    )
+    target_compile_options(WasmTBBTest PRIVATE -msimd128)
+else()
+    # --- 原生编译配置 ---
+    message(STATUS "Native toolchain detected. Finding local TBB package.")
+    find_package(TBB REQUIRED)
+    target_link_libraries(WasmTBBTest PRIVATE TBB::tbb)
+
+    # 为不同的编译器添加特定的 SIMD 架构控制选项
+    if(MSVC)
+        # 对于 MSVC 编译器, 使用 /arch:AVX2 来启用 256 位 SIMD
+        message(STATUS "MSVC compiler detected. Using /arch:AVX2 to target 256-bit SIMD.")
+        target_compile_options(WasmTBBTest PRIVATE "/arch:AVX2")
+    else()
+        # 对于 GCC/Clang, 使用 -mavx2.
+        message(STATUS "GCC/Clang compatible compiler detected. Using -mavx2.")
+        target_compile_options(WasmTBBTest PRIVATE -mavx2)
+    endif()
+
+endif()
