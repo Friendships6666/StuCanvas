@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iomanip>
+#include <cstdint> // For uint32_t
 
 #include <xsimd/xsimd.hpp>
 #include "oneapi/tbb/concurrent_vector.h"
@@ -34,16 +35,20 @@
 
 namespace xs = xsimd;
 
-// --- 核心工具：通用的对齐向量类型别名 ---
 template <typename T>
 using AlignedVector = std::vector<T, xsimd::aligned_allocator<T>>;
 
 struct Vec2 { double x; double y; };
 struct PointData { Vec2 position; unsigned int function_index; };
-
-// 编译时断言，确保内存布局与JS端预期一致
-// {double x (8), double y (8), unsigned int (4), padding (4)} -> 24 bytes
 static_assert(sizeof(PointData) == 24, "PointData size/padding mismatch! Expected 24 bytes.");
+
+// [NEW] 结构体，用于描述每个函数在最终数组中的数据区间
+struct FunctionRange {
+    uint32_t start_index;
+    uint32_t point_count;
+};
+// 编译时检查，确保C++和JS对结构体大小的认知一致
+static_assert(sizeof(FunctionRange) == 8, "FunctionRange size mismatch! Expected 8 bytes.");
 
 struct Uniforms { Vec2 screen_dimensions; double zoom; Vec2 offset; };
 
@@ -60,22 +65,10 @@ struct Uniforms { Vec2 screen_dimensions; double zoom; Vec2 offset; };
 using batch_type = xs::batch<double>;
 constexpr size_t RPN_MAX_STACK_DEPTH = 16;
 struct ParametricSubdivisionTask {
-    double t1;       // 起始参数
-    Vec2 p1;         // 起始点坐标 (x1, y1)
-    double t2;       // 结束参数
-    Vec2 p2;         // 结束点坐标 (x2, y2)
-    int depth;       // 当前递归深度
+    double t1; Vec2 p1; double t2; Vec2 p2; int depth;
 };
 struct SubdivisionTask { Vec2 p1; Vec2 p2; int depth; };
 
-// ===============================================================
-// === WASM 专用数据交换区 (仅在 WASM 编译时生效) ===
-// ===============================================================
-#ifdef __EMSCRIPTEN__
-// 这个并发向量只为WASM编译创建，用于存储计算结果
-// 以便JS可以一次性读取。使用并发向量是线程安全的。
-oneapi::tbb::concurrent_vector<PointData> wasm_point_buffer;
-#endif
 
 // ===============================================================
 // === 安全的数学辅助函数 (标量 & SIMD) ===
@@ -172,15 +165,9 @@ FORCE_INLINE double evaluate_rpn(const AlignedVector<RPNToken>& p, std::optional
     for (const auto& t : p) {
         switch (t.type) {
             case RPNTokenType::PUSH_CONST: s[sp++] = t.value; break;
-            case RPNTokenType::PUSH_X:
-                if (!x.has_value()) throw std::runtime_error("RPN求值错误: 需要 'x' 但未提供。");
-                s[sp++] = x.value(); break;
-            case RPNTokenType::PUSH_Y:
-                if (!y.has_value()) throw std::runtime_error("RPN求值错误: 需要 'y' 但未提供。");
-                s[sp++] = y.value(); break;
-            case RPNTokenType::PUSH_T:
-                if (!t_param.has_value()) throw std::runtime_error("RPN求值错误: 需要 '_t_' 但未提供。");
-                s[sp++] = t_param.value(); break;
+            case RPNTokenType::PUSH_X: s[sp++] = x.value(); break;
+            case RPNTokenType::PUSH_Y: s[sp++] = y.value(); break;
+            case RPNTokenType::PUSH_T: s[sp++] = t_param.value(); break;
             case RPNTokenType::ADD:      --sp; s[sp - 1] += s[sp]; break;
             case RPNTokenType::SUB:      --sp; s[sp - 1] -= s[sp]; break;
             case RPNTokenType::MUL:      --sp; s[sp - 1] *= s[sp]; break;
@@ -207,15 +194,9 @@ FORCE_INLINE batch_type evaluate_rpn_batch(const AlignedVector<RPNToken>& p, std
     for (const auto& t : p) {
         switch (t.type) {
             case RPNTokenType::PUSH_CONST: s[sp++] = batch_type(t.value); break;
-            case RPNTokenType::PUSH_X:
-                if (!x.has_value()) throw std::runtime_error("RPN求值错误: 需要 'x' 但未提供。");
-                s[sp++] = x.value(); break;
-            case RPNTokenType::PUSH_Y:
-                if (!y.has_value()) throw std::runtime_error("RPN求值错误: 需要 'y' 但未提供。");
-                s[sp++] = y.value(); break;
-            case RPNTokenType::PUSH_T:
-                if (!t_param.has_value()) throw std::runtime_error("RPN求值错误: 需要 '_t_' 但未提供。");
-                s[sp++] = t_param.value(); break;
+            case RPNTokenType::PUSH_X: s[sp++] = x.value(); break;
+            case RPNTokenType::PUSH_Y: s[sp++] = y.value(); break;
+            case RPNTokenType::PUSH_T: s[sp++] = t_param.value(); break;
             case RPNTokenType::ADD:      --sp; s[sp - 1] += s[sp]; break;
             case RPNTokenType::SUB:      --sp; s[sp - 1] -= s[sp]; break;
             case RPNTokenType::MUL:      --sp; s[sp - 1] *= s[sp]; break;
@@ -575,10 +556,10 @@ ParametricFunction parse_parametric_string(const std::string& str) {
 }
 
 
-// 核心计算逻辑，被原生和WASM两种模式共享
-// 结果通过输出参数 out_points 返回
+// 核心计算逻辑，现在同时输出点和它们的区间
 void calculate_points_core(
-    oneapi::tbb::concurrent_vector<PointData>& out_points,
+    AlignedVector<PointData>& out_points,
+    AlignedVector<FunctionRange>& out_ranges, // 新增的输出参数
     const std::vector<std::string>& implicit_rpn_list,
     const std::vector<std::string>& explicit_rpn_list,
     const std::vector<std::string>& parametric_rpn_list,
@@ -586,26 +567,28 @@ void calculate_points_core(
     double zoom,
     double screen_width, double screen_height
 ) {
-    out_points.clear();
-
-    const auto thread_count = std::thread::hardware_concurrency();
-    oneapi::tbb::global_control control(oneapi::tbb::global_control::max_allowed_parallelism, thread_count);
-
-    Uniforms uniforms = {{screen_width, screen_height}, zoom, {offset_x, offset_y}};
-    double aspect_ratio = uniforms.screen_dimensions.x / uniforms.screen_dimensions.y;
-    double centered_x_0 = (0.0 * 2.0 - 1.0) * aspect_ratio;
-    double centered_y_0 = -(0.0 * 2.0 - 1.0);
-    Vec2 world_origin = { (centered_x_0 / uniforms.zoom) + uniforms.offset.x, (centered_y_0 / uniforms.zoom) + uniforms.offset.y };
-    double world_per_pixel_x = (2.0 * aspect_ratio) / (uniforms.zoom * uniforms.screen_dimensions.x);
-    double world_per_pixel_y = -2.0 / (uniforms.zoom * uniforms.screen_dimensions.y);
-
-    oneapi::tbb::task_group task_group;
-    oneapi::tbb::combinable<ThreadCacheForTiling> thread_local_caches;
-
-    std::vector<AlignedVector<RPNToken>> implicit_programs, implicit_programs_for_check;
-    AlignedVector<ExplicitFunction> explicit_programs;
-    AlignedVector<ParametricFunction> parametric_programs;
     try {
+        out_points.clear();
+        out_ranges.clear();
+
+        const auto thread_count = std::thread::hardware_concurrency();
+        oneapi::tbb::global_control control(oneapi::tbb::global_control::max_allowed_parallelism, thread_count);
+
+        Uniforms uniforms = {{screen_width, screen_height}, zoom, {offset_x, offset_y}};
+        double aspect_ratio = uniforms.screen_dimensions.x / uniforms.screen_dimensions.y;
+        double centered_x_0 = (0.0 * 2.0 - 1.0) * aspect_ratio;
+        double centered_y_0 = -(0.0 * 2.0 - 1.0);
+        Vec2 world_origin = { (centered_x_0 / uniforms.zoom) + uniforms.offset.x, (centered_y_0 / uniforms.zoom) + uniforms.offset.y };
+        double world_per_pixel_x = (2.0 * aspect_ratio) / (uniforms.zoom * uniforms.screen_dimensions.x);
+        double world_per_pixel_y = -2.0 / (uniforms.zoom * uniforms.screen_dimensions.y);
+
+        oneapi::tbb::task_group task_group;
+        oneapi::tbb::combinable<ThreadCacheForTiling> thread_local_caches;
+
+        std::vector<AlignedVector<RPNToken>> implicit_programs, implicit_programs_for_check;
+        AlignedVector<ExplicitFunction> explicit_programs;
+        AlignedVector<ParametricFunction> parametric_programs;
+
         for(const auto& str : implicit_rpn_list) {
             auto prog = parse_rpn(str);
             implicit_programs.push_back(prog);
@@ -618,73 +601,97 @@ void calculate_points_core(
         for(const auto& str : parametric_rpn_list) {
             parametric_programs.push_back(parse_parametric_string(str));
         }
-    } catch (const std::runtime_error& e) {
-        throw std::runtime_error(std::string("函数解析错误: ") + e.what());
-    }
 
-    const double world_x_start = world_origin.x;
-    const double world_x_end = world_origin.x + screen_width * world_per_pixel_x;
-    const double world_y_max = world_origin.y;
-    const double world_y_min = world_origin.y + screen_height * world_per_pixel_y;
+        // 在运行时根据输入动态确定总函数数量
+        const size_t total_functions = implicit_programs.size() + explicit_programs.size() + parametric_programs.size();
+        // 创建一个大小在运行时决定的“桶”的集合
+        std::vector<oneapi::tbb::concurrent_vector<PointData>> per_function_buffers(total_functions);
 
-    const double max_dist_sq = std::pow(world_per_pixel_x, 2);
-    const int max_depth = 15;
-    const auto num_chunks = thread_count * 16;
+        const double world_x_start = world_origin.x;
+        const double world_x_end = world_origin.x + screen_width * world_per_pixel_x;
+        const double world_y_max = world_origin.y;
+        const double world_y_min = world_origin.y + screen_height * world_per_pixel_y;
+        const double max_dist_sq = std::pow(world_per_pixel_x, 2);
+        const int max_depth = 15;
+        const auto num_chunks = thread_count * 16;
 
-    const unsigned int num_tiles_w = (unsigned int)(screen_width + TILE_W - 1) / TILE_W;
-    const unsigned int num_tiles_h = (unsigned int)(screen_height + TILE_H - 1) / TILE_H;
-    for (unsigned int tile_idx = 0; tile_idx < num_tiles_w * num_tiles_h; ++tile_idx) {
+        const unsigned int num_tiles_w = (unsigned int)(screen_width + TILE_W - 1) / TILE_W;
+        const unsigned int num_tiles_h = (unsigned int)(screen_height + TILE_H - 1) / TILE_H;
         for (size_t func_idx = 0; func_idx < implicit_programs.size(); ++func_idx) {
-            task_group.run([=, &out_points, &thread_local_caches, &implicit_programs, &implicit_programs_for_check] {
-                ThreadCacheForTiling& cache = thread_local_caches.local();
-                unsigned int tile_y = tile_idx / num_tiles_w;
-                unsigned int tile_x = tile_idx % num_tiles_w;
-                unsigned int x_start = tile_x * TILE_W;
-                unsigned int y_start = tile_y * TILE_H;
-                unsigned int x_end = std::min(x_start + TILE_W, (unsigned int)screen_width);
-                unsigned int y_end = std::min(y_start + TILE_H, (unsigned int)screen_height);
-                process_tile(world_origin, world_per_pixel_x, world_per_pixel_y,
-                             implicit_programs[func_idx], implicit_programs_for_check[func_idx], func_idx,
-                             x_start, x_end, y_start, y_end, cache, out_points);
-            });
+            for (unsigned int tile_idx = 0; tile_idx < num_tiles_w * num_tiles_h; ++tile_idx) {
+                task_group.run([=, &per_function_buffers, &thread_local_caches, &implicit_programs, &implicit_programs_for_check] {
+                    ThreadCacheForTiling& cache = thread_local_caches.local();
+                    unsigned int tile_y = tile_idx / num_tiles_w;
+                    unsigned int tile_x = tile_idx % num_tiles_w;
+                    unsigned int x_start = tile_x * TILE_W;
+                    unsigned int y_start = tile_y * TILE_H;
+                    unsigned int x_end = std::min(x_start + TILE_W, (unsigned int)screen_width);
+                    unsigned int y_end = std::min(y_start + TILE_H, (unsigned int)screen_height);
+                    process_tile(world_origin, world_per_pixel_x, world_per_pixel_y,
+                                 implicit_programs[func_idx], implicit_programs_for_check[func_idx], (unsigned int)func_idx,
+                                 x_start, x_end, y_start, y_end, cache, per_function_buffers[func_idx]);
+                });
+            }
         }
-    }
 
-    const unsigned int explicit_index_offset = implicit_programs.size();
-    for (unsigned int func_idx = 0; func_idx < explicit_programs.size(); ++func_idx) {
-        const auto& fn_data = explicit_programs[func_idx];
-        const double chunk_width = (world_x_end - world_x_start) / num_chunks;
-        for (int i = 0; i < num_chunks; ++i) {
-            task_group.run([=, &out_points] {
-                double chunk_x_start = world_x_start + i * chunk_width;
-                double chunk_x_end = chunk_x_start + chunk_width;
-                process_explicit_chunk(world_y_min, world_y_max, chunk_x_start, chunk_x_end,
-                                       fn_data.rpn,
-                                       max_dist_sq, max_depth, out_points, func_idx + explicit_index_offset);
-            });
+        const unsigned int explicit_index_offset = (unsigned int)implicit_programs.size();
+        for (unsigned int func_idx = 0; func_idx < explicit_programs.size(); ++func_idx) {
+            const auto& fn_data = explicit_programs[func_idx];
+            const double chunk_width = (world_x_end - world_x_start) / num_chunks;
+            for (int i = 0; i < num_chunks; ++i) {
+                task_group.run([=, &per_function_buffers] {
+                    const unsigned int final_func_idx = func_idx + explicit_index_offset;
+                    process_explicit_chunk(world_y_min, world_y_max, world_x_start + i * chunk_width, world_x_start + (i + 1) * chunk_width,
+                                           fn_data.rpn, max_dist_sq, max_depth,
+                                           per_function_buffers[final_func_idx], final_func_idx);
+                });
+            }
         }
-    }
 
-    const unsigned int parametric_index_offset = explicit_index_offset + explicit_programs.size();
-    for (unsigned int func_idx = 0; func_idx < parametric_programs.size(); ++func_idx) {
-        const auto& fn_data = parametric_programs[func_idx];
-        const double t_range = fn_data.t_max - fn_data.t_min;
-        const double t_chunk_width = t_range / num_chunks;
-        for (int i = 0; i < num_chunks; ++i) {
-            task_group.run([=, &out_points] {
-                double chunk_t_start = fn_data.t_min + i * t_chunk_width;
-                double chunk_t_end = chunk_t_start + t_chunk_width;
-                process_parametric_chunk(world_y_min, world_y_max, world_x_start, world_x_end,
-                                         chunk_t_start, chunk_t_end,
-                                         fn_data.rpn_x, fn_data.rpn_y,
-                                         max_dist_sq, max_depth, out_points, func_idx + parametric_index_offset);
-            });
+        const unsigned int parametric_index_offset = explicit_index_offset + (unsigned int)explicit_programs.size();
+        for (unsigned int func_idx = 0; func_idx < parametric_programs.size(); ++func_idx) {
+            const auto& fn_data = parametric_programs[func_idx];
+            const double t_chunk_width = (fn_data.t_max - fn_data.t_min) / num_chunks;
+            for (int i = 0; i < num_chunks; ++i) {
+                task_group.run([=, &per_function_buffers] {
+                    const unsigned int final_func_idx = func_idx + parametric_index_offset;
+                    process_parametric_chunk(world_y_min, world_y_max, world_x_start, world_x_end,
+                                             fn_data.t_min + i * t_chunk_width, fn_data.t_min + (i + 1) * t_chunk_width,
+                                             fn_data.rpn_x, fn_data.rpn_y,
+                                             max_dist_sq, max_depth,
+                                             per_function_buffers[final_func_idx], final_func_idx);
+                });
+            }
         }
-    }
 
-    task_group.wait();
+        task_group.wait();
+
+        size_t total_points = 0;
+        for(const auto& buffer : per_function_buffers) {
+            total_points += buffer.size();
+        }
+        out_points.reserve(total_points);
+        out_ranges.reserve(total_functions);
+
+        // 在合并时动态构建区间信息
+        uint32_t current_start_index = 0;
+        for (const auto& buffer : per_function_buffers) {
+            uint32_t count = (uint32_t)buffer.size();
+            out_ranges.push_back({current_start_index, count});
+            if (count > 0) {
+                out_points.insert(out_points.end(), buffer.begin(), buffer.end());
+            }
+            current_start_index += count;
+        }
+
+    }
+    catch (const std::exception& e) {
+        throw std::runtime_error(std::string("C++ Calculation Error (std::exception): ") + e.what());
+    }
+    catch (...) {
+        throw std::runtime_error("C++ Calculation Error: An unknown, non-standard exception was caught.");
+    }
 }
-
 // ===============================================================
 // === 平台特定入口点 (WASM vs Native EXE) ===
 // ===============================================================
@@ -692,8 +699,8 @@ void calculate_points_core(
 #ifdef __EMSCRIPTEN__
 
 AlignedVector<PointData> wasm_final_contiguous_buffer;
+AlignedVector<FunctionRange> wasm_function_ranges_buffer; // WASM的区间缓冲区
 
-// WASM 接口函数，无返回值
 void calculate_points_for_wasm(
     const std::vector<std::string>& implicit_rpn_list,
     const std::vector<std::string>& explicit_rpn_list,
@@ -702,32 +709,40 @@ void calculate_points_for_wasm(
     double zoom,
     double screen_width, double screen_height
 ) {
-    // 1. 创建一个临时的、局部的并发向量用于计算
-    oneapi::tbb::concurrent_vector<PointData> calculation_buffer;
-
-    // 2. 调用核心计算逻辑，将结果安全地填充到并发向量中
+    AlignedVector<PointData> ordered_absolute_points;
+    // 将全局区间缓冲区传递给核心函数进行填充
     calculate_points_core(
-        calculation_buffer, implicit_rpn_list, explicit_rpn_list, parametric_rpn_list,
+        ordered_absolute_points,
+        wasm_function_ranges_buffer,
+        implicit_rpn_list, explicit_rpn_list, parametric_rpn_list,
         offset_x, offset_y, zoom, screen_width, screen_height
     );
 
-    // 3. 计算完成后，将并发向量中的数据一次性复制到全局的、内存连续的标准向量中
-    wasm_final_contiguous_buffer.assign(calculation_buffer.begin(), calculation_buffer.end());
+    wasm_final_contiguous_buffer.resize(ordered_absolute_points.size());
+    for (size_t i = 0; i < ordered_absolute_points.size(); ++i) {
+        const auto& absolute_point = ordered_absolute_points[i];
+        auto& local_point = wasm_final_contiguous_buffer[i];
+
+        local_point.position.x = absolute_point.position.x - offset_x;
+        local_point.position.y = absolute_point.position.y - offset_y;
+        local_point.function_index = absolute_point.function_index;
+    }
 }
 
-// 返回指向数据缓冲区的指针 (地址)
 uintptr_t get_points_ptr() {
-    // 现在我们可以安全地从标准向量获取 .data() 指针
     return reinterpret_cast<uintptr_t>(wasm_final_contiguous_buffer.data());
 }
-
-// 返回数据缓冲区中的元素数量
 size_t get_points_size() {
-    // 返回标准向量的大小
     return wasm_final_contiguous_buffer.size();
 }
 
-// --- MODIFICATION END ---
+// 导出区间数据的函数
+uintptr_t get_function_ranges_ptr() {
+    return reinterpret_cast<uintptr_t>(wasm_function_ranges_buffer.data());
+}
+size_t get_function_ranges_size() {
+    return wasm_function_ranges_buffer.size();
+}
 
 
 EMSCRIPTEN_BINDINGS(my_module) {
@@ -739,15 +754,25 @@ EMSCRIPTEN_BINDINGS(my_module) {
         .field("position", &PointData::position)
         .field("function_index", &PointData::function_index);
 
+    // 绑定FunctionRange结构体，以便JS可以理解它
+    emscripten::value_object<FunctionRange>("FunctionRange")
+        .field("start_index", &FunctionRange::start_index)
+        .field("point_count", &FunctionRange::point_count);
+
     emscripten::function("calculate_points", &calculate_points_for_wasm);
     emscripten::function("get_points_ptr", &get_points_ptr);
     emscripten::function("get_points_size", &get_points_size);
+
+    // 绑定获取区间信息的函数
+    emscripten::function("get_function_ranges_ptr", &get_function_ranges_ptr);
+    emscripten::function("get_function_ranges_size", &get_function_ranges_size);
 }
+
 #else
 // --- 版本 2: 普通 EXE 编译版本 ---
 
-// 供原生 Windows main() 函数调用
-std::vector<PointData> calculate_points_for_native(
+// 函数现在返回一个包含点和区间的pair
+std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_for_native(
     const std::vector<std::string>& implicit_rpn_list,
     const std::vector<std::string>& explicit_rpn_list,
     const std::vector<std::string>& parametric_rpn_list,
@@ -755,76 +780,89 @@ std::vector<PointData> calculate_points_for_native(
     double zoom,
     double screen_width, double screen_height
 ) {
-    oneapi::tbb::concurrent_vector<PointData> points_buffer;
+    AlignedVector<PointData> final_points_aligned;
+    AlignedVector<FunctionRange> final_ranges_aligned;
     calculate_points_core(
-        points_buffer, implicit_rpn_list, explicit_rpn_list, parametric_rpn_list,
+        final_points_aligned,
+        final_ranges_aligned,
+        implicit_rpn_list, explicit_rpn_list, parametric_rpn_list,
         offset_x, offset_y, zoom, screen_width, screen_height
     );
-    std::vector<PointData> final_points;
-    final_points.assign(points_buffer.begin(), points_buffer.end());
-    return final_points;
+    return {
+        std::vector<PointData>(final_points_aligned.begin(), final_points_aligned.end()),
+        std::vector<FunctionRange>(final_ranges_aligned.begin(), final_ranges_aligned.end())
+    };
 }
 
 int main() {
-    std::vector<std::string> implicit_rpn = {
-        "x x * y y * + 4 -",
-        "x x * 9 / y y * 4 / + 1 -",
-        "x x * 25 / y y * + 1 -"
-    };
-    std::vector<std::string> explicit_rpn = {
-        "x x * 2 -",
-        "2 x * 1 +",
-        "-0.5 x * 3 -"
-    };
-    std::vector<std::string> parametric_rpn = {
-        "3 _t_ cos *;3 _t_ sin *;0;6.2832",
-        "_t_;_t_ _t_ *;-5;5",
-        "_t_ _t_ *;_t_;-5;5"
-    };
+    try {
+        std::vector<std::string> implicit_rpn = {
+            "x x * y y * + 4 -", // <--- 错误的 RPN 用于测试
+            "x x * 9 / y y * 4 / + 1 -",
+            "x x * 25 / y y * + 1 -"
+        };
+        std::vector<std::string> explicit_rpn = {
+            "x x * 2 -",
+            "2 x * 1 +",
+            "-0.5 x * 3 -"
+        };
+        std::vector<std::string> parametric_rpn = {
+            "3 _t_ cos *;3 _t_ sin *;0;6.2832",
+            "_t_;_t_ _t_ *;-5;5",
+            "_t_ _t_ *;_t_;-5;5"
+        };
 
-    double offset_x = 0.0;
-    double offset_y = 0.0;
-    double zoom = 0.1;
-    double screen_width = 2560.0;
-    double screen_height = 1600.0;
+        double offset_x = 0.0;
+        double offset_y = 0.0;
+        double zoom = 0.1;
+        double screen_width = 2560.0;
+        double screen_height = 1600.0;
 
-    std::cout << "--- Native EXE: 开始计算... ---" << std::endl;
+        std::cout << "--- Native EXE: 开始计算... ---" << std::endl;
+        auto start_time = std::chrono::high_resolution_clock::now();
 
-    auto start_time = std::chrono::high_resolution_clock::now();
+        // 接收返回的pair
+        auto results = calculate_points_for_native(
+            implicit_rpn, explicit_rpn, parametric_rpn,
+            offset_x, offset_y, zoom, screen_width, screen_height
+        );
+        const auto& final_points = results.first;
+        const auto& final_ranges = results.second;
 
-    std::vector<PointData> final_points = calculate_points_for_native(
-        implicit_rpn,
-        explicit_rpn,
-        parametric_rpn,
-        offset_x, offset_y,
-        zoom,
-        screen_width, screen_height
-    );
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
 
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+        std::cout << "--- Native EXE: 计算完成 ---" << std::endl;
+        std::cout << "总耗时: " << duration.count() << " 毫秒" << std::endl;
+        std::cout << "总共生成了 " << final_points.size() << " 个点。" << std::endl;
 
-    std::cout << "--- Native EXE: 计算完成 ---" << std::endl;
-    std::cout << "总耗时: " << duration.count() << " 毫秒" << std::endl;
-    std::cout << "总共生成了 " << final_points.size() << " 个点。" << std::endl;
+        // 打印区间信息到控制台
+        std::cout << "\n--- 函数点数据区间 ---" << std::endl;
+        for (size_t i = 0; i < final_ranges.size(); ++i) {
+            const auto& range = final_ranges[i];
+            std::cout << "函数 " << i << ": "
+                      << "起始索引 " << range.start_index
+                      << ", 点数量 " << range.point_count << std::endl;
+        }
 
-    std::cout << "正在将结果保存到 points.txt (纯数据格式)..." << std::endl;
+        std::cout << "\n正在将结果保存到 points.txt (x y index 格式)..." << std::endl;
+        std::ofstream output_file("points.txt");
+        if (!output_file.is_open()) {
+            std::cerr << "错误: 无法打开文件 points.txt 进行写入！" << std::endl;
+            return 1;
+        }
+        output_file << std::fixed << std::setprecision(12);
+        for (const auto& p : final_points) {
+            output_file << p.position.x << " " << p.position.y << " " << p.function_index << "\n";
+        }
+        output_file.close();
+        std::cout << "保存成功！" << std::endl;
 
-    std::ofstream output_file("points.txt", std::ios::binary);
-
-    if (!output_file.is_open()) {
-        std::cerr << "错误: 无法打开文件 points.txt 进行写入！" << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "\n!!! 程序遇到严重错误 !!!\n";
+        std::cerr << "错误详情: " << e.what() << std::endl;
         return 1;
     }
-
-    output_file << std::fixed << std::setprecision(12);
-
-    for (const auto& p : final_points) {
-        output_file << p.position.x << " " << p.position.y << "\n";
-    }
-
-    output_file.close();
-    std::cout << "保存成功！" << std::endl;
 
     return 0;
 }
