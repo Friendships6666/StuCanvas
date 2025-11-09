@@ -44,13 +44,11 @@ Interval interval_pow(const Interval& base, const Interval& exp);
 Interval interval_sin(const Interval& i);
 Interval interval_cos(const Interval& i);
 Interval interval_tan(const Interval& i);
-Interval interval_ln(const Interval& i);
+Interval interval_ln(const Interval& i); // <--- 已更新
 Interval interval_exp(const Interval& i);
 Interval interval_sign(const Interval& i);
 Interval interval_abs(const Interval& i);
-Interval interval_safe_ln(const Interval& i);
-Interval interval_safe_exp(const Interval& i);
-Interval interval_check_ln(const Interval& i);
+// interval_safe_ln, interval_safe_exp, interval_check_ln 已被移除
 
 // --- SIMD 批处理版本 ---
 Interval_Batch interval_add_batch(const Interval_Batch& a, const Interval_Batch& b);

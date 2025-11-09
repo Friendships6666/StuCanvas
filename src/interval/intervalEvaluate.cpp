@@ -42,11 +42,28 @@ Interval interval_div(const Interval& a, const Interval& b) {
 }
 
 Interval interval_pow(const Interval& base, const Interval& exp) {
-    if (exp.min == 2.0 && exp.max == 2.0) {
-        if (base.min >= 0) return {base.min * base.min, base.max * base.max};
-        if (base.max < 0) return {base.max * base.max, base.min * base.min};
-        return {0.0, std::max(base.min * base.min, base.max * base.max)};
+    // 仅处理指数是常数且为正整数的情况
+    if (exp.min == exp.max && exp.min > 0 && exp.min == std::round(exp.min)) {
+        int n = static_cast<int>(exp.min);
+
+        // 如果 n 是奇数 (e.g., 1, 3, 5...)
+        if (n % 2 == 1) {
+            return {std::pow(base.min, n), std::pow(base.max, n)};
+        }
+        // 如果 n 是偶数 (e.g., 2, 4, 6...)
+        else {
+            if (base.min >= 0) {
+                return {std::pow(base.min, n), std::pow(base.max, n)};
+            }
+            if (base.max < 0) {
+                return {std::pow(base.max, n), std::pow(base.min, n)};
+            }
+            // 区间跨越 0
+            return {0.0, std::max(std::pow(base.min, n), std::pow(base.max, n))};
+        }
     }
+
+    // 对于非整数、负数或区间指数等复杂情况，返回最保守的结果
     return {-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
 }
 
@@ -57,9 +74,16 @@ Interval interval_exp(const Interval& i) {
     return {std::exp(i.min), std::exp(i.max)};
 }
 
+// ====================================================================
+//  MODIFIED: interval_ln
+//  - 行为已更新。
+//  - 如果整个输入区间 i.max <= 0，则返回 [-inf, -inf] 而不是 NaN。
+//  - 如果区间包含 0 (i.min <= 0)，则下界为 -inf。
+//  - 这提供了更健壮的行为，避免了 NaN 污染。
+// ====================================================================
 Interval interval_ln(const Interval& i) {
     if (i.max <= 0.0) {
-        return {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()};
+        return {-std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
     }
     double min_val = (i.min <= 0.0) ? -std::numeric_limits<double>::infinity() : std::log(i.min);
     return {min_val, std::log(i.max)};
@@ -133,29 +157,6 @@ Interval interval_sign(const Interval& i) {
     if (i.max < 0) return {-1.0, -1.0};
     return {-1.0, 1.0};
 }
-
-
-// --- 特殊安全函数实现 ---
-
-Interval interval_safe_ln(const Interval& i) {
-    if (i.max <= 0.0) {
-        return {-1e270, -1e270};
-    }
-    double min_val = (i.min <= 0.0) ? -1e270 : std::log(i.min);
-    return {min_val, std::log(i.max)};
-}
-
-Interval interval_check_ln(const Interval& i) {
-    if (i.min <= 0.0) {
-        return {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()};
-    }
-    return {std::log(i.min), std::log(i.max)};
-}
-
-Interval interval_safe_exp(const Interval& i) {
-    return interval_exp(i);
-}
-
 
 // --- SIMD 批处理版本实现 ---
 

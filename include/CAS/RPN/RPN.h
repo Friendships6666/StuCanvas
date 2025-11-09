@@ -79,21 +79,27 @@ FORCE_INLINE T evaluate_rpn(
                 else if constexpr (std::is_same_v<T, batch_type>) s[sp - 1] = xs::abs(s[sp - 1]);
                 else if constexpr (std::is_same_v<T, Interval>) s[sp - 1] = interval_abs(s[sp - 1]);
                 break;
+
+            // ====================================================================
+            //  FIXED: 将对已删除函数的调用重定向到标准函数
+            // ====================================================================
             case RPNTokenType::SAFE_LN:
                 if constexpr (std::is_same_v<T, double>) s[sp - 1] = safe_ln_scalar(s[sp - 1]);
                 else if constexpr (std::is_same_v<T, batch_type>) s[sp - 1] = safe_ln_batch(s[sp - 1]);
-                else if constexpr (std::is_same_v<T, Interval>) s[sp - 1] = interval_safe_ln(s[sp - 1]);
+                else if constexpr (std::is_same_v<T, Interval>) s[sp - 1] = interval_ln(s[sp - 1]); // <-- 修正
                 break;
             case RPNTokenType::CHECK_LN:
                 if constexpr (std::is_same_v<T, double>) s[sp - 1] = check_ln_scalar(s[sp - 1]);
                 else if constexpr (std::is_same_v<T, batch_type>) s[sp - 1] = check_ln_batch(s[sp - 1]);
-                else if constexpr (std::is_same_v<T, Interval>) s[sp - 1] = interval_check_ln(s[sp - 1]);
+                else if constexpr (std::is_same_v<T, Interval>) s[sp - 1] = interval_ln(s[sp - 1]); // <-- 修正
                 break;
             case RPNTokenType::SAFE_EXP:
                 if constexpr (std::is_same_v<T, double>) s[sp - 1] = safe_exp_scalar(s[sp - 1]);
                 else if constexpr (std::is_same_v<T, batch_type>) s[sp - 1] = safe_exp_batch(s[sp - 1]);
-                else if constexpr (std::is_same_v<T, Interval>) s[sp - 1] = interval_safe_exp(s[sp - 1]);
+                else if constexpr (std::is_same_v<T, Interval>) s[sp - 1] = interval_exp(s[sp - 1]); // <-- 修正
                 break;
+            // ====================================================================
+
         }
     }
     return s[0];

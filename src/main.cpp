@@ -96,23 +96,7 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
 
 int main() {
     try {
-        std::vector<std::string> implicit_rpn;
-        implicit_rpn.reserve(100); // 预分配内存以提高效率
-
-        for (int i = 1; i <= 100; ++i) {
-            // 设置半径，例如从 0.1, 0.2, ... 到 10.0
-            double r = static_cast<double>(i) * 0.1;
-
-            // 计算半径的平方
-            double r_squared = r * r;
-
-            // 使用 stringstream 来构建 RPN 字符串，确保浮点数精度
-            std::stringstream ss;
-            ss << "x x * y y * + " << r_squared << " -";
-
-            // 将生成的 RPN 字符串添加到列表中
-            implicit_rpn.push_back(ss.str());
-        }
+        std::vector<std::string> implicit_rpn(50, "y 3 pow 10 x * sin -");
         std::vector<std::string> explicit_rpn = {};
         std::vector<std::string> parametric_rpn = {
 
