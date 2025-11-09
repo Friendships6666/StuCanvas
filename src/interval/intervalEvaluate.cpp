@@ -3,11 +3,18 @@
 #include "../../pch.h"
 #include "../../include/interval/interval.h"
 #include <algorithm> // For std::min/max
+
+// ====================================================================
+//  使用不会与系统宏冲突的自定义常量名
+// ====================================================================
 namespace { // 使用匿名命名空间，使常量仅在此文件内可见
-
-    constexpr double M_PI_2 = 1.57079632679489661923; // PI / 2
-
+    constexpr double PI = 3.14159265358979323846;
+    constexpr double PI_2 = 1.57079632679489661923;     // PI / 2
+    constexpr double PI_3_2 = 4.71238898038468985769;   // 3 * PI / 2
 }
+// ====================================================================
+
+
 // --- 二元运算符实现 ---
 
 Interval interval_add(const Interval& a, const Interval& b) {
@@ -51,7 +58,6 @@ Interval interval_exp(const Interval& i) {
 }
 
 Interval interval_ln(const Interval& i) {
-    // 普通 ln(x) 的实现，当 x=0 时，结果为 -inf
     if (i.max <= 0.0) {
         return {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()};
     }
@@ -60,46 +66,43 @@ Interval interval_ln(const Interval& i) {
 }
 
 Interval interval_sin(const Interval& i) {
-    if (i.max - i.min >= 2.0 * M_PI) {
+    if (i.max - i.min >= 2.0 * PI) {
         return {-1.0, 1.0};
     }
     double sin_min = std::sin(i.min);
     double sin_max = std::sin(i.max);
     if (sin_min > sin_max) std::swap(sin_min, sin_max);
 
-    double k1 = std::ceil((i.min - M_PI_2) / (2.0 * M_PI));
-    double peak = M_PI_2 + k1 * 2.0 * M_PI;
+    double k1 = std::ceil((i.min - PI_2) / (2.0 * PI));
+    double peak = PI_2 + k1 * 2.0 * PI;
     if (peak >= i.min && peak <= i.max) {
         sin_max = 1.0;
     }
 
-    double k2 = std::ceil((i.min - 3.0 * M_PI_2) / (2.0 * M_PI));
-    double trough = 3.0 * M_PI_2 + k2 * 2.0 * M_PI;
+    double k2 = std::ceil((i.min - PI_3_2) / (2.0 * PI));
+    double trough = PI_3_2 + k2 * 2.0 * PI;
     if (trough >= i.min && trough <= i.max) {
         sin_min = -1.0;
     }
     return {sin_min, sin_max};
 }
 
-// 新的、直接实现的 interval_cos
 Interval interval_cos(const Interval& i) {
-    if (i.max - i.min >= 2.0 * M_PI) {
+    if (i.max - i.min >= 2.0 * PI) {
         return {-1.0, 1.0};
     }
     double cos_min = std::cos(i.min);
     double cos_max = std::cos(i.max);
     if (cos_min > cos_max) std::swap(cos_min, cos_max);
 
-    // 检查波峰 (值为1的点, 2k*PI)
-    double k1 = std::ceil(i.min / (2.0 * M_PI));
-    double peak = k1 * 2.0 * M_PI;
+    double k1 = std::ceil(i.min / (2.0 * PI));
+    double peak = k1 * 2.0 * PI;
     if (peak >= i.min && peak <= i.max) {
         cos_max = 1.0;
     }
 
-    // 检查波谷 (值为-1的点, (2k+1)*PI)
-    double k2 = std::ceil((i.min - M_PI) / (2.0 * M_PI));
-    double trough = M_PI + k2 * 2.0 * M_PI;
+    double k2 = std::ceil((i.min - PI) / (2.0 * PI));
+    double trough = PI + k2 * 2.0 * PI;
     if (trough >= i.min && trough <= i.max) {
         cos_min = -1.0;
     }
@@ -107,12 +110,12 @@ Interval interval_cos(const Interval& i) {
 }
 
 Interval interval_tan(const Interval& i) {
-    double k = std::floor(i.min / M_PI - 0.5);
-    double asymptote = (k + 0.5) * M_PI;
+    double k = std::floor(i.min / PI - 0.5);
+    double asymptote = (k + 0.5) * PI;
     if (asymptote >= i.min && asymptote <= i.max) {
          return {-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
     }
-     asymptote += M_PI;
+     asymptote += PI;
     if (asymptote >= i.min && asymptote <= i.max) {
          return {-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
     }
@@ -142,13 +145,10 @@ Interval interval_safe_ln(const Interval& i) {
     return {min_val, std::log(i.max)};
 }
 
-// 新的、定制的 interval_check_ln
 Interval interval_check_ln(const Interval& i) {
-    // 如果区间的下界小于等于0，则整个区间都可能包含无效输入，返回 NaN
     if (i.min <= 0.0) {
         return {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()};
     }
-    // 否则，整个区间都是有效的，正常计算对数
     return {std::log(i.min), std::log(i.max)};
 }
 

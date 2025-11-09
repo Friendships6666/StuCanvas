@@ -2,7 +2,14 @@
 
 #ifndef WASMTBBTEST_INTERVAL_H
 #define WASMTBBTEST_INTERVAL_H
-
+// 确保 FORCE_INLINE 宏已定义
+#ifndef FORCE_INLINE
+    #if defined(_MSC_VER)
+        #define FORCE_INLINE __forceinline
+    #else
+        #define FORCE_INLINE inline __attribute__((always_inline))
+    #endif
+#endif
 #include "../../pch.h"
 
 // 1. 定义区间结构体
@@ -52,17 +59,15 @@ Interval_Batch interval_mul_batch(const Interval_Batch& a, const Interval_Batch&
 // ... (其他 SIMD 版本的声明可以根据需要添加)
 
 
-// 4. 为 Interval 类型重载基本运算符，以简化泛型 RPN 函数
-FORCE_INLINE Interval operator+(const Interval& a, const Interval& b) { return interval_add(a, b); }
-FORCE_INLINE Interval operator-(const Interval& a, const Interval& b) { return interval_sub(a, b); }
-FORCE_INLINE Interval operator*(const Interval& a, const Interval& b) { return interval_mul(a, b); }
-FORCE_INLINE Interval operator/(const Interval& a, const Interval& b) { return interval_div(a, b); }
+inline FORCE_INLINE Interval operator+(const Interval& a, const Interval& b) { return interval_add(a, b); }
+inline FORCE_INLINE Interval operator-(const Interval& a, const Interval& b) { return interval_sub(a, b); }
+inline FORCE_INLINE Interval operator*(const Interval& a, const Interval& b) { return interval_mul(a, b); }
+inline FORCE_INLINE Interval operator/(const Interval& a, const Interval& b) { return interval_div(a, b); }
 
-// 复合赋值运算符
-FORCE_INLINE Interval& operator+=(Interval& a, const Interval& b) { a = a + b; return a; }
-FORCE_INLINE Interval& operator-=(Interval& a, const Interval& b) { a = a - b; return a; }
-FORCE_INLINE Interval& operator*=(Interval& a, const Interval& b) { a = a * b; return a; }
-FORCE_INLINE Interval& operator/=(Interval& a, const Interval& b) { a = a / b; return a; }
+inline FORCE_INLINE Interval& operator+=(Interval& a, const Interval& b) { a = a + b; return a; }
+inline FORCE_INLINE Interval& operator-=(Interval& a, const Interval& b) { a = a - b; return a; }
+inline FORCE_INLINE Interval& operator*=(Interval& a, const Interval& b) { a = a * b; return a; }
+inline FORCE_INLINE Interval& operator/=(Interval& a, const Interval& b) { a = a / b; return a; }
 
 
 #endif //WASMTBBTEST_INTERVAL_H
