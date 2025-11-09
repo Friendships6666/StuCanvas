@@ -14,7 +14,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(WasmTBBTest main.cpp
         pch.h
         pch.cpp
-        cas.cpp)
+        )
 
 # --------------------------------------------------------------------
 # --- 关键部分：启用预编译头文件 ---
