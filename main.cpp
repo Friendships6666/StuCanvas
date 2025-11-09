@@ -798,18 +798,13 @@ int main() {
     try {
         std::vector<std::string> implicit_rpn = {
             "x x * y y * + 4 -", // <--- 错误的 RPN 用于测试
-            "x x * 9 / y y * 4 / + 1 -",
-            "x x * 25 / y y * + 1 -"
+
         };
         std::vector<std::string> explicit_rpn = {
-            "x x * 2 -",
-            "2 x * 1 +",
-            "-0.5 x * 3 -"
+
         };
         std::vector<std::string> parametric_rpn = {
-            "3 _t_ cos *;3 _t_ sin *;0;6.2832",
-            "_t_;_t_ _t_ *;-5;5",
-            "_t_ _t_ *;_t_;-5;5"
+
         };
 
         double offset_x = 0.0;
