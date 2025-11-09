@@ -1,4 +1,4 @@
-// --- 文件路径: src/plot/plotImplicit.cpp ---
+﻿// --- 文件路径: src/plot/plotImplicit.cpp ---
 
 #include "../../pch.h"
 #include "../../include/plot/plotImplicit.h"
@@ -8,6 +8,9 @@
 #include <oneapi/tbb/parallel_for_each.h>
 #include <iostream> // 用于调试输出
 #include <iomanip>  // 用于格式化输出
+#include <fstream>  // 用于文件写入
+#include <sstream>  // 用于构建字符串
+#include <string>   // 用于字符串
 
 // 任务结构体，用于四叉树细分
 struct QuadtreeTask {
@@ -15,17 +18,13 @@ struct QuadtreeTask {
     double world_w, world_h; // 区块在世界坐标系下的宽高
 };
 
-// ----------------------------------------------------------------------------------
-//  调试辅助：在文件作用域内添加一个 Interval 的打印函数
-// ----------------------------------------------------------------------------------
+// 调试辅助：在文件作用域内添加一个 Interval 的打印函数
 namespace {
     std::ostream& operator<<(std::ostream& os, const Interval& i) {
         os << "[" << i.min << ", " << i.max << "]";
         return os;
     }
 }
-// ----------------------------------------------------------------------------------
-
 
 // ThreadCacheForTiling 构造函数保持不变
 ThreadCacheForTiling::ThreadCacheForTiling() {
@@ -98,7 +97,7 @@ void draw_points_in_tile(const Vec2& world_origin, double wppx, double wppy,
 }
 
 
-// 阶段 1: 粗筛主函数 (已修正并添加调试信息)
+// 阶段 1: 粗筛主函数
 void process_implicit_adaptive(
     const Vec2& world_origin, double wppx, double wppy,
     double screen_width, double screen_height,
@@ -108,9 +107,6 @@ void process_implicit_adaptive(
     oneapi::tbb::combinable<ThreadCacheForTiling>& thread_local_caches,
     oneapi::tbb::concurrent_vector<PointData>& all_points
 ) {
-    std::cout << std::fixed << std::setprecision(4);
-    std::cout << "--- [函数 " << func_idx << "] 开始自适应隐函数处理 ---\n";
-
     std::stack<QuadtreeTask> tasks;
     std::vector<QuadtreeTask> leaf_nodes;
 
@@ -121,40 +117,20 @@ void process_implicit_adaptive(
 
     const double min_pixel_width = 10 * wppx;
     const double min_pixel_height = 10 * std::abs(wppy);
-    int iteration_count = 0;
 
     while (!tasks.empty()) {
-        iteration_count++;
         QuadtreeTask task = tasks.top();
         tasks.pop();
 
-        // --- 调试信息: 打印当前处理的区块 ---
-        // std::cout << "迭代 " << iteration_count << ": 处理区块 X=[" << task.world_x << ", " << task.world_x + task.world_w
-        //           << "], Y=[" << task.world_y + task.world_h << ", " << task.world_y << "]\n";
-
-        // 1. 区间算术剔除
         Interval x_interval(task.world_x, task.world_x + task.world_w);
-
-        // ====================================================================
-        //  BUG 修正点
-        //  因为 world_h 是负数, 所以 y 区间的 min 是 world_y + world_h
-        // ====================================================================
         Interval y_interval(task.world_y + task.world_h, task.world_y);
-
         Interval result = evaluate_rpn<Interval>(rpn_program, x_interval, y_interval);
 
-        // --- 调试信息: 打印区间计算结果 ---
-        // std::cout << "    X 区间: " << x_interval << ", Y 区间: " << y_interval << " -> 结果区间: " << result << "\n";
-
         if (result.max < 0.0 || result.min > 0.0) {
-            // --- 调试信息: 打印被剔除的区块 ---
-            // std::cout << "    -> 结果不包含0, 剔除该区块。\n";
             continue;
         }
 
         if (task.world_w < min_pixel_width || std::abs(task.world_h) < min_pixel_height) {
-            // --- 调试信息: 打印找到的叶子节点 ---
-            // std::cout << "    -> 区块足够小, 添加为叶子节点。\n";
             leaf_nodes.push_back(task);
             continue;
         }
@@ -170,8 +146,38 @@ void process_implicit_adaptive(
         tasks.push({x_mid, y_mid, w_half, h_half});               // 右下
     }
 
-    // --- 调试信息: 打印最终结果 ---
-    std::cout << "--- [函数 " << func_idx << "] 粗筛完成。总共找到 " << leaf_nodes.size() << " 个需要精绘的活跃区块。\n";
+    // ====================================================================
+    //  在这里添加代码，将活跃区块列表保存到文件 (仅限 Native EXE)
+    // ====================================================================
+#ifndef __EMSCRIPTEN__
+    { // 使用花括号创建一个局部作用域
+        std::stringstream ss;
+        ss << "chunks_func_" << func_idx << ".txt";
+        std::string filename = ss.str();
+
+        std::ofstream chunk_file(filename);
+        if (chunk_file.is_open()) {
+            std::cout << "正在将函数 " << func_idx << " 的 " << leaf_nodes.size()
+                      << " 个活跃区块保存到 " << filename << "...\n";
+
+            chunk_file << std::fixed << std::setprecision(12);
+            // 写入文件头，方便理解
+            chunk_file << "world_x world_y world_w world_h\n";
+
+            for (const auto& leaf : leaf_nodes) {
+                chunk_file << leaf.world_x << " "
+                           << leaf.world_y << " "
+                           << leaf.world_w << " "
+                           << leaf.world_h << "\n";
+            }
+            chunk_file.close();
+        } else {
+            std::cerr << "错误: 无法打开文件 " << filename << " 进行写入！\n";
+        }
+    }
+#endif
+    // ====================================================================
+
 
     oneapi::tbb::parallel_for_each(leaf_nodes.begin(), leaf_nodes.end(),
         [&](const QuadtreeTask& leaf) {

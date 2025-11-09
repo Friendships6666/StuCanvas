@@ -1,6 +1,8 @@
 ﻿#include "../pch.h"
 #include "../include/plot/plotCall.h"
-
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #ifdef __EMSCRIPTEN__
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
@@ -99,6 +101,7 @@ int main() {
         std::vector<std::string> parametric_rpn = {
 
         };
+
 
         double offset_x = 0.0;
         double offset_y = 0.0;

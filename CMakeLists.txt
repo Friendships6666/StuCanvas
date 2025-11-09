@@ -76,10 +76,12 @@ else()
         # 对于 MSVC 编译器, 使用 /arch:AVX2 来启用 256 位 SIMD
         message(STATUS "MSVC compiler detected. Using /arch:AVX2 to target 256-bit SIMD.")
         target_compile_options(WasmTBBTest PRIVATE "/arch:AVX2")
+        add_compile_options(/utf-8)
     else()
         # 对于 GCC/Clang, 使用 -mavx2.
         message(STATUS "GCC/Clang compatible compiler detected. Using -mavx2.")
         target_compile_options(WasmTBBTest PRIVATE -mavx2)
+        add_compile_options(-finput-charset=UTF-8 -fexec-charset=UTF-8)
     endif()
 
 endif()
