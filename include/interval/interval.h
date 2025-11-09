@@ -10,24 +10,30 @@ struct Interval {
     double min = 0.0;
     double max = 0.0;
 
+    // 默认构造函数
+    Interval() = default;
     // 从单个数值创建区间 (例如常量)
     Interval(double val) : min(val), max(val) {}
     // 从最小值和最大值创建区间
     Interval(double v_min, double v_max) : min(v_min), max(v_max) {}
 };
 
+// 2. 为 SIMD 定义区间批处理结构体 (SoA layout)
+struct Interval_Batch {
+    batch_type min;
+    batch_type max;
+};
 
-// 2. 声明所有区间算术函数 (当前不实现)
-//    这些函数是未来让 evaluate_rpn 支持 Interval 类型所必需的。
 
-// 二元运算
+// 3. 声明所有区间算术函数
+//    这些函数将在 src/interval/IntervalEvaluate.cpp 中实现
+
+// --- 标量版本 ---
 Interval interval_add(const Interval& a, const Interval& b);
 Interval interval_sub(const Interval& a, const Interval& b);
 Interval interval_mul(const Interval& a, const Interval& b);
 Interval interval_div(const Interval& a, const Interval& b);
 Interval interval_pow(const Interval& base, const Interval& exp);
-
-// 一元运算
 Interval interval_sin(const Interval& i);
 Interval interval_cos(const Interval& i);
 Interval interval_tan(const Interval& i);
@@ -35,11 +41,28 @@ Interval interval_ln(const Interval& i);
 Interval interval_exp(const Interval& i);
 Interval interval_sign(const Interval& i);
 Interval interval_abs(const Interval& i);
-
-// 特殊安全函数
 Interval interval_safe_ln(const Interval& i);
 Interval interval_safe_exp(const Interval& i);
 Interval interval_check_ln(const Interval& i);
+
+// --- SIMD 批处理版本 ---
+Interval_Batch interval_add_batch(const Interval_Batch& a, const Interval_Batch& b);
+Interval_Batch interval_sub_batch(const Interval_Batch& a, const Interval_Batch& b);
+Interval_Batch interval_mul_batch(const Interval_Batch& a, const Interval_Batch& b);
+// ... (其他 SIMD 版本的声明可以根据需要添加)
+
+
+// 4. 为 Interval 类型重载基本运算符，以简化泛型 RPN 函数
+FORCE_INLINE Interval operator+(const Interval& a, const Interval& b) { return interval_add(a, b); }
+FORCE_INLINE Interval operator-(const Interval& a, const Interval& b) { return interval_sub(a, b); }
+FORCE_INLINE Interval operator*(const Interval& a, const Interval& b) { return interval_mul(a, b); }
+FORCE_INLINE Interval operator/(const Interval& a, const Interval& b) { return interval_div(a, b); }
+
+// 复合赋值运算符
+FORCE_INLINE Interval& operator+=(Interval& a, const Interval& b) { a = a + b; return a; }
+FORCE_INLINE Interval& operator-=(Interval& a, const Interval& b) { a = a - b; return a; }
+FORCE_INLINE Interval& operator*=(Interval& a, const Interval& b) { a = a * b; return a; }
+FORCE_INLINE Interval& operator/=(Interval& a, const Interval& b) { a = a / b; return a; }
 
 
 #endif //WASMTBBTEST_INTERVAL_H

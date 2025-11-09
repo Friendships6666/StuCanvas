@@ -29,6 +29,7 @@ add_executable(WasmTBBTest src/main.cpp
         include/plot/plotCall.h
         src/plot/plotCall.cpp
         include/interval/interval.h
+        src/interval/IntervalEvaluate.cpp
 )
 
 # --------------------------------------------------------------------
