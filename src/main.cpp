@@ -95,9 +95,9 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
 int main() {
     try {
         std::vector<std::string> implicit_rpn = { "x x * y y * + 4 -" };
-        std::vector<std::string> explicit_rpn = {"x"};
+        std::vector<std::string> explicit_rpn = {};
         std::vector<std::string> parametric_rpn = {
-            "_t_ cos;_t_ sin;0;6.283185" // x_rpn; y_rpn; t_min; t_max
+
         };
 
         double offset_x = 0.0;

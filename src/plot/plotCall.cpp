@@ -98,21 +98,19 @@ void calculate_points_core(
 
         const unsigned int num_tiles_w = (unsigned int)(screen_width + TILE_W - 1) / TILE_W;
         const unsigned int num_tiles_h = (unsigned int)(screen_height + TILE_H - 1) / TILE_H;
+        // --- 新代码 ---
         for (size_t func_idx = 0; func_idx < implicit_programs.size(); ++func_idx) {
-            for (unsigned int tile_idx = 0; tile_idx < num_tiles_w * num_tiles_h; ++tile_idx) {
-                task_group.run([=, &per_function_buffers, &thread_local_caches, &implicit_programs, &implicit_programs_for_check] {
-                    ThreadCacheForTiling& cache = thread_local_caches.local();
-                    unsigned int tile_y = tile_idx / num_tiles_w;
-                    unsigned int tile_x = tile_idx % num_tiles_w;
-                    unsigned int x_start = tile_x * TILE_W;
-                    unsigned int y_start = tile_y * TILE_H;
-                    unsigned int x_end = std::min(x_start + TILE_W, (unsigned int)screen_width);
-                    unsigned int y_end = std::min(y_start + TILE_H, (unsigned int)screen_height);
-                    process_tile(world_origin, world_per_pixel_x, world_per_pixel_y,
-                                 implicit_programs[func_idx], implicit_programs_for_check[func_idx], (unsigned int)func_idx,
-                                 x_start, x_end, y_start, y_end, cache, per_function_buffers[func_idx]);
-                });
-            }
+            task_group.run([=, &per_function_buffers, &thread_local_caches, &implicit_programs, &implicit_programs_for_check] {
+                process_implicit_adaptive(
+                    world_origin, world_per_pixel_x, world_per_pixel_y,
+                    screen_width, screen_height,
+                    implicit_programs[func_idx],
+                    implicit_programs_for_check[func_idx],
+                    (unsigned int)func_idx,
+                    thread_local_caches,
+                    per_function_buffers[func_idx]
+                );
+            });
         }
 
         const unsigned int explicit_index_offset = (unsigned int)implicit_programs.size();
