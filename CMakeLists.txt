@@ -14,7 +14,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(WasmTBBTest main.cpp
         pch.h
         pch.cpp
-        )
+        RPN.h
+        RPN.cpp
+        functions.h
+
+        lerp.h
+
+        plotImplicit.h
+        plotImplicit.cpp
+        plotExplicit.h
+        plotExplicit.cpp
+        plotParametric.h
+        plotParametric.cpp
+        plotCall.h
+        plotCall.cpp
+)
 
 # --------------------------------------------------------------------
 # --- 关键部分：启用预编译头文件 ---
