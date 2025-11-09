@@ -1,5 +1,5 @@
-#include "../pch.h"
-#include "../include/plot/plotExplicit.h"
+#include "../../pch.h"
+#include "../../include/plot/plotExplicit.h"
 
 struct SubdivisionTask { Vec2 p1; Vec2 p2; int depth; };
 constexpr std::size_t BATCH_SIZE = batch_type::size;

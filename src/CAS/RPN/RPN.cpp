@@ -1,5 +1,5 @@
-#include "../pch.h"
-#include "../include/CAS/RPN/RPN.h"
+#include "../../../pch.h"
+#include "../../../include/CAS/RPN/RPN.h"
 
 AlignedVector<RPNToken> parse_rpn(const std::string& rpn_string) {
     AlignedVector<RPNToken> tokens;

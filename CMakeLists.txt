@@ -15,19 +15,20 @@ add_executable(WasmTBBTest src/main.cpp
         pch.h
         pch.cpp
         include/CAS/RPN/RPN.h
-        src/RPN.cpp
+        src/CAS/RPN/RPN.cpp
         include/functions/functions.h
 
         include/functions/lerp.h
 
         include/plot/plotImplicit.h
-        src/plotImplicit.cpp
+        src/plot/plotImplicit.cpp
         include/plot/plotExplicit.h
-        src/plotExplicit.cpp
+        src/plot/plotExplicit.cpp
         include/plot/plotParametric.h
-        src/plotParametric.cpp
+        src/plot/plotParametric.cpp
         include/plot/plotCall.h
-        src/plotCall.cpp
+        src/plot/plotCall.cpp
+        include/interval/interval.h
 )
 
 # --------------------------------------------------------------------
