@@ -96,7 +96,23 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
 
 int main() {
     try {
-        std::vector<std::string> implicit_rpn = { "x x * y y * + 4 -" };
+        std::vector<std::string> implicit_rpn;
+        implicit_rpn.reserve(100); // 预分配内存以提高效率
+
+        for (int i = 1; i <= 100; ++i) {
+            // 设置半径，例如从 0.1, 0.2, ... 到 10.0
+            double r = static_cast<double>(i) * 0.1;
+
+            // 计算半径的平方
+            double r_squared = r * r;
+
+            // 使用 stringstream 来构建 RPN 字符串，确保浮点数精度
+            std::stringstream ss;
+            ss << "x x * y y * + " << r_squared << " -";
+
+            // 将生成的 RPN 字符串添加到列表中
+            implicit_rpn.push_back(ss.str());
+        }
         std::vector<std::string> explicit_rpn = {};
         std::vector<std::string> parametric_rpn = {
 
@@ -126,13 +142,13 @@ int main() {
         std::cout << "总耗时: " << duration.count() << " 毫秒" << std::endl;
         std::cout << "总共生成了 " << final_points.size() << " 个点。" << std::endl;
 
-        std::cout << "\n--- 函数点数据区间 ---" << std::endl;
-        for (size_t i = 0; i < final_ranges.size(); ++i) {
-            const auto& range = final_ranges[i];
-            std::cout << "函数 " << i << ": "
-                      << "起始索引 " << range.start_index
-                      << ", 点数量 " << range.point_count << std::endl;
-        }
+        // std::cout << "\n--- 函数点数据区间 ---" << std::endl;
+        // for (size_t i = 0; i < final_ranges.size(); ++i) {
+        //     const auto& range = final_ranges[i];
+        //     std::cout << "函数 " << i << ": "
+        //               << "起始索引 " << range.start_index
+        //               << ", 点数量 " << range.point_count << std::endl;
+        // }
 
         std::cout << "\n正在将结果保存到 points.txt (x y index 格式)..." << std::endl;
         std::ofstream output_file("points.txt");

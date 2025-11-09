@@ -115,8 +115,8 @@ void process_implicit_adaptive(
         screen_width * wppx, screen_height * wppy
     });
 
-    const double min_pixel_width = 10 * wppx;
-    const double min_pixel_height = 10 * std::abs(wppy);
+    const double min_pixel_width = 200 * wppx;
+    const double min_pixel_height = 200 * std::abs(wppy);
 
     while (!tasks.empty()) {
         QuadtreeTask task = tasks.top();
@@ -157,8 +157,8 @@ void process_implicit_adaptive(
 
         std::ofstream chunk_file(filename);
         if (chunk_file.is_open()) {
-            std::cout << "正在将函数 " << func_idx << " 的 " << leaf_nodes.size()
-                      << " 个活跃区块保存到 " << filename << "...\n";
+            // std::cout << "正在将函数 " << func_idx << " 的 " << leaf_nodes.size()
+            //         << " 个活跃区块保存到 " << filename << "...\n";
 
             chunk_file << std::fixed << std::setprecision(12);
             // 写入文件头，方便理解
