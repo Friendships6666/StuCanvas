@@ -1,3 +1,5 @@
+// --- 文件路径: src/plot/plotParametric.cpp ---
+
 #include "../../pch.h"
 #include "../../include/plot/plotParametric.h"
 
@@ -25,13 +27,15 @@ void process_parametric_chunk(
         return false;
     };
 
-    Vec2 p_start = { evaluate_rpn(rpn_x, std::nullopt, std::nullopt, t_start),
-                     evaluate_rpn(rpn_y, std::nullopt, std::nullopt, t_start) };
+    // 更新调用
+    Vec2 p_start = { evaluate_rpn<double>(rpn_x, std::nullopt, std::nullopt, t_start),
+                     evaluate_rpn<double>(rpn_y, std::nullopt, std::nullopt, t_start) };
 
     if (std::isfinite(p_start.x) && std::isfinite(p_start.y)) {
         all_points.emplace_back(PointData{ p_start, func_idx });
-        Vec2 p_end = { evaluate_rpn(rpn_x, std::nullopt, std::nullopt, t_end),
-                       evaluate_rpn(rpn_y, std::nullopt, std::nullopt, t_end) };
+        // 更新调用
+        Vec2 p_end = { evaluate_rpn<double>(rpn_x, std::nullopt, std::nullopt, t_end),
+                       evaluate_rpn<double>(rpn_y, std::nullopt, std::nullopt, t_end) };
         if (std::isfinite(p_end.x) && std::isfinite(p_end.y) && !is_culled(p_start, p_end)) {
             tasks.push({ t_start, p_start, t_end, p_end, 0 });
         }
@@ -66,8 +70,9 @@ void process_parametric_chunk(
                 for (const auto& task : active_tasks) all_points.emplace_back(PointData{ task.p2, func_idx });
             } else {
                 const batch_type t_mid_b = t1_b + (t2_b - t1_b) * 0.5;
-                const batch_type x_mid_b = evaluate_rpn_batch(rpn_x, std::nullopt, std::nullopt, t_mid_b);
-                const batch_type y_mid_b = evaluate_rpn_batch(rpn_y, std::nullopt, std::nullopt, t_mid_b);
+                // 更新调用
+                const batch_type x_mid_b = evaluate_rpn<batch_type>(rpn_x, std::nullopt, std::nullopt, t_mid_b);
+                const batch_type y_mid_b = evaluate_rpn<batch_type>(rpn_y, std::nullopt, std::nullopt, t_mid_b);
                 const auto is_finite_mask = !xs::isinf(x_mid_b) & !xs::isinf(y_mid_b);
 
                 for (size_t i = 0; i < BATCH_SIZE; ++i) {
@@ -88,8 +93,9 @@ void process_parametric_chunk(
 
                 if (dist_sq > max_dist_sq && task.depth < max_depth) {
                     double t_mid = task.t1 + (task.t2 - task.t1) / 2.0;
-                    Vec2 p_mid = { evaluate_rpn(rpn_x, std::nullopt, std::nullopt, t_mid),
-                                   evaluate_rpn(rpn_y, std::nullopt, std::nullopt, t_mid) };
+                    // 更新调用
+                    Vec2 p_mid = { evaluate_rpn<double>(rpn_x, std::nullopt, std::nullopt, t_mid),
+                                   evaluate_rpn<double>(rpn_y, std::nullopt, std::nullopt, t_mid) };
 
                     if (!std::isfinite(p_mid.x) || !std::isfinite(p_mid.y)) {
                         all_points.emplace_back(PointData{ task.p2, func_idx }); continue;

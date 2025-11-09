@@ -1,3 +1,5 @@
+// --- 文件路径: include/functions/lerp.h ---
+
 #ifndef LERP_H
 #define LERP_H
 
@@ -19,7 +21,8 @@ FORCE_INLINE bool try_get_intersection_point(Vec2& out, const Vec2& p1, const Ve
     if (std::abs(v1) >= 1e268 && std::abs(v2) >= 1e268) return false;
     double t = -v1 / (v2 - v1);
     out = {p1.x + t * (p2.x - p1.x), p1.y + t * (p2.y - p1.y)};
-    double check_val = evaluate_rpn(prog_check, out.x, out.y);
+    // 更新调用: 明确指定模板参数为 <double>
+    double check_val = evaluate_rpn<double>(prog_check, out.x, out.y);
     return std::isfinite(check_val) && std::abs(check_val) < 1e200;
 }
 

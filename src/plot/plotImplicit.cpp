@@ -1,3 +1,5 @@
+// --- 文件路径: src/plot/plotImplicit.cpp ---
+
 #include "../../pch.h"
 #include "../../include/plot/plotImplicit.h"
 #include "../../include/functions/lerp.h"
@@ -19,7 +21,8 @@ void process_tile(const Vec2& world_origin, double wppx, double wppy,
     auto& point_buffer = cache.point_buffer;
 
     for (unsigned int x = x_start; x <= x_end; ++x) {
-        top_row_vals[x - x_start] = evaluate_rpn(rpn_program, world_origin.x + x * wppx, world_origin.y + y_start * wppy);
+        // 更新调用
+        top_row_vals[x - x_start] = evaluate_rpn<double>(rpn_program, world_origin.x + x * wppx, world_origin.y + y_start * wppy);
     }
 
     for (unsigned int y = y_start; y < y_end; ++y) {
@@ -27,11 +30,13 @@ void process_tile(const Vec2& world_origin, double wppx, double wppy,
         for (std::size_t x_off = 0; x_off < vec_end; x_off += batch_type::size) {
             batch_type sx = get_index_vec() + static_cast<double>(x_start + x_off);
             auto [wx, wy] = screen_to_world_batch(sx, (double)y + 1.0, world_origin, wppx, wppy);
-            xs::store_aligned(&bot_row_vals[x_off], evaluate_rpn_batch(rpn_program, wx, wy));
+            // 更新调用
+            xs::store_aligned(&bot_row_vals[x_off], evaluate_rpn<batch_type>(rpn_program, wx, wy));
         }
         for (std::size_t x_off = vec_end; x_off <= tile_w; ++x_off) {
             Vec2 world_pos = screen_to_world_inline({(double)(x_start + x_off), (double)y + 1.0}, world_origin, wppx, wppy);
-            bot_row_vals[x_off] = evaluate_rpn(rpn_program, world_pos.x, world_pos.y);
+            // 更新调用
+            bot_row_vals[x_off] = evaluate_rpn<double>(rpn_program, world_pos.x, world_pos.y);
         }
 
         point_buffer.clear();
@@ -49,9 +54,10 @@ void process_tile(const Vec2& world_origin, double wppx, double wppy,
                 Vec2 p_tl = screen_to_world_inline(s_tl_scr, world_origin, wppx, wppy);
                 Vec2 p_tr = screen_to_world_inline({s_tl_scr.x + step, s_tl_scr.y}, world_origin, wppx, wppy);
                 Vec2 p_bl = screen_to_world_inline({s_tl_scr.x, s_tl_scr.y + step}, world_origin, wppx, wppy);
-                double v_tl = evaluate_rpn(rpn_program, p_tl.x, p_tl.y);
-                double v_tr = evaluate_rpn(rpn_program, p_tr.x, p_tr.y);
-                double v_bl = evaluate_rpn(rpn_program, p_bl.x, p_bl.y);
+                // 更新调用
+                double v_tl = evaluate_rpn<double>(rpn_program, p_tl.x, p_tl.y);
+                double v_tr = evaluate_rpn<double>(rpn_program, p_tr.x, p_tr.y);
+                double v_bl = evaluate_rpn<double>(rpn_program, p_bl.x, p_bl.y);
                 
                 if (!std::isfinite(v_tl) || !std::isfinite(v_tr) || !std::isfinite(v_bl)) continue;
                 

@@ -1,3 +1,5 @@
+// --- 文件路径: src/plot/plotExplicit.cpp ---
+
 #include "../../pch.h"
 #include "../../include/plot/plotExplicit.h"
 
@@ -24,8 +26,9 @@ void process_explicit_chunk(
         return false;
     };
 
-    double y_start = evaluate_rpn(rpn_program, x_start);
-    double y_end = evaluate_rpn(rpn_program, x_end);
+    // 更新调用
+    double y_start = evaluate_rpn<double>(rpn_program, x_start);
+    double y_end = evaluate_rpn<double>(rpn_program, x_end);
 
     if (std::isfinite(y_start) && std::isfinite(y_end)) {
         if (!is_culled(y_start, y_end)) {
@@ -69,7 +72,8 @@ void process_explicit_chunk(
                 }
             } else {
                 const batch_type x_mid_b = x1_b + dx_b * 0.5;
-                const batch_type y_mid_b = evaluate_rpn_batch(rpn_program, x_mid_b);
+                // 更新调用
+                const batch_type y_mid_b = evaluate_rpn<batch_type>(rpn_program, x_mid_b);
                 const auto is_finite_mask = !xs::isinf(y_mid_b);
 
                 for (size_t i = 0; i < BATCH_SIZE; ++i) {
@@ -93,7 +97,8 @@ void process_explicit_chunk(
 
                 if (dist_sq > max_dist_sq && task.depth < max_depth) {
                     double x_mid = task.p1.x + dx / 2.0;
-                    double y_mid = evaluate_rpn(rpn_program, x_mid);
+                    // 更新调用
+                    double y_mid = evaluate_rpn<double>(rpn_program, x_mid);
 
                     if (!std::isfinite(y_mid)) {
                         all_points.emplace_back(PointData{task.p2, func_idx});
