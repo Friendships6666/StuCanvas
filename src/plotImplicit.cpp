@@ -1,7 +1,7 @@
-#include "pch.h"
-#include "plotImplicit.h"
-#include "lerp.h"
-#include "functions.h"
+#include "../pch.h"
+#include "../include/plot/plotImplicit.h"
+#include "../include/functions/lerp.h"
+#include "../include/functions/functions.h"
 
 ThreadCacheForTiling::ThreadCacheForTiling() {
     top_row_vals.resize(TILE_W + 1);

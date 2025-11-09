@@ -1,5 +1,5 @@
-#include "pch.h"
-#include "plotParametric.h"
+#include "../pch.h"
+#include "../include/plot/plotParametric.h"
 
 struct ParametricSubdivisionTask { double t1; Vec2 p1; double t2; Vec2 p2; int depth; };
 constexpr std::size_t BATCH_SIZE = batch_type::size;

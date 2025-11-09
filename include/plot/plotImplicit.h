@@ -1,8 +1,8 @@
 #ifndef PLOTIMPLICIT_H
 #define PLOTIMPLICIT_H
 
-#include "pch.h"
-#include "RPN.h"
+#include "../../pch.h"
+#include "../CAS/RPN/RPN.h"
 
 constexpr unsigned int TILE_W = 512;
 constexpr unsigned int TILE_H = 512;

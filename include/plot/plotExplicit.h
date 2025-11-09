@@ -1,8 +1,8 @@
 #ifndef PLOTEXPLICIT_H
 #define PLOTEXPLICIT_H
 
-#include "pch.h"
-#include "RPN.h"
+#include "../../pch.h"
+#include "../CAS/RPN/RPN.h"
 
 void process_explicit_chunk(
     double y_min_world, double y_max_world,

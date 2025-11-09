@@ -1,8 +1,8 @@
 #ifndef RPN_H
 #define RPN_H
 
-#include "pch.h"
-#include "functions.h" // 包含了 evaluate_rpn 需要的函数
+#include "../../../pch.h"
+#include "../../functions/functions.h"
 
 enum class RPNTokenType { PUSH_CONST, PUSH_X, PUSH_Y, PUSH_T, ADD, SUB, MUL, DIV, SIN, COS, EXP, POW, SIGN, ABS, SAFE_LN, SAFE_EXP, CHECK_LN, TAN, LN };
 struct RPNToken { RPNTokenType type; double value = 0.0; };

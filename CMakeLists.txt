@@ -11,23 +11,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # 定义可执行文件目标。
 # 重要的是，要将 pch.h 和 pch.cpp 也加入源文件列表，
 # 这样 CMake 和 CLion 才能正确地跟踪它们。
-add_executable(WasmTBBTest main.cpp
+add_executable(WasmTBBTest src/main.cpp
         pch.h
         pch.cpp
-        RPN.h
-        RPN.cpp
-        functions.h
+        include/CAS/RPN/RPN.h
+        src/RPN.cpp
+        include/functions/functions.h
 
-        lerp.h
+        include/functions/lerp.h
 
-        plotImplicit.h
-        plotImplicit.cpp
-        plotExplicit.h
-        plotExplicit.cpp
-        plotParametric.h
-        plotParametric.cpp
-        plotCall.h
-        plotCall.cpp
+        include/plot/plotImplicit.h
+        src/plotImplicit.cpp
+        include/plot/plotExplicit.h
+        src/plotExplicit.cpp
+        include/plot/plotParametric.h
+        src/plotParametric.cpp
+        include/plot/plotCall.h
+        src/plotCall.cpp
 )
 
 # --------------------------------------------------------------------

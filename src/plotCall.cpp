@@ -1,9 +1,9 @@
-#include "pch.h"
-#include "plotCall.h"
-#include "RPN.h"
-#include "plotImplicit.h"
-#include "plotExplicit.h"
-#include "plotParametric.h"
+#include "../pch.h"
+#include "../include/plot/plotCall.h"
+#include "../include/CAS/RPN/RPN.h"
+#include "../include/plot/plotImplicit.h"
+#include "../include/plot/plotExplicit.h"
+#include "../include/plot/plotParametric.h"
 
 struct ExplicitFunction {
     AlignedVector<RPNToken> rpn;

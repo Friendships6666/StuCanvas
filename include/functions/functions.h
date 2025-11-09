@@ -1,7 +1,7 @@
 #ifndef FUNCTIONS_H
 #define FUNCTIONS_H
 
-#include "pch.h"
+#include "../../pch.h"
 
 FORCE_INLINE double safe_exp_scalar(double x) {
     if (x >= 1) return 1e270;

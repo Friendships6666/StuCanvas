@@ -1,7 +1,7 @@
 #ifndef PLOTCALL_H
 #define PLOTCALL_H
 
-#include "pch.h"
+#include "../../pch.h"
 
 void calculate_points_core(
     AlignedVector<PointData>& out_points,

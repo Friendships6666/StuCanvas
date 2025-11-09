@@ -1,5 +1,5 @@
-﻿#include "pch.h"
-#include "plotCall.h"
+﻿#include "../pch.h"
+#include "../include/plot/plotCall.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/bind.h>

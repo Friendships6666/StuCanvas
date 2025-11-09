@@ -1,8 +1,8 @@
 #ifndef LERP_H
 #define LERP_H
 
-#include "pch.h"
-#include "RPN.h" // For RPNToken
+#include "../../pch.h"
+#include "../CAS/RPN/RPN.h"
 
 // 线性插值和坐标转换
 FORCE_INLINE Vec2 screen_to_world_inline(const Vec2& scr, const Vec2& origin, double wppx, double wppy) {
