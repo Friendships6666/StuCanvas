@@ -30,6 +30,15 @@ add_executable(WasmTBBTest src/main.cpp
         src/plot/plotCall.cpp
         include/interval/interval.h
         src/interval/IntervalEvaluate.cpp
+        include/CAS/Symbolic/ConstantFolding.h
+        include/CAS/Symbolic/ConstantFolding.h
+        src/CAS/Symbolic/ConstantFolding.cpp
+        include/CAS/JsonAdapter.h
+        include/CAS/JsonAdapter.h
+        src/CAS/JsonAdapter.cpp
+
+
+
 )
 
 # --------------------------------------------------------------------
@@ -44,7 +53,8 @@ target_precompile_headers(WasmTBBTest PRIVATE pch.h)
 # --- 查找并包含 xsimd (这是一个纯头文件库) ---
 # 将 find_package 提前，因为 pch.h 依赖它
 find_package(xsimd CONFIG REQUIRED)
-
+find_package(simdjson CONFIG REQUIRED)
+target_link_libraries(WasmTBBTest PRIVATE simdjson::simdjson)
 if(TARGET xsimd::xsimd)
     message(STATUS "Found modern xsimd target: xsimd::xsimd")
     target_link_libraries(WasmTBBTest PRIVATE xsimd::xsimd)

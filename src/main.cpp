@@ -1,5 +1,7 @@
 ﻿#include "../pch.h"
 #include "../include/plot/plotCall.h"
+#include "../include/CAS/Symbolic/ConstantFolding.h"
+#include "../include/CAS/JsonAdapter.h"     // 包含JSON转换器
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -95,8 +97,62 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
 }
 
 int main() {
-    try {
-        std::vector<std::string> implicit_rpn(50, "y 3 pow 10 x * sin -");
+    try{
+        std::cout << "\n--- CAS 符号化简测试 ---\n";
+        simdjson::padded_string input_json = R"([
+  "Add",
+  "x",
+  [
+    "Divide",
+    [
+      "Tan",
+      "x"
+    ],
+    [
+      "Add",
+      "y",
+      2,
+      [
+        "Multiply",
+        10,
+        [
+          "Tan",
+          2
+        ]
+      ],
+      [
+        "Divide",
+        2,
+        [
+          "Multiply",
+          3,
+          [
+            "Tan",
+            1
+          ]
+        ]
+      ]
+    ]
+  ]
+])"_padded;
+
+        std::cout << "原始 AST JSON:\n" << input_json << std::endl;
+
+        auto start_cas_time = std::chrono::high_resolution_clock::now();
+
+        auto ast = CAS::JsonAdapter::parse_json_to_ast_simdjson(std::string(input_json));
+        auto folded_ast = CAS::ConstantFolding::constant_fold(ast);
+        std::string output_json = CAS::JsonAdapter::ast_to_json_string(folded_ast);
+
+        auto end_cas_time = std::chrono::high_resolution_clock::now();
+        auto cas_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_cas_time - start_cas_time);
+
+        std::cout << "\n化简后 AST JSON:\n" << output_json << std::endl;
+        std::cout << "CAS 化简耗时 (simdjson): " << cas_duration.count() << " 微秒\n";
+        std::cout << "--- CAS 测试结束 ---\n\n";
+
+
+        std::vector<std::string> implicit_rpn{};
         std::vector<std::string> explicit_rpn = {};
         std::vector<std::string> parametric_rpn = {
 
