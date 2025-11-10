@@ -4,13 +4,7 @@
 #include "../../include/plot/plotImplicit.h"
 #include "../../include/functions/lerp.h"
 #include "../../include/functions/functions.h"
-#include <stack> // 用于深度优先的四叉树遍历
-#include <oneapi/tbb/parallel_for_each.h>
-#include <iostream> // 用于调试输出
-#include <iomanip>  // 用于格式化输出
-#include <fstream>  // 用于文件写入
-#include <sstream>  // 用于构建字符串
-#include <string>   // 用于字符串
+
 
 // 任务结构体，用于四叉树细分
 struct QuadtreeTask {

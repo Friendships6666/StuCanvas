@@ -5,6 +5,7 @@
 // 标准库
 #include <iostream>
 #include <vector>
+
 #include <string>
 #include <sstream>
 #include <cmath>
@@ -27,7 +28,7 @@
 #include "oneapi/tbb/task_group.h"
 #include "oneapi/tbb/global_control.h"
 #include "oneapi/tbb/combinable.h"
-
+#include <oneapi/tbb/parallel_for_each.h>
 // --- 全局共享的核心数据结构与宏定义 ---
 
 namespace xs = xsimd;

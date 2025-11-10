@@ -16,9 +16,9 @@ add_executable(WasmTBBTest src/main.cpp
         pch.cpp
         include/CAS/RPN/RPN.h
         src/CAS/RPN/RPN.cpp
-        include/functions/functions.h
+        include/Functions/functions.h
 
-        include/functions/lerp.h
+        include/Functions/lerp.h
 
         include/plot/plotImplicit.h
         src/plot/plotImplicit.cpp
@@ -33,9 +33,9 @@ add_executable(WasmTBBTest src/main.cpp
         include/CAS/Symbolic/ConstantFolding.h
         include/CAS/Symbolic/ConstantFolding.h
         src/CAS/Symbolic/ConstantFolding.cpp
-        include/CAS/JsonAdapter.h
-        include/CAS/JsonAdapter.h
-        src/CAS/JsonAdapter.cpp
+        include/CAS/AST/JsonAdapter.h
+        include/CAS/AST/JsonAdapter.h
+        src/CAS/AST/JsonAdapter.cpp
 
 
 

@@ -1,9 +1,7 @@
 // --- 文件路径: src/CAS/ConstantFolding.cpp ---
 
-#include "../../../include/CAS/Symbolic/ConstantFolding.h" // <-- 更新 include 路径
-#include <cmath>
-#include <vector>
-#include <optional>
+#include "../../../include/CAS/symbolic/ConstantFolding.h" // <-- 更新 include 路径
+#include "../../../pch.h"
 
 namespace CAS::ConstantFolding {
 

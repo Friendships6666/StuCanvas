@@ -6,7 +6,7 @@
 #include "../../../pch.h"
 #include "../../functions/functions.h"
 #include "../../interval/interval.h" // 引入 Interval 定义
-#include <type_traits> // 引入 for std::is_same_v
+
 
 enum class RPNTokenType { PUSH_CONST, PUSH_X, PUSH_Y, PUSH_T, ADD, SUB, MUL, DIV, SIN, COS, EXP, POW, SIGN, ABS, SAFE_LN, SAFE_EXP, CHECK_LN, TAN, LN };
 struct RPNToken { RPNTokenType type; double value = 0.0; };

@@ -4,10 +4,7 @@
 #define CONSTANT_FOLDING_H
 
 #include "../../../pch.h"
-#include <string>
-#include <vector>
-#include <memory>
-#include <numeric>
+
 
 namespace CAS::ConstantFolding {
 

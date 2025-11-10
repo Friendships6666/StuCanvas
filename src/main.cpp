@@ -1,9 +1,9 @@
 ﻿#include "../pch.h"
 #include "../include/plot/plotCall.h"
-#include "../include/CAS/Symbolic/ConstantFolding.h"
-#include "../include/CAS/JsonAdapter.h"     // 包含JSON转换器
+#include "../include/CAS/symbolic/ConstantFolding.h"
+#include "../include/CAS/AST/JsonAdapter.h"
 #ifdef _WIN32
-#include <windows.h>
+
 #endif
 #ifdef __EMSCRIPTEN__
 #include <emscripten/bind.h>

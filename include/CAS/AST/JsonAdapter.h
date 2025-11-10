@@ -3,8 +3,7 @@
 #ifndef JSON_ADAPTER_H
 #define JSON_ADAPTER_H
 
-#include <string>
-#include <memory>
+#include "../../../pch.h"
 
 namespace CAS::ConstantFolding {
     struct Expression;

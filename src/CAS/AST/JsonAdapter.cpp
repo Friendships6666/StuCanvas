@@ -1,10 +1,9 @@
 ﻿// --- 文件路径: src/CAS/JsonAdapter.cpp ---
 
-#include "../../include/CAS/JsonAdapter.h"
-#include "../../include/CAS/Symbolic/ConstantFolding.h" // <-- 更新 include 路径
-#include "simdjson.h"
-#include <nlohmann/json.hpp>
+#include "../../../include/CAS/AST/JsonAdapter.h"
+#include "../../../include/CAS/symbolic/ConstantFolding.h"
 
+#include "../../../pch.h"
 namespace CAS::JsonAdapter {
 namespace {
     using namespace CAS::ConstantFolding;
