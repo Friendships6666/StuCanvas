@@ -100,14 +100,17 @@ int main() {
     try{
         std::cout << "\n--- CAS 符号化简测试 ---\n";
         simdjson::padded_string input_json = R"([
-  "Add",
+  "Equal",
   "y",
   [
-    "Divide",
-    1,
+    "Add",
     [
-      "Cos",
-      "x"
+      "Sin",
+      2
+    ],
+    [
+      "Ln",
+      2
     ]
   ]
 ])"_padded;

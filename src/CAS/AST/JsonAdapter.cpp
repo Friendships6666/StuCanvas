@@ -1,4 +1,4 @@
-﻿// --- 文件路径: src/CAS/JsonAdapter.cpp ---
+﻿// --- 文件路径: src/CAS/AST/JsonAdapter.cpp ---
 
 #include "../../../include/CAS/AST/JsonAdapter.h"
 #include "../../../include/CAS/symbolic/ConstantFolding.h"
@@ -13,9 +13,16 @@ namespace {
             case simdjson::dom::element_type::DOUBLE:
             case simdjson::dom::element_type::INT64:
             case simdjson::dom::element_type::UINT64:
+
                 return std::make_shared<Constant>(*node.get<double>());
-            case simdjson::dom::element_type::STRING:
-                return std::make_shared<Symbol>(std::string(*node.get<std::string_view>()));
+
+            case simdjson::dom::element_type::STRING: {
+                std::string_view sv = *node.get<std::string_view>();
+                if (sv == "ExponentialE") {
+                    return std::make_shared<Constant>(std::exp(1.0)); // 使用 std::exp(1.0)
+                }
+                return std::make_shared<Symbol>(std::string(sv));
+            }
 
             // --- 新增规则: 处理 {"num": "..."} 格式 ---
             case simdjson::dom::element_type::OBJECT: {
@@ -76,11 +83,47 @@ namespace {
         return nullptr;
     }
 }
+// ====================================================================
+//  MODIFIED: parse_json_to_ast_simdjson
+//  - 此函数现在要求输入的 JSON 必须是 ["Equal", "y", <expression>] 的格式。
+//  - 它会自动将 y = f(x) 形式的方程转换为 y - f(x) 的 AST 结构，
+//    以便后续的符号计算和绘图。
+// ====================================================================
 std::shared_ptr<Expression> parse_json_to_ast_simdjson(const std::string& json_string) {
     thread_local simdjson::dom::parser parser;
     try {
         simdjson::dom::element root = parser.parse(json_string);
-        return build_ast_from_element(root);
+
+        // 检查根节点是否为 ["Equal", "y", <expression>] 格式
+        if (root.type() == simdjson::dom::element_type::ARRAY) {
+            simdjson::dom::array arr = root.get<simdjson::dom::array>();
+            if (arr.size() == 3 &&
+                arr.at(0).is_string() && *arr.at(0).get<std::string_view>() == "Equal" &&
+                arr.at(1).is_string() && *arr.at(1).get<std::string_view>() == "y")
+            {
+                // 格式匹配: y = f(x)
+                // 移项得到: y - f(x) = 0
+                // 我们将处理表达式 y - f(x)
+
+                // 1. 提取右侧表达式 f(x)
+                simdjson::dom::element rhs_element = arr.at(2);
+                // 2. 将 f(x) 构建为 AST
+                std::shared_ptr<Expression> rhs_ast = build_ast_from_element(rhs_element);
+
+                // 3. 创建代表 "y" 的符号节点
+                auto y_symbol = std::make_shared<Symbol>("y");
+
+                // 4. 创建代表 -f(x) 的节点，即 ["Negate", f(x)]
+                auto negated_rhs_ast = std::make_shared<Function>("Negate", std::vector<std::shared_ptr<Expression>>{rhs_ast});
+
+                // 5. 构建最终的 AST: ["Add", "y", ["Negate", f(x)]]，即 y - f(x)
+                return std::make_shared<Function>("Add", std::vector<std::shared_ptr<Expression>>{y_symbol, negated_rhs_ast});
+            }
+        }
+
+        // 如果格式不匹配，则抛出错误
+        throw std::runtime_error("输入JSON格式无效。根节点必须是 [\"Equal\", \"y\", <expression>]");
+
     } catch (const simdjson::simdjson_error& e) {
         throw std::runtime_error("simdjson 解析失败: " + std::string(e.what()));
     }

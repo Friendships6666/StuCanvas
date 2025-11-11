@@ -542,6 +542,14 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
             if (func->op == "Tan" && numeric_args.size()==1) return std::make_shared<Constant>(std::tan(numeric_args[0]));
             if (func->op == "Power" && numeric_args.size()==2) return std::make_shared<Constant>(std::pow(numeric_args[0], numeric_args[1]));
             if (func->op == "Abs" && numeric_args.size()==1) return std::make_shared<Constant>(std::abs(numeric_args[0]));
+            if (func->op == "Sin" && numeric_args.size()==1) return std::make_shared<Constant>(std::sin(numeric_args[0]));
+            if (func->op == "Cos" && numeric_args.size()==1) return std::make_shared<Constant>(std::cos(numeric_args[0]));
+            if (func->op == "Ln" && numeric_args.size()==1) return std::make_shared<Constant>(std::log(numeric_args[0]));
+
+            if (func->op == "Tan" && numeric_args.size()==1) return std::make_shared<Constant>(std::tan(numeric_args[0]));
+            if (func->op == "Power" && numeric_args.size()==2) return std::make_shared<Constant>(std::pow(numeric_args[0], numeric_args[1]));
+            if (func->op == "Abs" && numeric_args.size()==1) return std::make_shared<Constant>(std::abs(numeric_args[0]));
+            if (func->op == "Sign" && numeric_args.size()==1) return std::make_shared<Constant>((numeric_args[0] > 0.0) - (numeric_args[0] < 0.0));
             if (func->op == "Sign" && numeric_args.size()==1) return std::make_shared<Constant>((numeric_args[0] > 0.0) - (numeric_args[0] < 0.0));
         } catch (...) { }
     }
