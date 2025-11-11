@@ -1,12 +1,12 @@
 ﻿// --- 文件路径: src/CAS/AST/JsonAdapter.cpp ---
 
 #include "../../../include/CAS/AST/JsonAdapter.h"
-#include "../../../include/CAS/symbolic/ConstantFolding.h"
+#include "../../../include/CAS/symbolic/GraphicSimplify.h"
 
 #include "../../../pch.h"
 namespace CAS::JsonAdapter {
 namespace {
-    using namespace CAS::ConstantFolding;
+    using namespace CAS::GraphicSimplify;
 
     std::shared_ptr<Expression> build_ast_from_element(simdjson::dom::element node) {
         switch (node.type()) {

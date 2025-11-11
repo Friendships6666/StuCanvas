@@ -1,6 +1,6 @@
 // --- 文件路径: src/CAS/ConstantFolding.cpp ---
 
-#include "../../../include/CAS/symbolic/ConstantFolding.h"
+#include "../../../include/CAS/symbolic/GraphicSimplify.h"
 #include "../../../pch.h"
 #include <map>
 #include <string>
@@ -12,7 +12,7 @@
 #include <limits>
 
 
-namespace CAS::ConstantFolding {
+namespace CAS::GraphicSimplify {
     namespace { // 匿名命名空间开始
 
         // ====================================================================

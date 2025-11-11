@@ -5,14 +5,14 @@
 
 #include "../../../pch.h"
 
-namespace CAS::ConstantFolding {
+namespace CAS::GraphicSimplify {
     struct Expression;
 }
 
 namespace CAS::JsonAdapter {
 
-    std::shared_ptr<CAS::ConstantFolding::Expression> parse_json_to_ast_simdjson(const std::string& json_string);
-    std::string ast_to_json_string(const std::shared_ptr<CAS::ConstantFolding::Expression>& ast);
+    std::shared_ptr<CAS::GraphicSimplify::Expression> parse_json_to_ast_simdjson(const std::string& json_string);
+    std::string ast_to_json_string(const std::shared_ptr<CAS::GraphicSimplify::Expression>& ast);
 
 } // namespace CAS::JsonAdapter
 

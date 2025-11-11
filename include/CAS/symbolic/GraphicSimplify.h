@@ -6,7 +6,7 @@
 #include "../../../pch.h"
 
 
-namespace CAS::ConstantFolding {
+namespace CAS::GraphicSimplify {
 
     struct Expression { virtual ~Expression() = default; };
     struct Constant : Expression { double value; explicit Constant(double v) : value(v) {} };

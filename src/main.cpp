@@ -1,6 +1,6 @@
 ﻿#include "../pch.h"
 #include "../include/plot/plotCall.h"
-#include "../include/CAS/symbolic/ConstantFolding.h"
+#include "../include/CAS/symbolic/GraphicSimplify.h"
 #include "../include/CAS/AST/JsonAdapter.h"
 #ifdef _WIN32
 
@@ -120,7 +120,7 @@ int main() {
         auto start_cas_time = std::chrono::high_resolution_clock::now();
 
         auto ast = CAS::JsonAdapter::parse_json_to_ast_simdjson(std::string(input_json));
-        auto folded_ast = CAS::ConstantFolding::constant_fold(ast);
+        auto folded_ast = CAS::GraphicSimplify::constant_fold(ast);
         std::string output_json = CAS::JsonAdapter::ast_to_json_string(folded_ast);
 
         auto end_cas_time = std::chrono::high_resolution_clock::now();

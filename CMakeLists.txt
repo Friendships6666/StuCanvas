@@ -30,9 +30,9 @@ add_executable(WasmTBBTest src/main.cpp
         src/plot/plotCall.cpp
         include/interval/interval.h
         src/interval/IntervalEvaluate.cpp
-        include/CAS/Symbolic/ConstantFolding.h
-        include/CAS/Symbolic/ConstantFolding.h
-        src/CAS/Symbolic/ConstantFolding.cpp
+        include/CAS/symbolic/GraphicSimplify.h
+        include/CAS/symbolic/GraphicSimplify.h
+        src/CAS/symbolic/GraphicSimplify.cpp
         include/CAS/AST/JsonAdapter.h
         include/CAS/AST/JsonAdapter.h
         src/CAS/AST/JsonAdapter.cpp
