@@ -103,15 +103,12 @@ int main() {
   "Add",
   "y",
   [
-    "Negate",
+    "Divide",
+    1,
     [
-      "Tan",
+      "Cos",
       "x"
     ]
-  ],
-  [
-    "Sec",
-    "x"
   ]
 ])"_padded;
 

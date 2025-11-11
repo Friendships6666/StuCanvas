@@ -49,6 +49,27 @@ namespace CAS::ConstantFolding {
 const std::set<std::string> blocking_ops_for_tan_and_power = {
     "Sin", "Cos", "Tan", "Ln", "Log"
 };
+        // --- 文件路径: src/CAS/ConstantFolding.cpp ---
+        // 位于匿名命名空间内
+
+        // 辅助函数: 递归地查找表达式中的所有符号 (变量)
+        void get_symbols_recursive(const std::shared_ptr<Expression>& expr, std::set<std::string>& symbols) {
+            if (!expr) return;
+            if (auto sym = std::dynamic_pointer_cast<Symbol>(expr)) {
+                symbols.insert(sym->name);
+            } else if (auto func = std::dynamic_pointer_cast<Function>(expr)) {
+                for (const auto& arg : func->args) {
+                    get_symbols_recursive(arg, symbols);
+                }
+            }
+        }
+
+        // 辅助函数: 判断一个表达式是否包含任何符号 (变量)
+        bool has_symbols(const std::shared_ptr<Expression>& expr) {
+            std::set<std::string> symbols;
+            get_symbols_recursive(expr, symbols);
+            return !symbols.empty();
+        }
 
 std::shared_ptr<Expression> standardize_functions_recursive(const std::shared_ptr<Expression>& expr, bool block_tan_replacement) {
     if (!expr) {
@@ -476,11 +497,7 @@ std::shared_ptr<Expression> standardize_functions_recursive(const std::shared_pt
             return std::make_shared<Function>(func->op, expanded_args);
         }
 
-// --- 文件路径: src/CAS/ConstantFolding.cpp ---
-// 位于匿名命名空间内
 
-// --- 文件路径: src/CAS/ConstantFolding.cpp ---
-// 位于匿名命名空间内
 
 // --- 文件路径: src/CAS/ConstantFolding.cpp ---
 // 位于匿名命名空间内
@@ -499,7 +516,6 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
 
     for (size_t i = 0; i < func->args.size(); ++i) {
         bool block_this_arg = should_block_children;
-        // 特殊规则: Power 函数的指数参数总是被冻结
         if (func->op == "Power" && i == 1) {
             block_this_arg = true;
         }
@@ -530,7 +546,6 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
         } catch (...) { }
     }
 
-
     // --- 步骤 3: 应用针对特定函数的代数化简规则 ---
 
     // 化简 Power(base, exponent)
@@ -539,7 +554,6 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
         auto exponent = func->args[1];
         std::optional<double> exp_val = to_numeric(exponent);
 
-        // 规则: x^(-n) -> 1 / x^n (仅在未被冻结时)
         if (!block_power_negation && exp_val && *exp_val < 0.0) {
             std::shared_ptr<Expression> new_exponent;
             if (auto exp_const = std::dynamic_pointer_cast<Constant>(exponent)) {
@@ -553,10 +567,22 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
             auto new_division = std::make_shared<Function>("Divide", std::vector<std::shared_ptr<Expression>>{
                 std::make_shared<Constant>(1.0), new_power
             });
-            return constant_fold_recursive(new_division);
+            return constant_fold_recursive(new_division, false);
         }
 
-        // 其他幂函数简化规则
+        // 规则: (a/b)^c -> a^c / b^c, 但仅当 b 包含变量时
+        if (auto div_base = std::dynamic_pointer_cast<Function>(base); div_base && div_base->op == "Divide") {
+            auto numerator = div_base->args[0];
+            auto denominator = div_base->args[1];
+
+            if (has_symbols(denominator)) {
+                auto new_num = std::make_shared<Function>("Power", std::vector<std::shared_ptr<Expression>>{numerator, exponent});
+                auto new_den = std::make_shared<Function>("Power", std::vector<std::shared_ptr<Expression>>{denominator, exponent});
+                auto new_division = std::make_shared<Function>("Divide", std::vector<std::shared_ptr<Expression>>{new_num, new_den});
+                return constant_fold_recursive(new_division, false);
+            }
+        }
+
         if (exp_val) {
             if (*exp_val == 1.0) return base;
             if (*exp_val == 0.0) return std::make_shared<Constant>(1.0);
@@ -575,13 +601,51 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
             } else { flattened_args.push_back(arg); }
         }
 
-        // --- 优先: 通分逻辑 ---
-        std::vector<std::shared_ptr<Expression>> fractional_parts;
+        struct FractionalComponent {
+            std::shared_ptr<Expression> num;
+            std::shared_ptr<Expression> den;
+        };
+        std::vector<FractionalComponent> fractional_parts;
         std::vector<std::shared_ptr<Expression>> whole_parts;
+
         for (const auto& arg : flattened_args) {
             if (auto div = std::dynamic_pointer_cast<Function>(arg); div && div->op == "Divide") {
-                fractional_parts.push_back(div);
-            } else {
+                fractional_parts.push_back({div->args[0], div->args[1]});
+            } else if (auto neg = std::dynamic_pointer_cast<Function>(arg); neg && neg->op == "Negate" && neg->args.size() == 1) {
+                if (auto div = std::dynamic_pointer_cast<Function>(neg->args[0]); div && div->op == "Divide") {
+                    auto negated_num = std::make_shared<Function>("Negate", std::vector<std::shared_ptr<Expression>>{div->args[0]});
+                    fractional_parts.push_back({negated_num, div->args[1]});
+                } else {
+                    whole_parts.push_back(arg);
+                }
+            } else if (auto abs_func = std::dynamic_pointer_cast<Function>(arg); abs_func && abs_func->op == "Abs" && abs_func->args.size() == 1) {
+                if (auto div_inner = std::dynamic_pointer_cast<Function>(abs_func->args[0]); div_inner && div_inner->op == "Divide") {
+                    auto new_num = std::make_shared<Function>("Abs", std::vector<std::shared_ptr<Expression>>{div_inner->args[0]});
+                    auto new_den = std::make_shared<Function>("Abs", std::vector<std::shared_ptr<Expression>>{div_inner->args[1]});
+                    fractional_parts.push_back({new_num, new_den});
+                } else {
+                    whole_parts.push_back(arg);
+                }
+            } else if (auto sign_func = std::dynamic_pointer_cast<Function>(arg); sign_func && sign_func->op == "Sign" && sign_func->args.size() == 1) {
+                if (auto div_inner = std::dynamic_pointer_cast<Function>(sign_func->args[0]); div_inner && div_inner->op == "Divide") {
+                    auto new_num = std::make_shared<Function>("Sign", std::vector<std::shared_ptr<Expression>>{div_inner->args[0]});
+                    auto new_den = std::make_shared<Function>("Sign", std::vector<std::shared_ptr<Expression>>{div_inner->args[1]});
+                    fractional_parts.push_back({new_num, new_den});
+                } else {
+                    whole_parts.push_back(arg);
+                }
+            }
+            else if (auto power_func = std::dynamic_pointer_cast<Function>(arg); power_func && power_func->op == "Power" && power_func->args.size() == 2) {
+                if (auto div_base = std::dynamic_pointer_cast<Function>(power_func->args[0]); div_base && div_base->op == "Divide") {
+                    auto exponent = power_func->args[1];
+                    auto new_num = std::make_shared<Function>("Power", std::vector<std::shared_ptr<Expression>>{div_base->args[0], exponent});
+                    auto new_den = std::make_shared<Function>("Power", std::vector<std::shared_ptr<Expression>>{div_base->args[1], exponent});
+                    fractional_parts.push_back({new_num, new_den});
+                } else {
+                    whole_parts.push_back(arg);
+                }
+            }
+            else {
                 whole_parts.push_back(arg);
             }
         }
@@ -589,8 +653,7 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
         if (!fractional_parts.empty() && flattened_args.size() > 1) {
             std::map<std::string, std::shared_ptr<Expression>> unique_denominators_map;
             for (const auto& frac : fractional_parts) {
-                auto den = std::dynamic_pointer_cast<Function>(frac)->args[1];
-                unique_denominators_map[expression_to_string(den)] = den;
+                unique_denominators_map[expression_to_string(frac.den)] = frac.den;
             }
             std::vector<std::shared_ptr<Expression>> unique_denominators;
             for (const auto& pair : unique_denominators_map) {
@@ -605,78 +668,105 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
             }
 
             for (const auto& frac : fractional_parts) {
-                auto num = std::dynamic_pointer_cast<Function>(frac)->args[0];
-                auto den = std::dynamic_pointer_cast<Function>(frac)->args[1];
                 std::vector<std::shared_ptr<Expression>> multiplier_factors;
-                std::string current_den_str = expression_to_string(den);
+                std::string current_den_str = expression_to_string(frac.den);
                 for (const auto& d : unique_denominators) {
                     if (expression_to_string(d) != current_den_str) {
                         multiplier_factors.push_back(d);
                     }
                 }
                 if (multiplier_factors.empty()) {
-                    new_numerator_terms.push_back(num);
+                    new_numerator_terms.push_back(frac.num);
                 } else {
                     auto multiplier = rebuild_expression_from_factors(multiplier_factors);
-                    new_numerator_terms.push_back(std::make_shared<Function>("Multiply", std::vector<std::shared_ptr<Expression>>{num, multiplier}));
+                    new_numerator_terms.push_back(std::make_shared<Function>("Multiply", std::vector<std::shared_ptr<Expression>>{frac.num, multiplier}));
                 }
             }
 
-            auto final_numerator = (new_numerator_terms.size() == 1) ? new_numerator_terms[0] : std::make_shared<Function>("Add", new_numerator_terms);
-            return constant_fold_recursive(std::make_shared<Function>("Divide", std::vector<std::shared_ptr<Expression>>{final_numerator, common_denominator}));
-        }
-
-        // --- 回退: 合并同类项逻辑 ---
-        double sum = 0.0;
-        std::map<std::string, double> coeffs;
-        std::map<std::string, std::shared_ptr<Expression>> models;
-        for (const auto& arg : flattened_args) {
-            if (auto num = to_numeric(arg)) { sum += *num; continue; }
-            double c=1.0; std::shared_ptr<Expression> term=arg;
-            if (auto f=std::dynamic_pointer_cast<Function>(arg); f && f->op=="Negate" && f->args.size()==1) { term=f->args[0]; c=-1.0; }
-            else if (f && f->op=="Multiply") {
-                double p=1.0; std::vector<std::shared_ptr<Expression>> s_args;
-                for(const auto& ma : f->args) { if(auto n=to_numeric(ma)) p*=*n; else s_args.push_back(ma); }
-                if(!s_args.empty()) { c=p; term=(s_args.size()==1)?s_args[0]:std::make_shared<Function>("Multiply",s_args); }
+            auto final_numerator = std::make_shared<Function>("Add", new_numerator_terms);
+            return constant_fold_recursive(std::make_shared<Function>("Divide", std::vector<std::shared_ptr<Expression>>{final_numerator, common_denominator}), false);
+        } else {
+            double sum = 0.0;
+            std::map<std::string, double> coeffs;
+            std::map<std::string, std::shared_ptr<Expression>> models;
+            for (const auto& arg : flattened_args) {
+                if (auto num = to_numeric(arg)) { sum += *num; continue; }
+                double c=1.0; std::shared_ptr<Expression> term=arg;
+                if (auto f=std::dynamic_pointer_cast<Function>(arg); f && f->op=="Negate" && f->args.size()==1) { term=f->args[0]; c=-1.0; }
+                else if (f && f->op=="Multiply") {
+                    double p=1.0; std::vector<std::shared_ptr<Expression>> s_args;
+                    for(const auto& ma : f->args) { if(auto n=to_numeric(ma)) p*=*n; else s_args.push_back(ma); }
+                    if(!s_args.empty()) { c=p; term=(s_args.size()==1)?s_args[0]:std::make_shared<Function>("Multiply",s_args); }
+                }
+                std::string key=expression_to_string(term);
+                coeffs[key]+=c; models.try_emplace(key,term);
             }
-            std::string key=expression_to_string(term);
-            coeffs[key]+=c; models.try_emplace(key,term);
+            std::vector<std::shared_ptr<Expression>> new_args;
+            for (auto const& [key, c] : coeffs) {
+                if(c==0.0) continue;
+                auto m=models[key];
+                if(c==1.0) new_args.push_back(m);
+                else if(c==-1.0) new_args.push_back(std::make_shared<Function>("Negate", std::vector<std::shared_ptr<Expression>>{m}));
+                else new_args.push_back(std::make_shared<Function>("Multiply", std::vector<std::shared_ptr<Expression>>{std::make_shared<Constant>(c), m}));
+            }
+            if (sum!=0.0 || new_args.empty()) new_args.push_back(std::make_shared<Constant>(sum));
+            if (new_args.empty()) return std::make_shared<Constant>(0.0);
+            if (new_args.size()==1) return new_args[0];
+            func->args = new_args;
         }
-        std::vector<std::shared_ptr<Expression>> new_args;
-        for (auto const& [key, c] : coeffs) {
-            if(c==0.0) continue;
-            auto m=models[key];
-            if(c==1.0) new_args.push_back(m);
-            else if(c==-1.0) new_args.push_back(std::make_shared<Function>("Negate", std::vector<std::shared_ptr<Expression>>{m}));
-            else new_args.push_back(std::make_shared<Function>("Multiply", std::vector<std::shared_ptr<Expression>>{std::make_shared<Constant>(c), m}));
-        }
-        if (sum!=0.0 || new_args.empty()) new_args.push_back(std::make_shared<Constant>(sum));
-        if (new_args.empty()) return std::make_shared<Constant>(0.0);
-        if (new_args.size()==1) return new_args[0];
-        func->args = new_args;
     }
 
-    // 化简 Multiply(...)
     if (func->op == "Multiply") {
         std::vector<std::shared_ptr<Expression>> flattened_args;
         for(const auto& arg : func->args) {
             if(auto sub = std::dynamic_pointer_cast<Function>(arg); sub && sub->op == "Multiply") {
                 flattened_args.insert(flattened_args.end(), sub->args.begin(), sub->args.end());
-            } else { flattened_args.push_back(arg); }
+            } else {
+                flattened_args.push_back(arg);
+            }
         }
-        double product = 1.0;
-        std::vector<std::shared_ptr<Expression>> non_numeric_args;
+
+        std::vector<std::shared_ptr<Expression>> numerator_factors;
+        std::vector<std::shared_ptr<Expression>> denominator_factors;
+        bool has_fractions = false;
+
         for(const auto& arg : flattened_args) {
-            if(auto num=to_numeric(arg)) product *= *num; else non_numeric_args.push_back(arg);
+            if (auto div = std::dynamic_pointer_cast<Function>(arg); div && div->op == "Divide") {
+                has_fractions = true;
+                get_factors(div->args[0], numerator_factors);
+                get_factors(div->args[1], denominator_factors);
+            } else {
+                numerator_factors.push_back(arg);
+            }
         }
-        if (product==0.0) return std::make_shared<Constant>(0.0);
-        if (product!=1.0 || non_numeric_args.empty()) non_numeric_args.insert(non_numeric_args.begin(), std::make_shared<Constant>(product));
-        if (non_numeric_args.empty()) return std::make_shared<Constant>(1.0);
-        if (non_numeric_args.size()==1) return non_numeric_args[0];
-        func->args = non_numeric_args;
+
+        if (!has_fractions) {
+            double product = 1.0;
+            std::vector<std::shared_ptr<Expression>> non_numeric_args;
+            for(const auto& arg : flattened_args) {
+                if(auto num = to_numeric(arg)) {
+                    product *= *num;
+                } else {
+                    non_numeric_args.push_back(arg);
+                }
+            }
+            if (product == 0.0) return std::make_shared<Constant>(0.0);
+            if (product != 1.0 || non_numeric_args.empty()) {
+                non_numeric_args.insert(non_numeric_args.begin(), std::make_shared<Constant>(product));
+            }
+            if (non_numeric_args.empty()) return std::make_shared<Constant>(1.0);
+            if (non_numeric_args.size() == 1) return non_numeric_args[0];
+
+            func->args = non_numeric_args;
+            return func;
+        }
+
+        auto new_num = rebuild_expression_from_factors(numerator_factors);
+        auto new_den = rebuild_expression_from_factors(denominator_factors);
+
+        return constant_fold_recursive(std::make_shared<Function>("Divide", std::vector<std::shared_ptr<Expression>>{new_num, new_den}), false);
     }
 
-    // 化简 Divide(numerator, denominator)
     if (func->op == "Divide" && func->args.size() == 2) {
         auto numerator = func->args[0];
         auto denominator = func->args[1];
@@ -692,7 +782,7 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
             std::shared_ptr<Expression> d = den_as_div ? den_as_div->args[1] : std::make_shared<Constant>(1.0);
             auto new_num = std::make_shared<Function>("Multiply", std::vector<std::shared_ptr<Expression>>{a, d});
             auto new_den = std::make_shared<Function>("Multiply", std::vector<std::shared_ptr<Expression>>{b, c});
-            return constant_fold_recursive(std::make_shared<Function>("Divide", std::vector<std::shared_ptr<Expression>>{new_num, new_den}));
+            return constant_fold_recursive(std::make_shared<Function>("Divide", std::vector<std::shared_ptr<Expression>>{new_num, new_den}), false);
         }
 
         auto factored_num = try_factor_expression(numerator);
@@ -727,12 +817,11 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
             if (*den_const == 1.0) return new_num;
             if (*den_const == 0.0) return func;
         }
-        return constant_fold_recursive(std::make_shared<Function>("Divide", std::vector<std::shared_ptr<Expression>>{new_num, new_den}));
+        return constant_fold_recursive(std::make_shared<Function>("Divide", std::vector<std::shared_ptr<Expression>>{new_num, new_den}), false);
     }
 
     return func;
 }
-
 
 
 
