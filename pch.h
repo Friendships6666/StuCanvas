@@ -47,6 +47,10 @@ struct FunctionRange {
 static_assert(sizeof(FunctionRange) == 8, "FunctionRange size mismatch! Expected 8 bytes.");
 
 struct Uniforms { Vec2 screen_dimensions; double zoom; Vec2 offset; };
+using batch_type = xs::batch<double>;
+
+// 定义一个可以在编译期获取 SIMD 宽度的常量。
+constexpr size_t BATCH_SIZE = batch_type::size;
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

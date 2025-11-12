@@ -4,7 +4,7 @@
 #include "../../include/plot/plotExplicit.h"
 
 struct SubdivisionTask { Vec2 p1; Vec2 p2; int depth; };
-constexpr std::size_t BATCH_SIZE = batch_type::size;
+
 
 void process_explicit_chunk(
     double y_min_world, double y_max_world,

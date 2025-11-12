@@ -12,6 +12,10 @@
 #endif
 #include "../../pch.h"
 
+
+
+
+
 // 1. 定义区间结构体
 struct Interval {
     double min = 0.0;
@@ -65,6 +69,7 @@ Interval_Batch interval_exp_batch(const Interval_Batch& i);  // 新增
 Interval_Batch interval_sign_batch(const Interval_Batch& i); // 新增
 Interval_Batch interval_abs_batch(const Interval_Batch& i);  // 新增
 Interval_Batch interval_pow_batch(const Interval_Batch& base, const Interval_Batch& exp);
+// --- 标量运算符重载 ---
 inline FORCE_INLINE Interval operator+(const Interval& a, const Interval& b) { return interval_add(a, b); }
 inline FORCE_INLINE Interval operator-(const Interval& a, const Interval& b) { return interval_sub(a, b); }
 inline FORCE_INLINE Interval operator*(const Interval& a, const Interval& b) { return interval_mul(a, b); }
@@ -74,6 +79,20 @@ inline FORCE_INLINE Interval& operator+=(Interval& a, const Interval& b) { a = a
 inline FORCE_INLINE Interval& operator-=(Interval& a, const Interval& b) { a = a - b; return a; }
 inline FORCE_INLINE Interval& operator*=(Interval& a, const Interval& b) { a = a * b; return a; }
 inline FORCE_INLINE Interval& operator/=(Interval& a, const Interval& b) { a = a / b; return a; }
+
+
+// ====================================================================
+//          ↓↓↓ 新增的 SIMD 批处理版本运算符重载 ↓↓↓
+// ====================================================================
+inline FORCE_INLINE Interval_Batch operator+(const Interval_Batch& a, const Interval_Batch& b) { return interval_add_batch(a, b); }
+inline FORCE_INLINE Interval_Batch operator-(const Interval_Batch& a, const Interval_Batch& b) { return interval_sub_batch(a, b); }
+inline FORCE_INLINE Interval_Batch operator*(const Interval_Batch& a, const Interval_Batch& b) { return interval_mul_batch(a, b); }
+inline FORCE_INLINE Interval_Batch operator/(const Interval_Batch& a, const Interval_Batch& b) { return interval_div_batch(a, b); }
+
+inline FORCE_INLINE Interval_Batch& operator+=(Interval_Batch& a, const Interval_Batch& b) { a = a + b; return a; }
+inline FORCE_INLINE Interval_Batch& operator-=(Interval_Batch& a, const Interval_Batch& b) { a = a - b; return a; }
+inline FORCE_INLINE Interval_Batch& operator*=(Interval_Batch& a, const Interval_Batch& b) { a = a * b; return a; }
+inline FORCE_INLINE Interval_Batch& operator/=(Interval_Batch& a, const Interval_Batch& b) { a = a / b; return a; }
 
 
 #endif //WASMTBBTEST_INTERVAL_H

@@ -31,20 +31,4 @@ void process_implicit_adaptive(
 // ====================================================================
 
 
-// 注意：我们不再直接从 plotCall.cpp 调用 process_tile，
-// 所以它的声明可以移除，或者保留为内部实现细节。
-// 为了清晰，我们暂时将其移除。
-/*
-void process_tile(
-    const Vec2& world_origin, double wppx, double wppy,
-    const AlignedVector<RPNToken>& rpn_program,
-    const AlignedVector<RPNToken>& rpn_program_check,
-    unsigned int func_idx,
-    unsigned int x_start, unsigned int x_end,
-    unsigned int y_start, unsigned int y_end,
-    ThreadCacheForTiling& cache,
-    oneapi::tbb::concurrent_vector<PointData>& all_points
-);
-*/
-
 #endif //PLOTIMPLICIT_H

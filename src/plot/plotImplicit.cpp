@@ -91,7 +91,6 @@ void draw_points_in_tile(const Vec2& world_origin, double wppx, double wppy,
 }
 
 
-// 阶段 1: 粗筛主函数
 void process_implicit_adaptive(
     const Vec2& world_origin, double wppx, double wppy,
     double screen_width, double screen_height,
@@ -112,33 +111,82 @@ void process_implicit_adaptive(
     const double min_pixel_width = 200 * wppx;
     const double min_pixel_height = 200 * std::abs(wppy);
 
-    while (!tasks.empty()) {
-        QuadtreeTask task = tasks.top();
-        tasks.pop();
+    // ====================================================================
+    //              ↓↓↓ 高性能“快车道”循环结构 ↓↓↓
+    // ====================================================================
 
-        Interval x_interval(task.world_x, task.world_x + task.world_w);
-        Interval y_interval(task.world_y + task.world_h, task.world_y);
-        Interval result = evaluate_rpn<Interval>(rpn_program, x_interval, y_interval);
+    // 预先在循环外分配一次内存，避免在循环内反复创建
+    alignas(batch_type::arch_type::alignment()) double min_x[BATCH_SIZE], max_x[BATCH_SIZE];
+    alignas(batch_type::arch_type::alignment()) double min_y[BATCH_SIZE], max_y[BATCH_SIZE];
+    QuadtreeTask task_lanes[BATCH_SIZE];
 
-        if (result.max < 0.0 || result.min > 0.0) {
-            continue;
+    while (true) {
+        // --- 快车道: SIMD 主批处理循环 ---
+        // 只要任务数足够，就一直留在这个循环里
+        while (tasks.size() >= BATCH_SIZE) {
+            for (size_t i = 0; i < BATCH_SIZE; ++i) {
+                task_lanes[i] = tasks.top(); tasks.pop();
+                min_x[i] = task_lanes[i].world_x;
+                max_x[i] = task_lanes[i].world_x + task_lanes[i].world_w;
+                min_y[i] = task_lanes[i].world_y + task_lanes[i].world_h;
+                max_y[i] = task_lanes[i].world_y;
+            }
+
+            Interval_Batch x_interval = { xs::load_aligned(min_x), xs::load_aligned(max_x) };
+            Interval_Batch y_interval = { xs::load_aligned(min_y), xs::load_aligned(max_y) };
+            Interval_Batch result = evaluate_rpn<Interval_Batch>(rpn_program, x_interval, y_interval);
+
+            auto should_keep_mask = (result.min <= 0.0) & (result.max >= 0.0);
+
+            // 使用 xsimd::some 来快速检查掩码是否全为 false
+            if (xs::any(should_keep_mask)) {
+                for (size_t i = 0; i < BATCH_SIZE; ++i) {
+                    if (should_keep_mask.get(i)) {
+                        const auto& task = task_lanes[i];
+                        if (task.world_w < min_pixel_width || std::abs(task.world_h) < min_pixel_height) {
+                            leaf_nodes.push_back(task);
+                        } else {
+                            double w_half = task.world_w / 2.0;
+                            double h_half = task.world_h / 2.0;
+                            tasks.push({task.world_x, task.world_y, w_half, h_half});
+                            tasks.push({task.world_x + w_half, task.world_y, w_half, h_half});
+                            tasks.push({task.world_x, task.world_y + h_half, w_half, h_half});
+                            tasks.push({task.world_x + w_half, task.world_y + h_half, w_half, h_half});
+                        }
+                    }
+                }
+            }
         }
 
-        if (task.world_w < min_pixel_width || std::abs(task.world_h) < min_pixel_height) {
-            leaf_nodes.push_back(task);
-            continue;
+        // --- 慢车道: 标量清扫循环 ---
+        // 当任务数不足一个批次时，用标量模式处理掉所有剩余任务
+        while (!tasks.empty()) {
+            QuadtreeTask task = tasks.top(); tasks.pop();
+
+            Interval x_interval(task.world_x, task.world_x + task.world_w);
+            Interval y_interval(task.world_y + task.world_h, task.world_y);
+            Interval result = evaluate_rpn<Interval>(rpn_program, x_interval, y_interval);
+
+            if (result.max >= 0.0 && result.min <= 0.0) {
+                if (task.world_w < min_pixel_width || std::abs(task.world_h) < min_pixel_height) {
+                    leaf_nodes.push_back(task);
+                } else {
+                    double w_half = task.world_w / 2.0;
+                    double h_half = task.world_h / 2.0;
+                    tasks.push({task.world_x, task.world_y, w_half, h_half});
+                    tasks.push({task.world_x + w_half, task.world_y, w_half, h_half});
+                    tasks.push({task.world_x, task.world_y + h_half, w_half, h_half});
+                    tasks.push({task.world_x + w_half, task.world_y + h_half, w_half, h_half});
+                }
+            }
         }
 
-        double w_half = task.world_w / 2.0;
-        double h_half = task.world_h / 2.0;
-        double x_mid = task.world_x + w_half;
-        double y_mid = task.world_y + h_half;
-
-        tasks.push({task.world_x, task.world_y, w_half, h_half}); // 左上
-        tasks.push({x_mid, task.world_y, w_half, h_half});        // 右上
-        tasks.push({task.world_x, y_mid, w_half, h_half});        // 左下
-        tasks.push({x_mid, y_mid, w_half, h_half});               // 右下
+        // 如果堆栈在清扫后仍然为空，说明所有工作都已完成，可以退出最外层循环
+        if (tasks.empty()) {
+            break;
+        }
     }
+
 
     // ====================================================================
     //  在这里添加代码，将活跃区块列表保存到文件 (仅限 Native EXE)
