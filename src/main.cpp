@@ -74,8 +74,11 @@ EMSCRIPTEN_BINDINGS(my_module) {
 
 #else // --- Native EXE Version ---
 
+// ====================================================================
+//  FIXED: 确保此函数的签名与之前的修改一致
+// ====================================================================
 std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_for_native(
-    const std::vector<std::string>& implicit_rpn_list,
+    const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
     const std::vector<std::string>& explicit_rpn_list,
     const std::vector<std::string>& parametric_rpn_list,
     double offset_x, double offset_y,
@@ -87,7 +90,8 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
     calculate_points_core(
         final_points_aligned,
         final_ranges_aligned,
-        implicit_rpn_list, explicit_rpn_list, parametric_rpn_list,
+        implicit_rpn_pairs,
+        explicit_rpn_list, parametric_rpn_list,
         offset_x, offset_y, zoom, screen_width, screen_height
     );
     return {
@@ -98,45 +102,46 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
 
 int main() {
     try{
-        std::cout << "\n--- CAS 符号化简测试 ---\n";
-        simdjson::padded_string input_json = R"([
+        std::cout << "\n--- CAS 符号化简与 RPN 生成测试 ---\n";
+
+        std::vector<std::string> implicit_mathjson_list = {
+            R"([
   "Equal",
   "y",
   [
-    "Add",
-    [
-      "Sin",
-      2
-    ],
-    [
-      "Ln",
-      2
-    ]
+    "Divide",
+    1,
+    "x"
   ]
-])"_padded;
+])"
+        };
 
-        std::cout << "原始 AST JSON:\n" << input_json << std::endl;
+        std::cout << "输入 MathJSON: \n" << implicit_mathjson_list[0] << std::endl;
 
         auto start_cas_time = std::chrono::high_resolution_clock::now();
 
-        auto ast = CAS::JsonAdapter::parse_json_to_ast_simdjson(std::string(input_json));
-        auto folded_ast = CAS::GraphicSimplify::constant_fold(ast);
-        std::string output_json = CAS::JsonAdapter::ast_to_json_string(folded_ast);
+        std::vector<std::pair<std::string, std::string>> implicit_rpn_pairs;
+        for (const auto& json_str : implicit_mathjson_list) {
+            auto ast = CAS::JsonAdapter::parse_json_to_ast_simdjson(json_str);
+            // ====================================================================
+            //  FIXED: 明确指定 constant_fold 的命名空间
+            // ====================================================================
+            implicit_rpn_pairs.push_back(CAS::GraphicSimplify::constant_fold(ast));
+        }
 
         auto end_cas_time = std::chrono::high_resolution_clock::now();
         auto cas_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_cas_time - start_cas_time);
 
-        std::cout << "\n化简后 AST JSON:\n" << output_json << std::endl;
-        std::cout << "CAS 化简耗时 (simdjson): " << cas_duration.count() << " 微秒\n";
+        std::cout << "\n生成 Normal RPN: " << implicit_rpn_pairs[0].first << std::endl;
+        std::cout << "生成 Check RPN:   " << implicit_rpn_pairs[0].second << std::endl;
+        std::cout << "CAS 处理耗时: " << cas_duration.count() << " 微秒\n";
         std::cout << "--- CAS 测试结束 ---\n\n";
 
-
-        std::vector<std::string> implicit_rpn{};
+        // ====================================================================
+        //  FIXED: 移除了旧的、未使用的 implicit_rpn 变量
+        // ====================================================================
         std::vector<std::string> explicit_rpn = {};
-        std::vector<std::string> parametric_rpn = {
-
-        };
-
+        std::vector<std::string> parametric_rpn = {};
 
         double offset_x = 0.0;
         double offset_y = 0.0;
@@ -147,8 +152,12 @@ int main() {
         std::cout << "--- Native EXE: 开始计算... ---" << std::endl;
         auto start_time = std::chrono::high_resolution_clock::now();
 
+        // ====================================================================
+        //  FIXED: 传递了正确的变量 (implicit_rpn_pairs)
+        // ====================================================================
         auto results = calculate_points_for_native(
-            implicit_rpn, explicit_rpn, parametric_rpn,
+            implicit_rpn_pairs,
+            explicit_rpn, parametric_rpn,
             offset_x, offset_y, zoom, screen_width, screen_height
         );
         const auto& final_points = results.first;
@@ -160,14 +169,6 @@ int main() {
         std::cout << "--- Native EXE: 计算完成 ---" << std::endl;
         std::cout << "总耗时: " << duration.count() << " 毫秒" << std::endl;
         std::cout << "总共生成了 " << final_points.size() << " 个点。" << std::endl;
-
-        // std::cout << "\n--- 函数点数据区间 ---" << std::endl;
-        // for (size_t i = 0; i < final_ranges.size(); ++i) {
-        //     const auto& range = final_ranges[i];
-        //     std::cout << "函数 " << i << ": "
-        //               << "起始索引 " << range.start_index
-        //               << ", 点数量 " << range.point_count << std::endl;
-        // }
 
         std::cout << "\n正在将结果保存到 points.txt (x y index 格式)..." << std::endl;
         std::ofstream output_file("points.txt");

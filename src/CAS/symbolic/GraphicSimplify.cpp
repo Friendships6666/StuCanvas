@@ -829,34 +829,110 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
     }
 
     return func;
+
+
 }
+        // ====================================================================
+        //  FIXED: ast_to_rpn_recursive
+        //  - 重构了此函数以正确处理 "Negate" 操作符。
+        //  - "Negate" 现在作为特殊情况处理，以生成正确的 "0 arg -" RPN 序列。
+        //  - 这修复了 "无法解析符号 'name'" 的编译错误。
+        // ====================================================================
+        void ast_to_rpn_recursive(const std::shared_ptr<Expression>& node, std::stringstream& ss) {
+            if (!node) return;
 
+            if (auto con = std::dynamic_pointer_cast<Constant>(node)) {
+                ss << con->value << " ";
+            } else if (auto sym = std::dynamic_pointer_cast<Symbol>(node)) {
+                ss << sym->name << " ";
+            } else if (auto func = std::dynamic_pointer_cast<Function>(node)) {
+                // 特殊处理 Negate，因为它需要非标准的后缀顺序 (0 arg -)
+                if (func->op == "Negate" && func->args.size() == 1) {
+                    ss << "0 ";
+                    ast_to_rpn_recursive(func->args[0], ss);
+                    ss << "- ";
+                    return; // 处理完毕，提前返回
+                }
 
+                // 对所有其他函数使用标准的后缀处理
+                for (const auto& arg : func->args) {
+                    ast_to_rpn_recursive(arg, ss);
+                }
 
-    } // namespace CAS::ConstantFolding
-    std::shared_ptr<Expression> rewrite_powers_for_cpp_engine(const std::shared_ptr<Expression>& ast) {
-        // 这些辅助函数定义在上面的匿名命名空间中，在此处依然可见
-        auto rewritten_ast = rewrite_powers_recursive(ast);
-        return convert_rationals_to_constants_recursive(rewritten_ast);
-    }
+                if (func->op == "Add") ss << "+ ";
+                else if (func->op == "Multiply") ss << "* ";
+                else if (func->op == "Divide") ss << "/ ";
+                else if (func->op == "Power") ss << "pow ";
+                else if (func->op == "Sin") ss << "sin ";
+                else if (func->op == "Cos") ss << "cos ";
+                else if (func->op == "Tan") ss << "tan ";
+                else if (func->op == "Ln") ss << "ln ";
+                else if (func->op == "Abs") ss << "abs ";
+                else if (func->op == "Sign") ss << "sign ";
+            }
+        }
+
+        std::string ast_to_rpn_string(const std::shared_ptr<Expression>& ast) {
+            std::stringstream ss;
+            ss.precision(17); // 保证浮点数精度
+            ast_to_rpn_recursive(ast, ss);
+            std::string rpn = ss.str();
+            // 移除末尾多余的空格
+            if (!rpn.empty() && rpn.back() == ' ') {
+                rpn.pop_back();
+            }
+            return rpn;
+        }
+        std::shared_ptr<Expression> rewrite_powers_for_cpp_engine(const std::shared_ptr<Expression>& ast) {
+            // 这些辅助函数定义在上面的匿名命名空间中，在此处依然可见
+            auto rewritten_ast = rewrite_powers_recursive(ast);
+            return convert_rationals_to_constants_recursive(rewritten_ast);
+        }
+
 
     // --- 文件路径: src/CAS/ConstantFolding.cpp ---
     // 这是公共接口函数，位于匿名命名空间之外
 
-    std::shared_ptr<Expression> constant_fold(const std::shared_ptr<Expression>& ast) {
-        // --- 步骤 1 (新增): 标准化 Log, Tan 等函数 ---
+
+
+    }
+    std::pair<std::string, std::string> constant_fold(const std::shared_ptr<Expression> &ast) {
+        // --- 步骤 1: 标准化函数 (Log, Tan 等) ---
         auto standardized_functions_ast = standardize_functions_recursive(ast);
 
-        // 步骤 2: 将根式 (Sqrt, Root) 转换为幂函数形式
+        // --- 步骤 2: 将根式 (Sqrt, Root) 转换为幂函数形式 ---
         auto standardized_roots_ast = rewrite_roots_recursive(standardized_functions_ast);
 
-        // 步骤 3: 将浮点数常量转换为内部有理数表示，以便精确计算
+        // --- 步骤 3: 将浮点数常量转换为内部有理数表示 ---
         auto preprocessed_ast = convert_constants_to_rationals_recursive(standardized_roots_ast);
 
-        // 步骤 4: 执行核心的代数化简和常量折叠
-        auto simplified_ast = constant_fold_recursive(preprocessed_ast);
+        // --- 步骤 4: 执行核心的代数化简和常量折叠 (通分之前) ---
+        auto simplified_ast_before_common_denominator = constant_fold_recursive(preprocessed_ast);
 
-        // 步骤 5: 将表达式重写为 C++ 引擎友好的形式 (例如，处理分数次幂的定义域)
-        return rewrite_powers_for_cpp_engine(simplified_ast);
-    }
+        // --- 步骤 5: 生成 Check_RPN ---
+        // 在此阶段，表达式已经化简但尚未组合成一个大的分式。
+        // 这个形式对于数值稳定性检查非常理想。
+        std::string check_rpn = ast_to_rpn_string(simplified_ast_before_common_denominator);
+
+
+        // --- 步骤 6: 将表达式重写为 C++ 引擎友好的形式 (处理分数次幂) ---
+        auto final_ast = rewrite_powers_for_cpp_engine(simplified_ast_before_common_denominator);
+
+
+        // --- 步骤 7: 生成 Normal_RPN ---
+        std::string normal_rpn;
+        // 检查最终的 AST 是否为一个大的分式 (Divide 函数)
+        if (auto func = std::dynamic_pointer_cast<Function>(final_ast); func && func->op == "Divide") {
+            // 如果是，只提取分子的 RPN
+            normal_rpn = ast_to_rpn_string(func->args[0]);
+        } else {
+            // 否则，转换整个表达式的 RPN
+            normal_rpn = ast_to_rpn_string(final_ast);
+        }
+
+        return std::pair<std::string, std::string>(normal_rpn, check_rpn);
+
+
+    } // namespace CAS::ConstantFolding
+
 }

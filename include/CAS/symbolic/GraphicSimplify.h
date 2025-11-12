@@ -1,7 +1,7 @@
-// --- 文件路径: include/CAS/ConstantFolding.h ---
+// --- 文件路径: include/CAS/symbolic/GraphicSimplify.h ---
 
-#ifndef CONSTANT_FOLDING_H
-#define CONSTANT_FOLDING_H
+#ifndef GRAPHIC_SIMPLIFY_H
+#define GRAPHIC_SIMPLIFY_H
 
 #include "../../../pch.h"
 
@@ -31,9 +31,16 @@ namespace CAS::GraphicSimplify {
         Function(std::string o, std::vector<std::shared_ptr<Expression>> a) : op(std::move(o)), args(std::move(a)) {}
     };
 
-    std::shared_ptr<Expression> constant_fold(const std::shared_ptr<Expression>& ast);
-    std::shared_ptr<Expression> rewrite_powers_for_cpp_engine(const std::shared_ptr<Expression>& ast); // <-- 新增声明
+    // ====================================================================
+    //  MODIFIED: 接口变更
+    //  - 移除旧的 constant_fold 声明。
+    //  - 新增 generate_rpn_from_ast，它接收一个 AST 并返回一个包含两个 RPN 字符串的 pair。
+    //    pair.first  -> Normal RPN (用于主计算)
+    //    pair.second -> Check RPN (用于 lerp 中的检查)
+    // ====================================================================
+    std::pair<std::string, std::string> generate_rpn_from_ast(const std::shared_ptr<Expression>& ast);
+    std::pair<std::string, std::string> constant_fold(const std::shared_ptr<Expression> &ast);
 
-} // namespace CAS::ConstantFolding
+} // namespace CAS::GraphicSimplify
 
-#endif // CONSTANT_FOLDING_H
+#endif // GRAPHIC_SIMPLIFY_H

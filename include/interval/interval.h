@@ -55,8 +55,16 @@ Interval_Batch interval_add_batch(const Interval_Batch& a, const Interval_Batch&
 Interval_Batch interval_sub_batch(const Interval_Batch& a, const Interval_Batch& b);
 Interval_Batch interval_mul_batch(const Interval_Batch& a, const Interval_Batch& b);
 // ... (其他 SIMD 版本的声明可以根据需要添加)
+Interval_Batch interval_div_batch(const Interval_Batch& a, const Interval_Batch& b); // 新增
 
-
+Interval_Batch interval_sin_batch(const Interval_Batch& i); // 新增 (如果你还没添加)
+Interval_Batch interval_cos_batch(const Interval_Batch& i); // 新增 (如果你还没添加)
+Interval_Batch interval_tan_batch(const Interval_Batch& i); // 新增
+Interval_Batch interval_ln_batch(const Interval_Batch& i);  // 新增 (如果你还没添加)
+Interval_Batch interval_exp_batch(const Interval_Batch& i);  // 新增
+Interval_Batch interval_sign_batch(const Interval_Batch& i); // 新增
+Interval_Batch interval_abs_batch(const Interval_Batch& i);  // 新增
+Interval_Batch interval_pow_batch(const Interval_Batch& base, const Interval_Batch& exp);
 inline FORCE_INLINE Interval operator+(const Interval& a, const Interval& b) { return interval_add(a, b); }
 inline FORCE_INLINE Interval operator-(const Interval& a, const Interval& b) { return interval_sub(a, b); }
 inline FORCE_INLINE Interval operator*(const Interval& a, const Interval& b) { return interval_mul(a, b); }

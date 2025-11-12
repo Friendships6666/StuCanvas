@@ -43,7 +43,7 @@ ParametricFunction parse_parametric_string(const std::string& str) {
 void calculate_points_core(
     AlignedVector<PointData>& out_points,
     AlignedVector<FunctionRange>& out_ranges,
-    const std::vector<std::string>& implicit_rpn_list,
+    const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
     const std::vector<std::string>& explicit_rpn_list,
     const std::vector<std::string>& parametric_rpn_list,
     double offset_x, double offset_y,
@@ -72,11 +72,9 @@ void calculate_points_core(
         AlignedVector<ExplicitFunction> explicit_programs;
         AlignedVector<ParametricFunction> parametric_programs;
 
-        for(const auto& str : implicit_rpn_list) {
-            auto prog = parse_rpn(str);
-            implicit_programs.push_back(prog);
-            for(auto& t : prog) if(t.type == RPNTokenType::SAFE_LN) t.type = RPNTokenType::CHECK_LN;
-            implicit_programs_for_check.push_back(prog);
+        for(const auto& rpn_pair : implicit_rpn_pairs) {
+            implicit_programs.push_back(parse_rpn(rpn_pair.first));          // Normal RPN
+            implicit_programs_for_check.push_back(parse_rpn(rpn_pair.second)); // Check RPN
         }
         for(const auto& str : explicit_rpn_list) {
             explicit_programs.push_back({parse_rpn(str)});
