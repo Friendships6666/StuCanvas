@@ -132,7 +132,7 @@ void process_implicit_adaptive(
 
             Interval_Batch x_interval = { xs::load_aligned(min_x), xs::load_aligned(max_x) };
             Interval_Batch y_interval = { xs::load_aligned(min_y), xs::load_aligned(max_y) };
-            Interval_Batch result = evaluate_rpn<Interval_Batch>(rpn_program, x_interval, y_interval);
+            Interval_Batch result = evaluate_rpn<Interval_Batch>(rpn_program_check, x_interval, y_interval);
 
             auto should_keep_mask = (result.min <= 0.0) & (result.max >= 0.0);
 
@@ -163,7 +163,7 @@ void process_implicit_adaptive(
 
             Interval x_interval(task.world_x, task.world_x + task.world_w);
             Interval y_interval(task.world_y + task.world_h, task.world_y);
-            Interval result = evaluate_rpn<Interval>(rpn_program, x_interval, y_interval);
+            Interval result = evaluate_rpn<Interval>(rpn_program_check, x_interval, y_interval);
 
             if (result.max >= 0.0 && result.min <= 0.0) {
                 if (task.world_w < min_pixel_width || std::abs(task.world_h) < min_pixel_height) {

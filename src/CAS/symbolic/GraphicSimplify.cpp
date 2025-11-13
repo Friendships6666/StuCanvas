@@ -846,7 +846,28 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
             } else if (auto sym = std::dynamic_pointer_cast<Symbol>(node)) {
                 ss << sym->name << " ";
             } else if (auto func = std::dynamic_pointer_cast<Function>(node)) {
-                // 特殊处理 Negate，因为它需要非标准的后缀顺序 (0 arg -)
+                // --- 特殊处理可以有多个参数的函数 ---
+                if (func->op == "Add" || func->op == "Multiply") {
+                    if (func->args.empty()) {
+                        // 对于空的 Add 返回 0，空的 Multiply 返回 1
+                        if (func->op == "Add") ss << "0 ";
+                        else if (func->op == "Multiply") ss << "1 ";
+                        return;
+                    }
+
+                    // 首先处理第一个参数
+                    ast_to_rpn_recursive(func->args[0], ss);
+
+                    // 从第二个参数开始，迭代地应用操作符
+                    for (size_t i = 1; i < func->args.size(); ++i) {
+                        ast_to_rpn_recursive(func->args[i], ss);
+                        if (func->op == "Add") ss << "+ ";
+                        else if (func->op == "Multiply") ss << "* ";
+                    }
+                    return; // 已经处理完毕，提前返回
+                }
+
+                // --- 特殊处理 Negate ---
                 if (func->op == "Negate" && func->args.size() == 1) {
                     ss << "0 ";
                     ast_to_rpn_recursive(func->args[0], ss);
@@ -854,14 +875,13 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
                     return; // 处理完毕，提前返回
                 }
 
-                // 对所有其他函数使用标准的后缀处理
+                // --- 对所有其他函数使用标准的后缀（后序遍历）处理 ---
                 for (const auto& arg : func->args) {
                     ast_to_rpn_recursive(arg, ss);
                 }
 
-                if (func->op == "Add") ss << "+ ";
-                else if (func->op == "Multiply") ss << "* ";
-                else if (func->op == "Divide") ss << "/ ";
+                // 注意：Add 和 Multiply 已在上面处理，这里不再需要
+                if (func->op == "Divide") ss << "/ ";
                 else if (func->op == "Power") ss << "pow ";
                 else if (func->op == "Sin") ss << "sin ";
                 else if (func->op == "Cos") ss << "cos ";
@@ -929,6 +949,28 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
             // 否则，转换整个表达式的 RPN
             normal_rpn = ast_to_rpn_string(final_ast);
         }
+
+        // ====================================================================
+        //          ↓↓↓ 新增的步骤 8: 替换 Normal RPN 中的 ln 为 safeln ↓↓↓
+        // ====================================================================
+        // 我们需要确保替换的是独立的 "ln" 单词，而不是其他单词的一部分。
+        // RPN 字符串的格式是 "x ln +"，这使得简单的字符串替换是安全的。
+        // 但为了更严谨，我们可以用带空格的替换来保证只替换独立的 RPN 指令。
+        // 场景1: " ln " -> " safeln "
+        std::string search_str = " ln ";
+        std::string replace_str = " safeln ";
+        size_t pos = normal_rpn.find(search_str);
+        while (pos != std::string::npos) {
+            normal_rpn.replace(pos, search_str.length(), replace_str);
+            pos = normal_rpn.find(search_str, pos + replace_str.length());
+        }
+        // 场景2: 结尾是 " ln"
+        if (normal_rpn.length() > 3 && normal_rpn.substr(normal_rpn.length() - 3) == " ln") {
+            normal_rpn.replace(normal_rpn.length() - 3, 3, " safeln");
+        }
+        // ====================================================================
+        //                          ↑↑↑ 修改结束 ↑↑↑
+        // ====================================================================
 
         return std::pair<std::string, std::string>(normal_rpn, check_rpn);
 

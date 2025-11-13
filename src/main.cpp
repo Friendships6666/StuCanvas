@@ -109,9 +109,19 @@ int main() {
   "Equal",
   "y",
   [
-    "Divide",
-    1,
-    "x"
+    "Ln",
+    [
+      "Add",
+      [
+        "Sin",
+        "x"
+      ],
+      [
+        "Cos",
+        "y"
+      ],
+      -0.1
+    ]
   ]
 ])"
         };
@@ -145,9 +155,9 @@ int main() {
 
         double offset_x = 0.0;
         double offset_y = 0.0;
-        double zoom = 0.1;
-        double screen_width = 2560.0;
-        double screen_height = 1600.0;
+        double zoom = 0.01;
+        double screen_width = 2560;
+        double screen_height = 1600;
 
         std::cout << "--- Native EXE: 开始计算... ---" << std::endl;
         auto start_time = std::chrono::high_resolution_clock::now();
