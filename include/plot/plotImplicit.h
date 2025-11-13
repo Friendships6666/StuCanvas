@@ -17,7 +17,7 @@ struct ThreadCacheForTiling {
 };
 
 // ====================================================================
-//  在这里添加新函数的声明
+//  MODIFIED: 函数声明修正回 'process_implicit_adaptive'
 // ====================================================================
 void process_implicit_adaptive(
     const Vec2& world_origin, double wppx, double wppy,
@@ -29,6 +29,5 @@ void process_implicit_adaptive(
     oneapi::tbb::concurrent_vector<PointData>& all_points
 );
 // ====================================================================
-
 
 #endif //PLOTIMPLICIT_H
