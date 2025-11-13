@@ -107,22 +107,20 @@ int main() {
         std::vector<std::string> implicit_mathjson_list = {
             R"([
   "Equal",
-  "y",
   [
-    "Ln",
+    "Add",
     [
-      "Add",
-      [
-        "Sin",
-        "x"
-      ],
-      [
-        "Cos",
-        "y"
-      ],
-      -0.1
+      "Power",
+      "x",
+      2
+    ],
+    [
+      "Power",
+      "y",
+      2
     ]
-  ]
+  ],
+  10
 ])"
         };
 
@@ -155,7 +153,7 @@ int main() {
 
         double offset_x = 0.0;
         double offset_y = 0.0;
-        double zoom = 0.01;
+        double zoom = 0.1;
         double screen_width = 2560;
         double screen_height = 1600;
 

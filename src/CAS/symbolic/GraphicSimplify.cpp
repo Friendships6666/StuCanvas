@@ -843,45 +843,38 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
 
             if (auto con = std::dynamic_pointer_cast<Constant>(node)) {
                 ss << con->value << " ";
-            } else if (auto sym = std::dynamic_pointer_cast<Symbol>(node)) {
+                return;
+            }
+            if (auto sym = std::dynamic_pointer_cast<Symbol>(node)) {
                 ss << sym->name << " ";
-            } else if (auto func = std::dynamic_pointer_cast<Function>(node)) {
-                // --- 特殊处理可以有多个参数的函数 ---
+                return;
+            }
+
+            if (auto func = std::dynamic_pointer_cast<Function>(node)) {
+                // --- 特殊处理多参数函数 ---
                 if (func->op == "Add" || func->op == "Multiply") {
                     if (func->args.empty()) {
-                        // 对于空的 Add 返回 0，空的 Multiply 返回 1
-                        if (func->op == "Add") ss << "0 ";
-                        else if (func->op == "Multiply") ss << "1 ";
+                        if (func->op == "Add") ss << "0 "; else ss << "1 ";
                         return;
                     }
-
-                    // 首先处理第一个参数
                     ast_to_rpn_recursive(func->args[0], ss);
-
-                    // 从第二个参数开始，迭代地应用操作符
                     for (size_t i = 1; i < func->args.size(); ++i) {
                         ast_to_rpn_recursive(func->args[i], ss);
-                        if (func->op == "Add") ss << "+ ";
-                        else if (func->op == "Multiply") ss << "* ";
+                        if (func->op == "Add") ss << "+ "; else ss << "* ";
                     }
-                    return; // 已经处理完毕，提前返回
+                    return;
                 }
 
-                // --- 特殊处理 Negate ---
-                if (func->op == "Negate" && func->args.size() == 1) {
-                    ss << "0 ";
-                    ast_to_rpn_recursive(func->args[0], ss);
-                    ss << "- ";
-                    return; // 处理完毕，提前返回
-                }
-
-                // --- 对所有其他函数使用标准的后缀（后序遍历）处理 ---
+                // --- 标准的后序遍历，适用于所有二元或一元函数 ---
                 for (const auto& arg : func->args) {
                     ast_to_rpn_recursive(arg, ss);
                 }
 
-                // 注意：Add 和 Multiply 已在上面处理，这里不再需要
-                if (func->op == "Divide") ss << "/ ";
+                // ===============================================
+                //  ↓↓↓ 确保这一行存在 ↓↓↓
+                // ===============================================
+                if (func->op == "Subtract") ss << "- ";
+                else if (func->op == "Divide") ss << "/ ";
                 else if (func->op == "Power") ss << "pow ";
                 else if (func->op == "Sin") ss << "sin ";
                 else if (func->op == "Cos") ss << "cos ";
@@ -889,6 +882,7 @@ std::shared_ptr<Expression> constant_fold_recursive(const std::shared_ptr<Expres
                 else if (func->op == "Ln") ss << "ln ";
                 else if (func->op == "Abs") ss << "abs ";
                 else if (func->op == "Sign") ss << "sign ";
+                else if (func->op == "Negate") ss << "0 swap - ";
             }
         }
 

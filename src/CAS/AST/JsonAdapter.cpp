@@ -89,45 +89,43 @@ namespace {
 //  - 它会自动将 y = f(x) 形式的方程转换为 y - f(x) 的 AST 结构，
 //    以便后续的符号计算和绘图。
 // ====================================================================
-std::shared_ptr<Expression> parse_json_to_ast_simdjson(const std::string& json_string) {
+    std::shared_ptr<Expression> parse_json_to_ast_simdjson(const std::string& json_string) {
     thread_local simdjson::dom::parser parser;
     try {
         simdjson::dom::element root = parser.parse(json_string);
 
-        // 检查根节点是否为 ["Equal", "y", <expression>] 格式
+        // 检查根节点是否为 ["Equal", <LHS>, <RHS>] 格式
         if (root.type() == simdjson::dom::element_type::ARRAY) {
             simdjson::dom::array arr = root.get<simdjson::dom::array>();
             if (arr.size() == 3 &&
-                arr.at(0).is_string() && *arr.at(0).get<std::string_view>() == "Equal" &&
-                arr.at(1).is_string() && *arr.at(1).get<std::string_view>() == "y")
+                arr.at(0).is_string() && *arr.at(0).get<std::string_view>() == "Equal")
             {
-                // 格式匹配: y = f(x)
-                // 移项得到: y - f(x) = 0
-                // 我们将处理表达式 y - f(x)
+                // 格式匹配: LHS = RHS
+                // 我们将移项得到: LHS - RHS = 0
 
-                // 1. 提取右侧表达式 f(x)
+                // 1. 提取左侧表达式 (LHS)
+                simdjson::dom::element lhs_element = arr.at(1);
+                // 2. 将 LHS 构建为 AST
+                std::shared_ptr<Expression> lhs_ast = build_ast_from_element(lhs_element);
+
+                // 3. 提取右侧表达式 (RHS)
                 simdjson::dom::element rhs_element = arr.at(2);
-                // 2. 将 f(x) 构建为 AST
+                // 4. 将 RHS 构建为 AST
                 std::shared_ptr<Expression> rhs_ast = build_ast_from_element(rhs_element);
 
-                // 3. 创建代表 "y" 的符号节点
-                auto y_symbol = std::make_shared<Symbol>("y");
-
-                // 4. 创建代表 -f(x) 的节点，即 ["Negate", f(x)]
-                auto negated_rhs_ast = std::make_shared<Function>("Negate", std::vector<std::shared_ptr<Expression>>{rhs_ast});
-
-                // 5. 构建最终的 AST: ["Add", "y", ["Negate", f(x)]]，即 y - f(x)
-                return std::make_shared<Function>("Add", std::vector<std::shared_ptr<Expression>>{y_symbol, negated_rhs_ast});
+                // 5. 构建最终的 AST: ["Subtract", LHS_ast, RHS_ast]，即 LHS - RHS
+                return std::make_shared<Function>("Subtract", std::vector<std::shared_ptr<Expression>>{lhs_ast, rhs_ast});
             }
         }
 
         // 如果格式不匹配，则抛出错误
-        throw std::runtime_error("输入JSON格式无效。根节点必须是 [\"Equal\", \"y\", <expression>]");
+        throw std::runtime_error("输入JSON格式无效。根节点必须是 [\"Equal\", <左表达式>, <右表达式>]");
 
     } catch (const simdjson::simdjson_error& e) {
         throw std::runtime_error("simdjson 解析失败: " + std::string(e.what()));
     }
 }
+
 std::string ast_to_json_string(const std::shared_ptr<Expression>& ast) {
     return ast_to_json_node(ast).dump(2);
 }
