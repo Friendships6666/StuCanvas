@@ -1,5 +1,3 @@
-// --- 文件路径: include/plot/plotImplicit.h ---
-
 #ifndef PLOTIMPLICIT_H
 #define PLOTIMPLICIT_H
 
@@ -17,7 +15,7 @@ struct ThreadCacheForTiling {
 };
 
 // ====================================================================
-//  MODIFIED: 函数声明修正回 'process_implicit_adaptive'
+//  在这里添加新函数的声明
 // ====================================================================
 void process_implicit_adaptive(
     const Vec2& world_origin, double wppx, double wppy,
@@ -28,6 +26,4 @@ void process_implicit_adaptive(
     oneapi::tbb::combinable<ThreadCacheForTiling>& thread_local_caches,
     oneapi::tbb::concurrent_vector<PointData>& all_points
 );
-// ====================================================================
-
 #endif //PLOTIMPLICIT_H
