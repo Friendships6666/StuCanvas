@@ -5,10 +5,12 @@
 #include "../../include/plot/plotExplicit.h"
 #include "../../include/plot/plotParametric.h"
 
+// Helper struct for explicit functions
 struct ExplicitFunction {
     AlignedVector<RPNToken> rpn;
 };
 
+// Helper struct for parametric functions
 struct ParametricFunction {
     AlignedVector<RPNToken> rpn_x;
     AlignedVector<RPNToken> rpn_y;
@@ -16,6 +18,7 @@ struct ParametricFunction {
     double t_max;
 };
 
+// Helper function to parse parametric function strings
 ParametricFunction parse_parametric_string(const std::string& str) {
     std::vector<std::string> parts;
     std::string current_part;
@@ -40,6 +43,10 @@ ParametricFunction parse_parametric_string(const std::string& str) {
     }
 }
 
+// ====================================================================
+//  FINAL VERSION: calculate_points_core 函数实现
+//  - 此函数的定义与 plotCall.h 头文件中的 10 参数声明完全一致。
+// ====================================================================
 void calculate_points_core(
     AlignedVector<PointData>& out_points,
     AlignedVector<FunctionRange>& out_ranges,
@@ -72,9 +79,10 @@ void calculate_points_core(
         AlignedVector<ExplicitFunction> explicit_programs;
         AlignedVector<ParametricFunction> parametric_programs;
 
+        // 1. Prepare RPN programs from input strings
         for(const auto& rpn_pair : implicit_rpn_pairs) {
-            implicit_programs.push_back(parse_rpn(rpn_pair.first));          // Normal RPN
-            implicit_programs_for_check.push_back(parse_rpn(rpn_pair.second)); // Check RPN
+            implicit_programs.push_back(parse_rpn(rpn_pair.first));
+            implicit_programs_for_check.push_back(parse_rpn(rpn_pair.second));
         }
         for(const auto& str : explicit_rpn_list) {
             explicit_programs.push_back({parse_rpn(str)});
@@ -94,9 +102,8 @@ void calculate_points_core(
         const int max_depth = 15;
         const auto num_chunks = thread_count * 16;
 
-        const unsigned int num_tiles_w = (unsigned int)(screen_width + TILE_W - 1) / TILE_W;
-        const unsigned int num_tiles_h = (unsigned int)(screen_height + TILE_H - 1) / TILE_H;
-        // --- 新代码 ---
+        // 2. Dispatch plotting tasks in parallel
+        // Implicit functions
         for (size_t func_idx = 0; func_idx < implicit_programs.size(); ++func_idx) {
             task_group.run([=, &per_function_buffers, &thread_local_caches, &implicit_programs, &implicit_programs_for_check] {
                 process_implicit_adaptive(
@@ -111,6 +118,7 @@ void calculate_points_core(
             });
         }
 
+        // Explicit functions
         const unsigned int explicit_index_offset = (unsigned int)implicit_programs.size();
         for (unsigned int func_idx = 0; func_idx < explicit_programs.size(); ++func_idx) {
             const auto& fn_data = explicit_programs[func_idx];
@@ -125,6 +133,7 @@ void calculate_points_core(
             }
         }
 
+        // Parametric functions
         const unsigned int parametric_index_offset = explicit_index_offset + (unsigned int)explicit_programs.size();
         for (unsigned int func_idx = 0; func_idx < parametric_programs.size(); ++func_idx) {
             const auto& fn_data = parametric_programs[func_idx];
@@ -143,6 +152,7 @@ void calculate_points_core(
 
         task_group.wait();
 
+        // 3. Consolidate results from all threads
         size_t total_points = 0;
         for(const auto& buffer : per_function_buffers) {
             total_points += buffer.size();

@@ -75,7 +75,7 @@ EMSCRIPTEN_BINDINGS(my_module) {
 #else // --- Native EXE Version ---
 
 // ====================================================================
-//  FIXED: 确保此函数的签名与之前的修改一致
+//          ↓↓↓ 这是正确的、拥有 8 个参数的函数定义 ↓↓↓
 // ====================================================================
 std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_for_native(
     const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
@@ -101,71 +101,53 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
 }
 
 int main() {
-    try{
+    try {
+        std::vector<std::pair<std::string, std::string>> all_implicit_rpn_pairs;
+
+        // --- 1. 处理 MathJSON 输入 ---
         std::cout << "\n--- CAS 符号化简与 RPN 生成测试 ---\n";
+        std::vector<std::string> implicit_mathjson_list = {}; // 保持为空
 
-        std::vector<std::string> implicit_mathjson_list = {
-            R"([
-  "Equal",
-  [
-    "Add",
-    [
-      "Power",
-      "x",
-      2
-    ],
-    [
-      "Power",
-      "y",
-      2
-    ]
-  ],
-  10
-])"
-        };
-
-        std::cout << "输入 MathJSON: \n" << implicit_mathjson_list[0] << std::endl;
-
-        auto start_cas_time = std::chrono::high_resolution_clock::now();
-
-        std::vector<std::pair<std::string, std::string>> implicit_rpn_pairs;
-        for (const auto& json_str : implicit_mathjson_list) {
-            auto ast = CAS::JsonAdapter::parse_json_to_ast_simdjson(json_str);
-            // ====================================================================
-            //  FIXED: 明确指定 constant_fold 的命名空间
-            // ====================================================================
-            implicit_rpn_pairs.push_back(CAS::GraphicSimplify::constant_fold(ast));
+        if (!implicit_mathjson_list.empty()) {
+            std::cout << "输入 " << implicit_mathjson_list.size() << " 个 MathJSON 进行处理...\n";
+            for (const auto& json_str : implicit_mathjson_list) {
+                auto ast = CAS::JsonAdapter::parse_json_to_ast_simdjson(json_str);
+                all_implicit_rpn_pairs.push_back(CAS::GraphicSimplify::constant_fold(ast));
+            }
+        } else {
+            std::cout << "没有 MathJSON 输入，跳过 CAS 处理。\n";
         }
 
-        auto end_cas_time = std::chrono::high_resolution_clock::now();
-        auto cas_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_cas_time - start_cas_time);
+        // --- 2. 处理直接 RPN 输入 ---
+        std::cout << "\n--- 直接 RPN 输入测试 ---\n";
+        std::vector<std::string> implicit_rpn_direct_list = {"x 2 pow y 2 pow + 10 -"}; // 保持为空
 
-        std::cout << "\n生成 Normal RPN: " << implicit_rpn_pairs[0].first << std::endl;
-        std::cout << "生成 Check RPN:   " << implicit_rpn_pairs[0].second << std::endl;
-        std::cout << "CAS 处理耗时: " << cas_duration.count() << " 微秒\n";
-        std::cout << "--- CAS 测试结束 ---\n\n";
+        if (!implicit_rpn_direct_list.empty()) {
+            for(const auto& rpn_str : implicit_rpn_direct_list) {
+                all_implicit_rpn_pairs.push_back({rpn_str, rpn_str});
+            }
+            std::cout << "已添加 " << implicit_rpn_direct_list.size() << " 个直接 RPN 输入。\n";
+        } else {
+            std::cout << "没有直接 RPN 输入。\n";
+        }
 
-        // ====================================================================
-        //  FIXED: 移除了旧的、未使用的 implicit_rpn 变量
-        // ====================================================================
-        std::vector<std::string> explicit_rpn = {};
-        std::vector<std::string> parametric_rpn = {};
+        // --- 3. 准备其他函数列表 ---
+        std::vector<std::string> explicit_rpn = {};      // 保持为空
+        std::vector<std::string> parametric_rpn = {};    // 保持为空
 
-        double offset_x = 0.0;
-        double offset_y = 0.0;
-        double zoom = 0.1;
-        double screen_width = 2560;
-        double screen_height = 1600;
+        double offset_x = 0.0, offset_y = 0.0, zoom = 0.1;
+        double screen_width = 2560.0, screen_height = 1600.0;
 
-        std::cout << "--- Native EXE: 开始计算... ---" << std::endl;
+        std::cout << "\n--- Native EXE: 开始计算... ---" << std::endl;
         auto start_time = std::chrono::high_resolution_clock::now();
 
         // ====================================================================
-        //  FIXED: 传递了正确的变量 (implicit_rpn_pairs)
+        //          ↓↓↓ 这是正确的、使用 8 个实参的函数调用 ↓↓↓
         // ====================================================================
         auto results = calculate_points_for_native(
-            implicit_rpn_pairs,
-            explicit_rpn, parametric_rpn,
+            all_implicit_rpn_pairs,
+            explicit_rpn,
+            parametric_rpn,
             offset_x, offset_y, zoom, screen_width, screen_height
         );
         const auto& final_points = results.first;
@@ -174,7 +156,7 @@ int main() {
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
 
-        std::cout << "--- Native EXE: 计算完成 ---" << std::endl;
+        std::cout << "--- Native EXE: 计算完成 ---\n";
         std::cout << "总耗时: " << duration.count() << " 毫秒" << std::endl;
         std::cout << "总共生成了 " << final_points.size() << " 个点。" << std::endl;
 
@@ -184,10 +166,14 @@ int main() {
             std::cerr << "错误: 无法打开文件 points.txt 进行写入！" << std::endl;
             return 1;
         }
-        output_file << std::fixed << std::setprecision(12);
-        for (const auto& p : final_points) {
-            output_file << p.position.x << " " << p.position.y << " " << p.function_index << "\n";
+
+        if (!final_points.empty()) {
+            output_file << std::fixed << std::setprecision(12);
+            for (const auto& p : final_points) {
+                output_file << p.position.x << " " << p.position.y << " " << p.function_index << "\n";
+            }
         }
+
         output_file.close();
         std::cout << "保存成功！" << std::endl;
 
@@ -200,4 +186,4 @@ int main() {
     return 0;
 }
 
-#endif // __EMSCRIPTEN__
+#endif // __EMSCRIPTEN__#endif // __EMSCRIPTEN__
