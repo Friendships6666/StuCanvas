@@ -20,11 +20,22 @@ void calculate_points_for_wasm(
     double zoom,
     double screen_width, double screen_height
 ) {
+
+    std::vector<std::pair<std::string, std::string>> implicit_rpn_pairs;
+    implicit_rpn_pairs.reserve(implicit_rpn_list.size());
+    for (const auto& rpn_str : implicit_rpn_list) {
+        implicit_rpn_pairs.push_back({rpn_str, rpn_str});
+    }
+    // --- 适配结束 ---
+
     AlignedVector<PointData> ordered_absolute_points;
+    // 调用新的核心函数，传入转换后的正确类型
     calculate_points_core(
         ordered_absolute_points,
         wasm_function_ranges_buffer,
-        implicit_rpn_list, explicit_rpn_list, parametric_rpn_list,
+        implicit_rpn_pairs, // 传入转换后的数据
+        explicit_rpn_list,
+        parametric_rpn_list,
         offset_x, offset_y, zoom, screen_width, screen_height
     );
 

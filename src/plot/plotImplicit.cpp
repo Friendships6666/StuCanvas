@@ -223,16 +223,36 @@ void process_implicit_adaptive(
         [&](const QuadtreeTask& leaf) {
             ThreadCacheForTiling& cache = thread_local_caches.local();
 
-            unsigned int x_start = static_cast<unsigned int>((leaf.world_x - world_origin.x) / wppx);
-            unsigned int y_start = static_cast<unsigned int>((leaf.world_y - world_origin.y) / wppy);
-            unsigned int x_end = static_cast<unsigned int>((leaf.world_x + leaf.world_w - world_origin.x) / wppx);
-            unsigned int y_end = static_cast<unsigned int>((leaf.world_y + leaf.world_h - world_origin.y) / wppy);
+            // ====================================================================
+            //              ↓↓↓ 这是关键的修改区域 ↓↓↓
+            // ====================================================================
+            // 目的: 计算能够完全覆盖浮点世界坐标区块的最小整数像素矩形。
+            // 方法: 对起始坐标(左上)向下取整(floor)，对结束坐标(右下)向上取整(ceil)。
+            //       这确保了不会因浮点到整数的截断而丢失任何可能包含图形的区域。
 
+            // 1. 先计算出区块四个角的浮点屏幕坐标
+            const double sx_start_f = (leaf.world_x - world_origin.x) / wppx;
+            const double sy_start_f = (leaf.world_y - world_origin.y) / wppy;
+            const double sx_end_f = (leaf.world_x + leaf.world_w - world_origin.x) / wppx;
+            const double sy_end_f = (leaf.world_y + leaf.world_h - world_origin.y) / wppy;
+
+            // 2. 应用 floor 和 ceil 得到完全包围的整数像素坐标
+            unsigned int x_start = static_cast<unsigned int>(std::floor(sx_start_f));
+            unsigned int y_start = static_cast<unsigned int>(std::floor(sy_start_f));
+            unsigned int x_end = static_cast<unsigned int>(std::ceil(sx_end_f));
+            unsigned int y_end = static_cast<unsigned int>(std::ceil(sy_end_f));
+
+            // ====================================================================
+            //              ↑↑↑ 修改结束 ↑↑↑
+            // ====================================================================
+
+            // 将计算出的像素坐标限制在屏幕范围内，防止越界
             x_start = std::max(0u, x_start);
             y_start = std::max(0u, y_start);
             x_end = std::min((unsigned int)screen_width, x_end);
             y_end = std::min((unsigned int)screen_height, y_end);
 
+            // 如果区块完全在屏幕外或大小为0，则跳过
             if (x_start >= x_end || y_start >= y_end) return;
 
             draw_points_in_tile(
