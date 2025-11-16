@@ -48,13 +48,42 @@ add_executable(WasmTBBTest src/main.cpp
 # 它告诉 CMake，WasmTBBTest 这个目标将使用 pch.h 作为预编译头文件。
 # PRIVATE 意味着这个设置只应用于 WasmTBBTest 自身。
 target_precompile_headers(WasmTBBTest PRIVATE pch.h)
+find_package(Boost REQUIRED COMPONENTS multiprecision)
+
+# 查找 PkgConfig 模块，这是调用 pkgconf 的核心
+find_package(PkgConfig REQUIRED)
+find_package(simdjson REQUIRED)
+# 使用 PkgConfig 查找 GMP 和 MPFR，并创建导入目标
+# (这里的语法完全复制自 vcpkg 的输出)
+pkg_check_modules(gmp REQUIRED IMPORTED_TARGET gmp)
+pkg_check_modules(mpfr REQUIRED IMPORTED_TARGET mpfr)
 
 
-# --- 查找并包含 xsimd (这是一个纯头文件库) ---
-# 将 find_package 提前，因为 pch.h 依赖它
-find_package(xsimd CONFIG REQUIRED)
-find_package(simdjson CONFIG REQUIRED)
-target_link_libraries(WasmTBBTest PRIVATE simdjson::simdjson)
+#  gmp
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(gmp REQUIRED IMPORTED_TARGET gmp)
+
+
+# gmpxx
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(gmpxx REQUIRED IMPORTED_TARGET gmpxx)
+
+find_package(PkgConfig)
+pkg_check_modules(mpfr REQUIRED IMPORTED_TARGET mpfr)
+
+
+
+
+target_link_libraries(WasmTBBTest PRIVATE
+        simdjson::simdjson
+        Boost::multiprecision
+
+        # --- NEW: 链接 GMP::gmp 和 MPFR::mpfr ---
+        PkgConfig::gmp
+        PkgConfig::gmpxx
+
+        PkgConfig::mpfr
+)
 if(TARGET xsimd::xsimd)
     message(STATUS "Found modern xsimd target: xsimd::xsimd")
     target_link_libraries(WasmTBBTest PRIVATE xsimd::xsimd)
