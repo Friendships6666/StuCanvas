@@ -15,167 +15,6 @@ namespace { // 使用匿名命名空间，使常量仅在此文件内可见
 // ====================================================================
 
 
-// --- 二元运算符实现 ---
-
-Interval interval_add(const Interval& a, const Interval& b) {
-    return {a.min + b.min, a.max + b.max};
-}
-
-Interval interval_sub(const Interval& a, const Interval& b) {
-    return {a.min - b.max, a.max - b.min};
-}
-
-Interval interval_mul(const Interval& a, const Interval& b) {
-    double p1 = a.min * b.min;
-    double p2 = a.min * b.max;
-    double p3 = a.max * b.min;
-    double p4 = a.max * b.max;
-    return {std::min({p1, p2, p3, p4}), std::max({p1, p2, p3, p4})};
-}
-
-Interval interval_div(const Interval& a, const Interval& b) {
-    if (b.min <= 0.0 && b.max >= 0.0) {
-        return {-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
-    }
-    Interval b_inv = {1.0 / b.max, 1.0 / b.min};
-    return interval_mul(a, b_inv);
-}
-
-Interval interval_pow(const Interval& base, const Interval& exp) {
-    // 假设 1: 幂指数是常量，这与您之前的逻辑一致，也是常见的优化。
-    if (exp.min != exp.max) {
-        // 如果指数本身是一个区间，情况会变得极其复杂，返回最保守的结果。
-        return {-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
-    }
-    const double e = exp.min;
-
-    // 假设 2: CAS 已经重写了表达式，确保 `base` 区间对于 `std::pow` 是有效的。
-    // 例如：如果 e 不是整数，CAS 保证 base.min >= 0。
-
-    // 唯一需要特殊处理的 intrinsic 情况：偶数次正整数幂。
-    // 这个函数的形状 (类似抛物线) 有一个在 base = 0 处的极小值，
-    // 这是 `pow` 函数自身的性质，CAS 无法改变。
-    if (e > 0 && e == std::round(e) && static_cast<long long>(e) % 2 == 0) {
-        const auto n = static_cast<long long>(e);
-
-        if (base.min >= 0.0) {
-            // 区间完全在 y 轴右侧，函数单调递增。
-            return {std::pow(base.min, n), std::pow(base.max, n)};
-        }
-        if (base.max < 0.0) {
-            // 区间完全在 y 轴左侧，函数单调递减。
-            return {std::pow(base.max, n), std::pow(base.min, n)};
-        }
-        // 区间跨越了 y 轴，最小值必然是 0。
-        return {0.0, std::max(std::pow(base.min, n), std::pow(base.max, n))};
-    }
-
-    // 对于所有其他情况 (奇数次幂、负数次幂、分数次幂)，
-    // 在 CAS 处理过的 "良性" base 区间上，函数是单调的。
-    // 因此，我们只需要计算两个端点的值，然后取其最小/最大值即可。
-    double p1 = std::pow(base.min, e);
-    double p2 = std::pow(base.max, e);
-
-    // 添加一个安全检查，以防万一 CAS 仍传入无效域 (例如 pow(-1, 0.5))。
-    if (std::isnan(p1) || std::isnan(p2)) {
-        return {-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
-    }
-
-    // std::minmax 可以在某些架构上被优化
-    const auto [min_val, max_val] = std::minmax(p1, p2);
-    return {min_val, max_val};
-}
-
-
-// --- 一元运算符实现 ---
-
-Interval interval_exp(const Interval& i) {
-    return {std::exp(i.min), std::exp(i.max)};
-}
-
-// ====================================================================
-//  MODIFIED: interval_ln
-//  - 行为已更新。
-//  - 如果整个输入区间 i.max <= 0，则返回 [-inf, -inf] 而不是 NaN。
-//  - 如果区间包含 0 (i.min <= 0)，则下界为 -inf。
-//  - 这提供了更健壮的行为，避免了 NaN 污染。
-// ====================================================================
-Interval interval_ln(const Interval& i) {
-    if (i.max <= 0.0) {
-        return {-std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
-    }
-    double min_val = (i.min <= 0.0) ? -std::numeric_limits<double>::infinity() : std::log(i.min);
-    return {min_val, std::log(i.max)};
-}
-
-Interval interval_sin(const Interval& i) {
-    if (i.max - i.min >= 2.0 * PI) {
-        return {-1.0, 1.0};
-    }
-    double sin_min = std::sin(i.min);
-    double sin_max = std::sin(i.max);
-    if (sin_min > sin_max) std::swap(sin_min, sin_max);
-
-    double k1 = std::ceil((i.min - PI_2) / (2.0 * PI));
-    double peak = PI_2 + k1 * 2.0 * PI;
-    if (peak >= i.min && peak <= i.max) {
-        sin_max = 1.0;
-    }
-
-    double k2 = std::ceil((i.min - PI_3_2) / (2.0 * PI));
-    double trough = PI_3_2 + k2 * 2.0 * PI;
-    if (trough >= i.min && trough <= i.max) {
-        sin_min = -1.0;
-    }
-    return {sin_min, sin_max};
-}
-
-Interval interval_cos(const Interval& i) {
-    if (i.max - i.min >= 2.0 * PI) {
-        return {-1.0, 1.0};
-    }
-    double cos_min = std::cos(i.min);
-    double cos_max = std::cos(i.max);
-    if (cos_min > cos_max) std::swap(cos_min, cos_max);
-
-    double k1 = std::ceil(i.min / (2.0 * PI));
-    double peak = k1 * 2.0 * PI;
-    if (peak >= i.min && peak <= i.max) {
-        cos_max = 1.0;
-    }
-
-    double k2 = std::ceil((i.min - PI) / (2.0 * PI));
-    double trough = PI + k2 * 2.0 * PI;
-    if (trough >= i.min && trough <= i.max) {
-        cos_min = -1.0;
-    }
-    return {cos_min, cos_max};
-}
-
-Interval interval_tan(const Interval& i) {
-    double k = std::floor(i.min / PI - 0.5);
-    double asymptote = (k + 0.5) * PI;
-    if (asymptote >= i.min && asymptote <= i.max) {
-         return {-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
-    }
-     asymptote += PI;
-    if (asymptote >= i.min && asymptote <= i.max) {
-         return {-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity()};
-    }
-    return {std::tan(i.min), std::tan(i.max)};
-}
-
-Interval interval_abs(const Interval& i) {
-    if (i.min >= 0) return i;
-    if (i.max < 0) return {-i.max, -i.min};
-    return {0.0, std::max(-i.min, i.max)};
-}
-
-Interval interval_sign(const Interval& i) {
-    if (i.min > 0) return {1.0, 1.0};
-    if (i.max < 0) return {-1.0, -1.0};
-    return {-1.0, 1.0};
-}
 
 // --- 辅助常量 (放在文件顶部或匿名命名空间内) ---
 namespace {
@@ -193,7 +32,26 @@ namespace {
 
 
 
+Interval_Batch interval_sqrt_batch(const Interval_Batch& i) {
+    // 创建一个掩码，检查区间的上限是否小于0
+    auto max_is_negative_mask = (i.max < xs::batch<double>(0.0));
 
+    // 如果区间的下限小于0，则将其裁剪到0
+    batch_type new_min = xs::max(xs::batch<double>(0.0), i.min);
+
+    // 计算正常情况下的结果
+    Interval_Batch normal_result = {xs::sqrt(new_min), xs::sqrt(i.max)};
+
+    // 如果定义域无效 (max < 0)，则返回一个无效区间 (例如 [NaN, NaN])
+    batch_type nan_val = xs::batch<double>(std::numeric_limits<double>::quiet_NaN());
+    Interval_Batch error_result = {nan_val, nan_val};
+
+    // 根据掩码选择最终结果
+    return {
+        xs::select(max_is_negative_mask, error_result.min, normal_result.min),
+        xs::select(max_is_negative_mask, error_result.max, normal_result.max)
+    };
+}
 
 Interval_Batch interval_add_batch(const Interval_Batch& a, const Interval_Batch& b) {
     return {a.min + b.min, a.max + b.max};

@@ -4,6 +4,7 @@
 #include "../../include/functions/functions.h"
 
 
+
 // 任务结构体，用于四叉树细分
 struct QuadtreeTask {
     double world_x, world_y; // 区块左上角的世界坐标
@@ -12,7 +13,8 @@ struct QuadtreeTask {
 
 // 调试辅助：在文件作用域内添加一个 Interval 的打印函数
 namespace {
-    std::ostream& operator<<(std::ostream& os, const Interval& i) {
+    // --- 修正 1: 将这里的 Interval 修改为 Interval<double> ---
+    std::ostream& operator<<(std::ostream& os, const Interval<double>& i) {
         os << "[" << i.min << ", " << i.max << "]";
         return os;
     }
@@ -161,9 +163,12 @@ void process_implicit_adaptive(
         while (!tasks.empty()) {
             QuadtreeTask task = tasks.top(); tasks.pop();
 
-            Interval x_interval(task.world_x, task.world_x + task.world_w);
-            Interval y_interval(task.world_y + task.world_h, task.world_y);
-            Interval result = evaluate_rpn<Interval>(rpn_program_check, x_interval, y_interval);
+            // --- 修正 2: 将这里的 Interval 修改为 Interval<double> ---
+            Interval<double> x_interval(task.world_x, task.world_x + task.world_w);
+            Interval<double> y_interval(task.world_y + task.world_h, task.world_y);
+
+            // --- 修正 3: 在调用 evaluate_rpn 时明确指定模板参数 ---
+            Interval<double> result = evaluate_rpn<Interval<double>>(rpn_program_check, x_interval, y_interval);
 
             if (result.max >= 0.0 && result.min <= 0.0) {
                 if (task.world_w < min_pixel_width || std::abs(task.world_h) < min_pixel_height) {

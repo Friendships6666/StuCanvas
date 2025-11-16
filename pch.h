@@ -1,5 +1,6 @@
 #ifndef PCH_H
 #define PCH_H
+#define NOMINMAX
 #include "simdjson.h"       // 引入 simdjson
 #include <nlohmann/json.hpp> // 保留: 用于序列化
 // 标准库
