@@ -106,8 +106,8 @@ void process_implicit_adaptive(
         screen_width * wppx, screen_height * wppy
     });
 
-    const double min_pixel_width = 200 * wppx;
-    const double min_pixel_height = 200 * std::abs(wppy);
+    const double min_pixel_width = 10 * wppx;
+    const double min_pixel_height = 10 * std::abs(wppy);
 
     // ====================================================================
     //              ↓↓↓ 高性能“快车道”循环结构 ↓↓↓
