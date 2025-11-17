@@ -89,8 +89,6 @@ EMSCRIPTEN_BINDINGS(my_module) {
 // 函数定义保持不变
 std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_for_native(
     const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
-    const std::vector<std::string>& explicit_rpn_list,
-    const std::vector<std::string>& parametric_rpn_list,
     const std::vector<std::string>& industry_rpn_list,
     double offset_x, double offset_y,
     double zoom,
@@ -103,8 +101,8 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
         final_points_aligned,
         final_ranges_aligned,
         implicit_rpn_pairs,
-        explicit_rpn_list,
-        parametric_rpn_list,
+
+
         industry_rpn_list,
         offset_x, offset_y, zoom, screen_width, screen_height
     );
@@ -120,17 +118,17 @@ int main() {
         // --- 1. 准备所有函数列表 ---
         std::vector<std::pair<std::string, std::string>> all_implicit_rpn_pairs;
         std::cout << "\n--- 准备隐式函数 ---\n";
-        std::vector<std::string> implicit_rpn_direct_list = {"x 2 pow y 2 pow + 10 -"}; // Circle
+        std::vector<std::string> implicit_rpn_direct_list(100, "x 2 pow y 2 pow + 10 -"); // 100 identical circles
         if (!implicit_rpn_direct_list.empty()) {
             for(const auto& rpn_str : implicit_rpn_direct_list) {
-                all_implicit_rpn_pairs.push_back({rpn_str, rpn_str});
+                all_implicit_rpn_pairs.emplace_back(rpn_str, rpn_str);
             }
             std::cout << "已添加 " << implicit_rpn_direct_list.size() << " 个直接 RPN 输入。\n";
         }
 
         std::vector<std::string> explicit_rpn = {};
         std::vector<std::string> parametric_rpn = {};
-        std::vector<std::string> industry_rpn = { "x 2 pow 2 x * + 1 +;80" }; // x^2 + 2x + 1 = 0
+        std::vector<std::string> industry_rpn = {  }; // x^2 + 2x + 1 = 0
         std::cout << "已准备 " << industry_rpn.size() << " 个工业级 RPN 函数。\n";
 
         // --- 2. 设置所有绘图共享的视图属性 ---
@@ -144,8 +142,6 @@ int main() {
 
         auto results = calculate_points_for_native(
             all_implicit_rpn_pairs,
-            explicit_rpn,
-            parametric_rpn,
             industry_rpn,
             offset_x, offset_y, zoom, screen_width, screen_height
         );
