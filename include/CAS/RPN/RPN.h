@@ -99,12 +99,8 @@ FORCE_INLINE T evaluate_rpn(
         switch (t.type) {
             case RPNTokenType::PUSH_CONST:
                 if constexpr (std::is_same_v<T, Interval_Batch>) {
-                    // 对于 Interval_Batch，我们需要用常量创建一个完整的 batch
-                    // 作为 min 和 max 的值。
                     s[sp++] = {batch_type(t.value), batch_type(t.value)};
                 } else {
-                    // 对于所有其他类型 (double, hp_float, Interval<T>),
-                    // 单参数构造函数是有效的。
                     s[sp++] = T(t.value);
                 }
                 break;
@@ -180,27 +176,40 @@ FORCE_INLINE T evaluate_rpn(
                 else s[sp - 1] = abs(s[sp - 1]);
                 break;
 
+            // ====================================================================
+            //          ↓↓↓ 这是关键的修正区域 ↓↓↓
+            // ====================================================================
             case RPNTokenType::SIGN:
-                if constexpr (is_interval<T>::value) s[sp - 1] = interval_sign(s[sp - 1]);
-                else if constexpr (std::is_same_v<T, Interval_Batch>) s[sp - 1] = interval_sign_batch(s[sp - 1]);
-                else if constexpr (std::is_same_v<T, batch_type>) s[sp - 1] = xs::sign(s[sp - 1]);
-                else s[sp - 1] = (s[sp - 1] > T(0)) - (s[sp - 1] < T(0));
+                if constexpr (is_interval<T>::value) {
+                    s[sp - 1] = interval_sign(s[sp - 1]);
+                }
+                else if constexpr (std::is_same_v<T, Interval_Batch>) {
+                    s[sp - 1] = interval_sign_batch(s[sp - 1]);
+                }
+                else if constexpr (std::is_same_v<T, batch_type>) {
+                    s[sp - 1] = xs::sign(s[sp - 1]);
+                }
+                // 明确处理 double 和 hp_float 的情况
+                else if constexpr (std::is_same_v<T, double> || std::is_same_v<T, hp_float>) {
+                    s[sp - 1] = (s[sp - 1] > T(0)) - (s[sp - 1] < T(0));
+                }
                 break;
+            // ====================================================================
+            //                          ↑↑↑ 修改结束 ↑↑↑
+            // ====================================================================
 
-            // --- 关键修正：为这些特殊函数添加完整的 if constexpr 保护 ---
             case RPNTokenType::SAFE_LN:
-                if constexpr (is_interval<T>::value) { s[sp - 1] = interval_ln(s[sp - 1], precision_bits); } // 回退到常规 ln
+                if constexpr (is_interval<T>::value) { s[sp - 1] = interval_ln(s[sp - 1], precision_bits); }
                 else if constexpr (std::is_same_v<T, double>) { s[sp - 1] = safe_ln_scalar(s[sp - 1]); }
                 else if constexpr (std::is_same_v<T, batch_type>) { s[sp - 1] = safe_ln_batch(s[sp - 1]); }
-                // 对于 Interval_Batch 和 hp_float, 此处无定义行为，编译器会因为没有匹配分支而忽略，是安全的。
                 break;
             case RPNTokenType::CHECK_LN:
-                if constexpr (is_interval<T>::value) { s[sp - 1] = interval_ln(s[sp - 1], precision_bits); } // 回退到常规 ln
+                if constexpr (is_interval<T>::value) { s[sp - 1] = interval_ln(s[sp - 1], precision_bits); }
                 else if constexpr (std::is_same_v<T, double>) { s[sp - 1] = check_ln_scalar(s[sp - 1]); }
                 else if constexpr (std::is_same_v<T, batch_type>) { s[sp - 1] = check_ln_batch(s[sp - 1]); }
                 break;
             case RPNTokenType::SAFE_EXP:
-                if constexpr (is_interval<T>::value) { s[sp - 1] = interval_exp(s[sp - 1]); } // 回退到常规 exp
+                if constexpr (is_interval<T>::value) { s[sp - 1] = interval_exp(s[sp - 1]); }
                 else if constexpr (std::is_same_v<T, double>) { s[sp - 1] = safe_exp_scalar(s[sp - 1]); }
                 else if constexpr (std::is_same_v<T, batch_type>) { s[sp - 1] = safe_exp_batch(s[sp - 1]); }
                 break;
@@ -208,5 +217,6 @@ FORCE_INLINE T evaluate_rpn(
     }
     return s[0];
 }
+
 
 #endif //RPN_H

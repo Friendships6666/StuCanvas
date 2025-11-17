@@ -4,7 +4,7 @@
 #include "../../include/plot/plotImplicit.h"
 #include "../../include/plot/plotExplicit.h"
 #include "../../include/plot/plotParametric.h"
-
+#include "../../include/plot/plotIndustry.h"
 // Helper struct for explicit functions
 struct ExplicitFunction {
     AlignedVector<RPNToken> rpn;
@@ -43,16 +43,13 @@ ParametricFunction parse_parametric_string(const std::string& str) {
     }
 }
 
-// ====================================================================
-//  FINAL VERSION: calculate_points_core 函数实现
-//  - 此函数的定义与 plotCall.h 头文件中的 10 参数声明完全一致。
-// ====================================================================
 void calculate_points_core(
     AlignedVector<PointData>& out_points,
     AlignedVector<FunctionRange>& out_ranges,
     const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
     const std::vector<std::string>& explicit_rpn_list,
     const std::vector<std::string>& parametric_rpn_list,
+    const std::vector<std::string>& industry_rpn_list, // <-- 新增参数
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height
@@ -64,34 +61,36 @@ void calculate_points_core(
         const auto thread_count = std::thread::hardware_concurrency();
         oneapi::tbb::global_control control(oneapi::tbb::global_control::max_allowed_parallelism, thread_count);
 
-        Uniforms uniforms = {{screen_width, screen_height}, zoom, {offset_x, offset_y}};
-        double aspect_ratio = uniforms.screen_dimensions.x / uniforms.screen_dimensions.y;
+        // --- 1. 计算世界坐标系参数 ---
+        double aspect_ratio = screen_width / screen_height;
         double centered_x_0 = (0.0 * 2.0 - 1.0) * aspect_ratio;
         double centered_y_0 = -(0.0 * 2.0 - 1.0);
-        Vec2 world_origin = { (centered_x_0 / uniforms.zoom) + uniforms.offset.x, (centered_y_0 / uniforms.zoom) + uniforms.offset.y };
-        double world_per_pixel_x = (2.0 * aspect_ratio) / (uniforms.zoom * uniforms.screen_dimensions.x);
-        double world_per_pixel_y = -2.0 / (uniforms.zoom * uniforms.screen_dimensions.y);
+        Vec2 world_origin = { (centered_x_0 / zoom) + offset_x, (centered_y_0 / zoom) + offset_y };
+        double world_per_pixel_x = (2.0 * aspect_ratio) / (zoom * screen_width);
+        double world_per_pixel_y = -2.0 / (zoom * screen_height);
 
         oneapi::tbb::task_group task_group;
         oneapi::tbb::combinable<ThreadCacheForTiling> thread_local_caches;
 
+        // --- 2. 准备所有函数的RPN程序 ---
         std::vector<AlignedVector<RPNToken>> implicit_programs, implicit_programs_for_check;
-        AlignedVector<ExplicitFunction> explicit_programs;
-        AlignedVector<ParametricFunction> parametric_programs;
-
-        // 1. Prepare RPN programs from input strings
         for(const auto& rpn_pair : implicit_rpn_pairs) {
             implicit_programs.push_back(parse_rpn(rpn_pair.first));
             implicit_programs_for_check.push_back(parse_rpn(rpn_pair.second));
         }
+
+        std::vector<ExplicitFunction> explicit_programs;
         for(const auto& str : explicit_rpn_list) {
             explicit_programs.push_back({parse_rpn(str)});
         }
+
+        std::vector<ParametricFunction> parametric_programs;
         for(const auto& str : parametric_rpn_list) {
             parametric_programs.push_back(parse_parametric_string(str));
         }
 
-        const size_t total_functions = implicit_programs.size() + explicit_programs.size() + parametric_programs.size();
+        // --- 3. 设置并发缓冲区和函数索引 ---
+        const size_t total_functions = implicit_programs.size() + explicit_programs.size() + parametric_programs.size() + industry_rpn_list.size();
         std::vector<oneapi::tbb::concurrent_vector<PointData>> per_function_buffers(total_functions);
 
         const double world_x_start = world_origin.x;
@@ -102,8 +101,9 @@ void calculate_points_core(
         const int max_depth = 15;
         const auto num_chunks = thread_count * 16;
 
-        // 2. Dispatch plotting tasks in parallel
-        // Implicit functions
+        // --- 4. 并行调度所有绘图任务 ---
+
+        // 隐函数
         for (size_t func_idx = 0; func_idx < implicit_programs.size(); ++func_idx) {
             task_group.run([=, &per_function_buffers, &thread_local_caches, &implicit_programs, &implicit_programs_for_check] {
                 process_implicit_adaptive(
@@ -118,7 +118,7 @@ void calculate_points_core(
             });
         }
 
-        // Explicit functions
+        // 显函数
         const unsigned int explicit_index_offset = (unsigned int)implicit_programs.size();
         for (unsigned int func_idx = 0; func_idx < explicit_programs.size(); ++func_idx) {
             const auto& fn_data = explicit_programs[func_idx];
@@ -133,7 +133,7 @@ void calculate_points_core(
             }
         }
 
-        // Parametric functions
+        // 参数方程
         const unsigned int parametric_index_offset = explicit_index_offset + (unsigned int)explicit_programs.size();
         for (unsigned int func_idx = 0; func_idx < parametric_programs.size(); ++func_idx) {
             const auto& fn_data = parametric_programs[func_idx];
@@ -150,9 +150,26 @@ void calculate_points_core(
             }
         }
 
+        // (新增) 工业级高精度函数
+        const unsigned int industry_index_offset = parametric_index_offset + (unsigned int)parametric_programs.size();
+        for (unsigned int func_idx = 0; func_idx < industry_rpn_list.size(); ++func_idx) {
+            task_group.run([=, &per_function_buffers] {
+                const unsigned int final_func_idx = func_idx + industry_index_offset;
+                // --- MODIFIED: 传递 offset 和 zoom 参数 ---
+                process_single_industry_function(
+                    per_function_buffers[final_func_idx],
+                    industry_rpn_list[func_idx],
+                    final_func_idx,
+                    world_origin, world_per_pixel_x, world_per_pixel_y,
+                    screen_width, screen_height,
+                    offset_x, offset_y, zoom // <-- 传递新参数
+                );
+            });
+        }
+
         task_group.wait();
 
-        // 3. Consolidate results from all threads
+        // --- 5. 合并所有线程的计算结果 ---
         size_t total_points = 0;
         for(const auto& buffer : per_function_buffers) {
             total_points += buffer.size();

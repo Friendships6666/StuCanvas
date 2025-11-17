@@ -2,6 +2,7 @@
 #include "../include/plot/plotCall.h"
 #include "../include/CAS/symbolic/GraphicSimplify.h"
 #include "../include/CAS/AST/JsonAdapter.h"
+#include "../include/plot/plotIndustry.h"
 #ifdef _WIN32
 
 #endif
@@ -85,26 +86,29 @@ EMSCRIPTEN_BINDINGS(my_module) {
 
 #else // --- Native EXE Version ---
 
-// ====================================================================
-//          ↓↓↓ 这是正确的、拥有 8 个参数的函数定义 ↓↓↓
-// ====================================================================
+// 函数定义保持不变
 std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_for_native(
     const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
     const std::vector<std::string>& explicit_rpn_list,
     const std::vector<std::string>& parametric_rpn_list,
+    const std::vector<std::string>& industry_rpn_list,
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height
 ) {
     AlignedVector<PointData> final_points_aligned;
     AlignedVector<FunctionRange> final_ranges_aligned;
+
     calculate_points_core(
         final_points_aligned,
         final_ranges_aligned,
         implicit_rpn_pairs,
-        explicit_rpn_list, parametric_rpn_list,
+        explicit_rpn_list,
+        parametric_rpn_list,
+        industry_rpn_list,
         offset_x, offset_y, zoom, screen_width, screen_height
     );
+
     return {
         std::vector<PointData>(final_points_aligned.begin(), final_points_aligned.end()),
         std::vector<FunctionRange>(final_ranges_aligned.begin(), final_ranges_aligned.end())
@@ -113,56 +117,39 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
 
 int main() {
     try {
+        // --- 1. 准备所有函数列表 ---
         std::vector<std::pair<std::string, std::string>> all_implicit_rpn_pairs;
-
-        // --- 1. 处理 MathJSON 输入 ---
-        std::cout << "\n--- CAS 符号化简与 RPN 生成测试 ---\n";
-        std::vector<std::string> implicit_mathjson_list = {}; // 保持为空
-
-        if (!implicit_mathjson_list.empty()) {
-            std::cout << "输入 " << implicit_mathjson_list.size() << " 个 MathJSON 进行处理...\n";
-            for (const auto& json_str : implicit_mathjson_list) {
-                auto ast = CAS::JsonAdapter::parse_json_to_ast_simdjson(json_str);
-                all_implicit_rpn_pairs.push_back(CAS::GraphicSimplify::constant_fold(ast));
-            }
-        } else {
-            std::cout << "没有 MathJSON 输入，跳过 CAS 处理。\n";
-        }
-
-        // --- 2. 处理直接 RPN 输入 ---
-        std::cout << "\n--- 直接 RPN 输入测试 ---\n";
-        std::vector<std::string> implicit_rpn_direct_list = {"x 2 pow y 2 pow + 10 -"}; // 保持为空
-
+        std::cout << "\n--- 准备隐式函数 ---\n";
+        std::vector<std::string> implicit_rpn_direct_list = {"x 2 pow y 2 pow + 10 -"}; // Circle
         if (!implicit_rpn_direct_list.empty()) {
             for(const auto& rpn_str : implicit_rpn_direct_list) {
                 all_implicit_rpn_pairs.push_back({rpn_str, rpn_str});
             }
             std::cout << "已添加 " << implicit_rpn_direct_list.size() << " 个直接 RPN 输入。\n";
-        } else {
-            std::cout << "没有直接 RPN 输入。\n";
         }
 
-        // --- 3. 准备其他函数列表 ---
-        std::vector<std::string> explicit_rpn = {};      // 保持为空
-        std::vector<std::string> parametric_rpn = {};    // 保持为空
+        std::vector<std::string> explicit_rpn = {};
+        std::vector<std::string> parametric_rpn = {};
+        std::vector<std::string> industry_rpn = { "x 2 pow 2 x * + 1 +;80" }; // x^2 + 2x + 1 = 0
+        std::cout << "已准备 " << industry_rpn.size() << " 个工业级 RPN 函数。\n";
 
-        double offset_x = 0.0, offset_y = 0.0, zoom = 0.1;
+        // --- 2. 设置所有绘图共享的视图属性 ---
+        double offset_x = 0.0, offset_y = 0.0;
+        double zoom = 0.1;
         double screen_width = 2560.0, screen_height = 1600.0;
 
-        std::cout << "\n--- Native EXE: 开始计算... ---" << std::endl;
+        // --- 3. 执行统一的并行计算 ---
+        std::cout << "\n--- Native EXE: 开始计算所有函数... ---" << std::endl;
         auto start_time = std::chrono::high_resolution_clock::now();
 
-        // ====================================================================
-        //          ↓↓↓ 这是正确的、使用 8 个实参的函数调用 ↓↓↓
-        // ====================================================================
         auto results = calculate_points_for_native(
             all_implicit_rpn_pairs,
             explicit_rpn,
             parametric_rpn,
+            industry_rpn,
             offset_x, offset_y, zoom, screen_width, screen_height
         );
-        const auto& final_points = results.first;
-        const auto& final_ranges = results.second;
+        const auto& final_points = results.first; // 此向量已包含混合坐标
 
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
@@ -171,7 +158,8 @@ int main() {
         std::cout << "总耗时: " << duration.count() << " 毫秒" << std::endl;
         std::cout << "总共生成了 " << final_points.size() << " 个点。" << std::endl;
 
-        std::cout << "\n正在将结果保存到 points.txt (x y index 格式)..." << std::endl;
+        // --- 4. 将混合坐标系的点直接保存到 points.txt ---
+        std::cout << "\n正在将 [混合坐标系] 的结果保存到 points.txt..." << std::endl;
         std::ofstream output_file("points.txt");
         if (!output_file.is_open()) {
             std::cerr << "错误: 无法打开文件 points.txt 进行写入！" << std::endl;
@@ -180,6 +168,7 @@ int main() {
 
         if (!final_points.empty()) {
             output_file << std::fixed << std::setprecision(12);
+            // 直接写入，不再需要进行任何转换
             for (const auto& p : final_points) {
                 output_file << p.position.x << " " << p.position.y << " " << p.function_index << "\n";
             }
@@ -197,4 +186,4 @@ int main() {
     return 0;
 }
 
-#endif // __EMSCRIPTEN__#endif // __EMSCRIPTEN__
+#endif // __EMSCRIPTEN__

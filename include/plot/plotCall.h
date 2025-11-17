@@ -15,6 +15,7 @@ void calculate_points_core(
     const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
     const std::vector<std::string>& explicit_rpn_list,
     const std::vector<std::string>& parametric_rpn_list,
+    const std::vector<std::string>& industry_rpn_list, // <-- 新增参数
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height

@@ -8,7 +8,9 @@
 #include <boost/math/constants/constants.hpp>
 #include <limits> // 用于 std::numeric_limits
 #include <stdexcept> // 用于 std::domain_error
-#include <algorithm> // <--- 修正 1: 包含 std::min 和 std::max
+#include <algorithm> // 包含 std::swap 等
+
+// --- 关键修正: 避免与Windows.h中的min/max宏冲突 ---
 #ifdef min
 #undef min
 #endif
@@ -43,12 +45,12 @@ Interval<T> get_infinity_interval(unsigned int precision_bits = 53) {
         calculated_max = std::numeric_limits<hp_float>::max();
         max_val = calculated_max;
     }
-    return Interval<T>{-max_val, max_val}; // 明确构造类型
+    return Interval<T>{-max_val, max_val};
 }
 
 
 // ====================================================================
-//      ↓↓↓ 1. 模板化的 Interval 结构体 (已修正) ↓↓↓
+//      ↓↓↓ 1. 模板化的 Interval 结构体 ↓↓↓
 // ====================================================================
 template<typename T>
 struct Interval {
@@ -63,18 +65,18 @@ struct Interval {
 };
 
 // ====================================================================
-//      ↓↓↓ 2. 模板化的标量区间算术函数 (完整实现) ↓↓↓
+//      ↓↓↓ 2. 模板化的标量区间算术函数 (已应用最终修复) ↓↓↓
 // ====================================================================
 
 // --- 基本运算 ---
 template<typename T>
 Interval<T> interval_add(const Interval<T>& a, const Interval<T>& b) {
-    return {a.min + b.min, a.max + b.max};
+    return Interval<T>{a.min + b.min, a.max + b.max};
 }
 
 template<typename T>
 Interval<T> interval_sub(const Interval<T>& a, const Interval<T>& b) {
-    return {a.min - b.max, a.max - b.min};
+    return Interval<T>{a.min - b.max, a.max - b.min};
 }
 
 template<typename T>
@@ -83,8 +85,12 @@ Interval<T> interval_mul(const Interval<T>& a, const Interval<T>& b) {
     T p2 = a.min * b.max;
     T p3 = a.max * b.min;
     T p4 = a.max * b.max;
-    // --- 修正 2: 添加 std:: 前缀 ---
-    return {std::min({p1, p2, p3, p4}), std::max({p1, p2, p3, p4})};
+    // --- 最终修复: 使用ADL让编译器选择正确的min/max ---
+    using std::min;
+    using std::max;
+    using boost::multiprecision::min;
+    using boost::multiprecision::max;
+    return Interval<T>{min(min(p1, p2), min(p3, p4)), max(max(p1, p2), max(p3, p4))};
 }
 
 template<typename T>
@@ -106,19 +112,19 @@ Interval<T> interval_pow(const Interval<T>& base, const Interval<T>& exp, unsign
 
     if (floor(e) == e && e > 0) {
         long long n;
-        // Check if T is a Boost multiprecision float at compile time
         if constexpr (std::is_same_v<T, hp_float>) {
             n = e.template convert_to<long long>();
         } else {
-            // Otherwise, use a standard cast for types like double
             n = static_cast<long long>(e);
         }
 
         if (n % 2 == 0) {
-            if (base.min >= T(0.0)) return {pow(base.min, e), pow(base.max, e)};
-            if (base.max < T(0.0)) return {pow(base.max, e), pow(base.min, e)};
-            // --- 修正 2: 添加 std:: 前缀 ---
-            return {T(0.0), std::max(pow(base.min, e), pow(base.max, e))};
+            if (base.min >= T(0.0)) return Interval<T>{pow(base.min, e), pow(base.max, e)};
+            if (base.max < T(0.0)) return Interval<T>{pow(base.max, e), pow(base.min, e)};
+            // --- 最终修复: 使用ADL ---
+            using std::max;
+            using boost::multiprecision::max;
+            return Interval<T>{T(0.0), max(pow(base.min, e), pow(base.max, e))};
         }
     }
 
@@ -128,8 +134,12 @@ Interval<T> interval_pow(const Interval<T>& base, const Interval<T>& exp, unsign
     if (isnan(p1) || isnan(p2)) {
         return get_infinity_interval<T>(precision_bits);
     }
-    // --- 修正 2: 添加 std:: 前缀 ---
-    return {std::min(p1, p2), std::max(p1, p2)};
+    // --- 最终修复: 使用ADL ---
+    using std::min;
+    using std::max;
+    using boost::multiprecision::min;
+    using boost::multiprecision::max;
+    return Interval<T>{min(p1, p2), max(p1, p2)};
 }
 
 template<typename T>
@@ -137,14 +147,16 @@ Interval<T> interval_sqrt(const Interval<T>& i, unsigned int precision_bits = 53
     if (i.max < T(0.0)) {
         throw std::domain_error("Square root of a negative interval.");
     }
-    // --- 修正 2: 添加 std:: 前缀 ---
-    T new_min = std::max(T(0.0), i.min);
-    return {sqrt(new_min), sqrt(i.max)};
+    // --- 最终修复: 使用ADL ---
+    using std::max;
+    using boost::multiprecision::max;
+    T new_min = max(T(0.0), i.min);
+    return Interval<T>{sqrt(new_min), sqrt(i.max)};
 }
 
 template<typename T>
 Interval<T> interval_exp(const Interval<T>& i) {
-    return {exp(i.min), exp(i.max)};
+    return Interval<T>{exp(i.min), exp(i.max)};
 }
 
 template<typename T>
@@ -158,7 +170,7 @@ Interval<T> interval_ln(const Interval<T>& i, unsigned int precision_bits = 53) 
     } else {
         min_val = log(i.min);
     }
-    return {min_val, log(i.max)};
+    return Interval<T>{min_val, log(i.max)};
 }
 
 // --- 三角函数 ---
@@ -167,7 +179,7 @@ Interval<T> interval_sin(const Interval<T>& i) {
     const T pi = boost::math::constants::pi<T>();
     const T two_pi = T(2.0) * pi;
     if (i.max - i.min >= two_pi) {
-        return {T(-1.0), T(1.0)};
+        return Interval<T>{T(-1.0), T(1.0)};
     }
     T sin_min_val = sin(i.min);
     T sin_max_val = sin(i.max);
@@ -186,7 +198,7 @@ Interval<T> interval_sin(const Interval<T>& i) {
     if (trough >= i.min && trough <= i.max) {
         sin_min_val = T(-1.0);
     }
-    return {sin_min_val, sin_max_val};
+    return Interval<T>{sin_min_val, sin_max_val};
 }
 
 template<typename T>
@@ -194,7 +206,7 @@ Interval<T> interval_cos(const Interval<T>& i) {
     const T pi = boost::math::constants::pi<T>();
     const T two_pi = T(2.0) * pi;
     if (i.max - i.min >= two_pi) {
-        return {T(-1.0), T(1.0)};
+        return Interval<T>{T(-1.0), T(1.0)};
     }
     T cos_min_val = cos(i.min);
     T cos_max_val = cos(i.max);
@@ -211,7 +223,7 @@ Interval<T> interval_cos(const Interval<T>& i) {
     if (trough >= i.min && trough <= i.max) {
         cos_min_val = T(-1.0);
     }
-    return {cos_min_val, cos_max_val};
+    return Interval<T>{cos_min_val, cos_max_val};
 }
 
 template<typename T>
@@ -226,27 +238,29 @@ Interval<T> interval_tan(const Interval<T>& i, unsigned int precision_bits = 53)
     if (asymptote >= i.min && asymptote <= i.max) {
         return get_infinity_interval<T>(precision_bits);
     }
-    return {tan(i.min), tan(i.max)};
+    return Interval<T>{tan(i.min), tan(i.max)};
 }
 
 // --- 其他函数 ---
 template<typename T>
 Interval<T> interval_abs(const Interval<T>& i) {
     if (i.min >= T(0.0)) return i;
-    if (i.max < T(0.0)) return {-i.max, -i.min};
-    // --- 修正 2: 添加 std:: 前缀 ---
-    return {T(0.0), std::max(-i.min, i.max)};
+    if (i.max < T(0.0)) return Interval<T>{-i.max, -i.min};
+    // --- 最终修复: 使用ADL ---
+    using std::max;
+    using boost::multiprecision::max;
+    return Interval<T>{T(0.0), max(-i.min, i.max)};
 }
 
 template<typename T>
 Interval<T> interval_sign(const Interval<T>& i) {
-    if (i.min > T(0.0)) return {T(1.0), T(1.0)};
-    if (i.max < T(0.0)) return {T(-1.0), T(-1.0)};
-    if (i.min == T(0.0) && i.max == T(0.0)) return {T(0.0), T(0.0)};
+    if (i.min > T(0.0)) return Interval<T>{T(1.0), T(1.0)};
+    if (i.max < T(0.0)) return Interval<T>{T(-1.0), T(-1.0)};
+    if (i.min == T(0.0) && i.max == T(0.0)) return Interval<T>{T(0.0), T(0.0)};
 
     T min_val = i.min < T(0.0) ? T(-1.0) : T(0.0);
     T max_val = i.max > T(0.0) ? T(1.0) : T(0.0);
-    return {min_val, max_val};
+    return Interval<T>{min_val, max_val};
 }
 
 

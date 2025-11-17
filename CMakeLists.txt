@@ -36,7 +36,8 @@ add_executable(WasmTBBTest src/main.cpp
         include/CAS/AST/JsonAdapter.h
         include/CAS/AST/JsonAdapter.h
         src/CAS/AST/JsonAdapter.cpp
-
+        include/plot/plotIndustry.h
+        src/plot/plotIndustry.cpp
 
 
 )
