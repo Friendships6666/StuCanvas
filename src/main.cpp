@@ -118,7 +118,7 @@ int main() {
         // --- 1. 准备所有函数列表 ---
         std::vector<std::pair<std::string, std::string>> all_implicit_rpn_pairs;
         std::cout << "\n--- 准备隐式函数 ---\n";
-        std::vector<std::string> implicit_rpn_direct_list(100, "x 2 pow y 2 pow + 10 -"); // 100 identical circles
+        std::vector<std::string> implicit_rpn_direct_list = {"x 2 pow y 2 pow + 10 -"}; // 100 identical circles
         if (!implicit_rpn_direct_list.empty()) {
             for(const auto& rpn_str : implicit_rpn_direct_list) {
                 all_implicit_rpn_pairs.emplace_back(rpn_str, rpn_str);
@@ -128,7 +128,7 @@ int main() {
 
         std::vector<std::string> explicit_rpn = {};
         std::vector<std::string> parametric_rpn = {};
-        std::vector<std::string> industry_rpn = {  }; // x^2 + 2x + 1 = 0
+        std::vector<std::string> industry_rpn = {  };
         std::cout << "已准备 " << industry_rpn.size() << " 个工业级 RPN 函数。\n";
 
         // --- 2. 设置所有绘图共享的视图属性 ---

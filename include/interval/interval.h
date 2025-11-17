@@ -158,18 +158,27 @@ template<typename T>
 Interval<T> interval_exp(const Interval<T>& i) {
     return Interval<T>{exp(i.min), exp(i.max)};
 }
-
+// ====================================================================
+//          ↓↓↓ 核心修改区域 ↓↓↓
+// ====================================================================
 template<typename T>
 Interval<T> interval_ln(const Interval<T>& i, unsigned int precision_bits = 53) {
+    // 如果整个区间都小于等于0，则函数无实数解。
+    // 不再抛出异常，而是返回一个代表极大负数的区间。
     if (i.max <= T(0.0)) {
-        throw std::domain_error("Logarithm of a non-positive interval.");
+        T neg_inf = -get_infinity_interval<T>(precision_bits).max;
+        return Interval<T>{neg_inf, neg_inf};
     }
+
     T min_val;
+    // 如果区间下限小于等于0（但上限大于0），则对数可以趋近于负无穷。
     if (i.min <= T(0.0)) {
         min_val = -get_infinity_interval<T>(precision_bits).max;
     } else {
+        // 如果整个区间都大于0，正常计算对数。
         min_val = log(i.min);
     }
+
     return Interval<T>{min_val, log(i.max)};
 }
 
