@@ -68,16 +68,11 @@ void execute_industry_processing(
         }
     }
 
-    // ====================================================================
-    //   ↓↓↓ [新增] 用于进度报告的变量 ↓↓↓
-    // ====================================================================
     std::atomic<size_t> completed_tasks{0};
     const size_t total_tasks = initial_tasks.size();
-    std::atomic<int> last_reported_progress{-1}; // 使用原子变量避免数据竞争
+    std::atomic<int> last_reported_progress{-1};
 
-    // 打印初始进度
     std::print("工业函数 {} 进度: 0%\n", func_idx);
-    // ====================================================================
 
     oneapi::tbb::parallel_for_each(initial_tasks.begin(), initial_tasks.end(),
         [&](const IndustryQuadtreeTaskT<T>& initial_task) {
@@ -113,11 +108,21 @@ void execute_industry_processing(
                                     T center_x_world = current_x + micro_w / T(2.0);
                                     T center_y_world = current_y + micro_h / T(2.0);
 
+                                    // ====================================================================
+                                    //   ↓↓↓ [核心修改] ↓↓↓
+                                    // --------------------------------------------------------------------
+                                    //   将世界坐标直接存入点数据中，以保证与其它函数类型一致。
+                                    // ====================================================================
+                                    PointData new_point{
+                                        {convert_to_double(center_x_world), convert_to_double(center_y_world)},
+                                        func_idx
+                                    };
+
+                                    // 仍然需要计算屏幕坐标，但仅用于哈希表的键，以实现像素级别的点合并
                                     double screen_x = convert_to_double((center_x_world - T(world_origin.x)) / T(wppx));
                                     double screen_y = convert_to_double((center_y_world - T(world_origin.y)) / T(wppy));
-                                    PointData new_point{{screen_x, screen_y}, func_idx};
+                                    PixelCoord coord = { static_cast<int>(screen_x), static_cast<int>(screen_y) };
 
-                                    PixelCoord coord = { static_cast<int>(new_point.position.x), static_cast<int>(new_point.position.y) };
                                     PixelGrid::accessor acc;
                                     pixel_grid.insert(acc, coord);
                                     tbb::mutex::scoped_lock lock(acc->second.first);
@@ -146,33 +151,21 @@ void execute_industry_processing(
                 }
             } // end while
 
-            // ====================================================================
-            //   ↓↓↓ [新增] 任务完成，更新并打印进度 ↓↓↓
-            // ====================================================================
             size_t current_completed = completed_tasks.fetch_add(1, std::memory_order_relaxed) + 1;
             int current_progress = static_cast<int>((current_completed * 100) / total_tasks);
-
-            // 为了避免多个线程同时尝试更新一个百分比，我们使用 compare_exchange_strong
-            // 这会原子性地检查 last_reported_progress 是否仍是旧值，如果是，则更新为新值
             int expected_progress = last_reported_progress.load(std::memory_order_relaxed);
             while (current_progress > expected_progress) {
                 if (last_reported_progress.compare_exchange_strong(expected_progress, current_progress)) {
                     std::print("工业函数 {} 进度: {}%\n", func_idx, current_progress);
                 }
-                // 如果交换失败，意味着另一个线程刚刚更新了进度，
-                // 我们需要重新加载期望值，然后再次尝试或退出循环。
                 expected_progress = last_reported_progress.load(std::memory_order_relaxed);
             }
-            // ====================================================================
-
         }
     ); // end parallel_for_each
 
-    // 确保最后一定会打印 100%
     if (last_reported_progress.load() < 100) {
         std::print("工业函数 {} 进度: 100%\n", func_idx);
     }
-
 
     out_points.reserve(pixel_grid.size() * 2);
     for (const auto& pair : pixel_grid) {
@@ -184,7 +177,6 @@ void execute_industry_processing(
 
 } // 匿名命名空间结束
 
-// 公共接口函数 (保持不变)
 void process_single_industry_function(
     oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
     const std::string& industry_rpn,

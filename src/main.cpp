@@ -13,41 +13,55 @@
 AlignedVector<PointData> wasm_final_contiguous_buffer;
 AlignedVector<FunctionRange> wasm_function_ranges_buffer;
 
+// ====================================================================
+//          ↓↓↓ WASM 接口已更新 ↓↓↓
+// ====================================================================
+/**
+ * @brief (WASM 导出) 为 WebAssembly 环境计算所有函数图像的点。
+ * @param implicit_rpn_list  隐函数 RPN 字符串列表。
+ * @param industry_rpn_list  工业级函数 RPN 字符串列表 ("RPN;精度")。
+ * @param offset_x           视图中心的X世界坐标。
+ * @param offset_y           视图中心的Y世界坐标。
+ * @param zoom               视图的缩放级别。
+ * @param screen_width       画布宽度（像素）。
+ * @param screen_height      画布高度（像素）。
+ */
 void calculate_points_for_wasm(
     const std::vector<std::string>& implicit_rpn_list,
-    const std::vector<std::string>& explicit_rpn_list,
-    const std::vector<std::string>& parametric_rpn_list,
+    const std::vector<std::string>& industry_rpn_list,
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height
 ) {
-
+    // 将普通的隐函数RPN列表转换为“pair”格式，其中常规RPN和检查RPN相同
     std::vector<std::pair<std::string, std::string>> implicit_rpn_pairs;
     implicit_rpn_pairs.reserve(implicit_rpn_list.size());
     for (const auto& rpn_str : implicit_rpn_list) {
         implicit_rpn_pairs.push_back({rpn_str, rpn_str});
     }
-    // --- 适配结束 ---
 
     AlignedVector<PointData> ordered_absolute_points;
-    // 调用新的核心函数，传入转换后的正确类型
+    // 调用核心函数，现在传入了工业级函数列表
     calculate_points_core(
         ordered_absolute_points,
         wasm_function_ranges_buffer,
-        implicit_rpn_pairs, // 传入转换后的数据
-        explicit_rpn_list,
-        parametric_rpn_list,
+        implicit_rpn_pairs,
+        industry_rpn_list, // 传递工业级函数
         offset_x, offset_y, zoom, screen_width, screen_height
     );
 
+    // 将 `calculate_points_core` 返回的绝对世界坐标点复制到WASM缓冲区。
+    // 这个阶段不做任何坐标变换。前端JS代码将根据计算时使用的`offset`（即`baseOffset`）
+    // 和当前的交互式`offset`在着色器中完成最终的坐标转换。
+    // 由于 plotIndustry.cpp 已被修改为返回世界坐标，此处的逻辑对所有点都正确有效。
     wasm_final_contiguous_buffer.resize(ordered_absolute_points.size());
     for (size_t i = 0; i < ordered_absolute_points.size(); ++i) {
         const auto& absolute_point = ordered_absolute_points[i];
-        auto& local_point = wasm_final_contiguous_buffer[i];
+        auto& wasm_point = wasm_final_contiguous_buffer[i];
 
-        local_point.position.x = absolute_point.position.x - offset_x;
-        local_point.position.y = absolute_point.position.y - offset_y;
-        local_point.function_index = absolute_point.function_index;
+        wasm_point.position.x = absolute_point.position.x;
+        wasm_point.position.y = absolute_point.position.y;
+        wasm_point.function_index = absolute_point.function_index;
     }
 }
 
@@ -77,6 +91,7 @@ EMSCRIPTEN_BINDINGS(my_module) {
         .field("start_index", &FunctionRange::start_index)
         .field("point_count", &FunctionRange::point_count);
 
+    // 更新导出函数以匹配新的 C++ 签名
     emscripten::function("calculate_points", &calculate_points_for_wasm);
     emscripten::function("get_points_ptr", &get_points_ptr);
     emscripten::function("get_points_size", &get_points_size);
