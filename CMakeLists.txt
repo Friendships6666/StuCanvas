@@ -50,7 +50,8 @@ add_executable(WasmTBBTest src/main.cpp
 # PRIVATE 意味着这个设置只应用于 WasmTBBTest 自身。
 target_precompile_headers(WasmTBBTest PRIVATE pch.h)
 find_package(Boost REQUIRED COMPONENTS multiprecision)
-
+find_package(Boost REQUIRED COMPONENTS pool)
+target_link_libraries(WasmTBBTest PRIVATE Boost::pool)
 # 查找 PkgConfig 模块，这是调用 pkgconf 的核心
 find_package(PkgConfig REQUIRED)
 find_package(simdjson REQUIRED)
