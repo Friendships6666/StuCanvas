@@ -128,7 +128,7 @@ int main() {
 
         std::vector<std::string> explicit_rpn = {};
         std::vector<std::string> parametric_rpn = {};
-        std::vector<std::string> industry_rpn = { "y x ln x 1 - / -;100" };
+        std::vector<std::string> industry_rpn = { "y x ln x 1 - / -;0" };
         std::cout << "已准备 " << industry_rpn.size() << " 个工业级 RPN 函数。\n";
 
         // --- 2. 设置所有绘图共享的视图属性 ---

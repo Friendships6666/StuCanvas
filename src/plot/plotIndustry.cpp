@@ -4,6 +4,8 @@
 #include <oneapi/tbb/concurrent_hash_map.h>
 #include <oneapi/tbb/parallel_for_each.h>
 #include <oneapi/tbb/mutex.h>
+#include <atomic> // 用于线程安全的原子操作
+#include <print>  // 用于 C++23 线程安全的打印
 
 namespace { // 使用匿名命名空间封装模板化实现细节
 
@@ -35,7 +37,6 @@ double convert_to_double(const T& val) {
     }
 }
 
-// 模板化的核心处理函数
 template<typename T>
 void execute_industry_processing(
     std::vector<PointData>& out_points, // 最终输出容器
@@ -45,116 +46,134 @@ void execute_industry_processing(
     double wppx, double wppy,
     double screen_width, double screen_height
 ) {
-    // ====================================================================
-    //   阶段 1: 四叉树细分 (保持不变)
-    // ====================================================================
-    std::vector<IndustryQuadtreeTaskT<T>> leaf_nodes;
-    std::stack<IndustryQuadtreeTaskT<T>> tasks;
-    tasks.push({
-        T(world_origin.x), T(world_origin.y),
-        T(screen_width * wppx), T(screen_height * wppy)
-    });
-    const T min_world_width = T(wppx);
-    while (!tasks.empty()) {
-        IndustryQuadtreeTaskT<T> task = tasks.top(); tasks.pop();
-        Interval<T> x_interval(task.world_x, task.world_x + task.world_w);
-        Interval<T> y_interval(task.world_y + task.world_h, task.world_y);
-        Interval<T> result = evaluate_rpn<Interval<T>>(rpn.program, x_interval, y_interval, std::nullopt, rpn.precision_bits);
-        if (result.max >= T(0.0) && result.min <= T(0.0)) {
-            if (task.world_w <= min_world_width) {
-                leaf_nodes.push_back(task);
-            } else {
-                T w_half = task.world_w / T(2.0); T h_half = task.world_h / T(2.0);
-                tasks.push({task.world_x, task.world_y, w_half, h_half});
-                tasks.push({task.world_x + w_half, task.world_y, w_half, h_half});
-                tasks.push({task.world_x, task.world_y + h_half, w_half, h_half});
-                tasks.push({task.world_x + w_half, task.world_y + h_half, w_half, h_half});
-            }
+    using PixelCoord = std::pair<int, int>;
+    using PointList = std::vector<PointData>;
+    using PixelData = std::pair<tbb::mutex, PointList>;
+    using PixelGrid = tbb::concurrent_hash_map<PixelCoord, PixelData, PixelCoordHash>;
+    PixelGrid pixel_grid;
+
+    std::vector<IndustryQuadtreeTaskT<T>> initial_tasks;
+    const int num_tiles_xy = 128;
+    T initial_tile_w = T(screen_width * wppx) / T(num_tiles_xy);
+    T initial_tile_h = T(screen_height * wppy) / T(num_tiles_xy);
+
+    for (int i = 0; i < num_tiles_xy; ++i) {
+        for (int j = 0; j < num_tiles_xy; ++j) {
+            initial_tasks.push_back({
+                T(world_origin.x) + T(i) * initial_tile_w,
+                T(world_origin.y) + T(j) * initial_tile_h,
+                initial_tile_w,
+                initial_tile_h
+            });
         }
     }
 
     // ====================================================================
-    //   ↓↓↓ 阶段 2: 并行批处理与筛选 (性能与内存最优) ↓↓↓
+    //   ↓↓↓ [新增] 用于进度报告的变量 ↓↓↓
     // ====================================================================
-    const int DETAIL_LEVEL = 50; // 细分程度
-    const int CHUNK_SIZE = 10;   // 最小处理单元大小
+    std::atomic<size_t> completed_tasks{0};
+    const size_t total_tasks = initial_tasks.size();
+    std::atomic<int> last_reported_progress{-1}; // 使用原子变量避免数据竞争
 
-    using PixelCoord = std::pair<int, int>;
-    using PointList = std::vector<PointData>;
-    using PixelData = std::pair<tbb::mutex, PointList>;
-    tbb::concurrent_hash_map<PixelCoord, PixelData, PixelCoordHash> pixel_grid;
+    // 打印初始进度
+    std::print("工业函数 {} 进度: 0%\n", func_idx);
+    // ====================================================================
 
-    oneapi::tbb::parallel_for_each(leaf_nodes.begin(), leaf_nodes.end(),
-        [&](const IndustryQuadtreeTaskT<T>& leaf) {
+    oneapi::tbb::parallel_for_each(initial_tasks.begin(), initial_tasks.end(),
+        [&](const IndustryQuadtreeTaskT<T>& initial_task) {
 
-            // 1. 创建一个生命周期极短的局部容器，用于暂存一个CHUNK的点
-            std::vector<PointData> local_chunk_points;
-            local_chunk_points.reserve(CHUNK_SIZE * CHUNK_SIZE);
+            std::stack<IndustryQuadtreeTaskT<T>> local_tasks;
+            local_tasks.push(initial_task);
 
-            const T micro_w = leaf.world_w / T(DETAIL_LEVEL);
-            const T micro_h = leaf.world_h / T(DETAIL_LEVEL);
+            const T min_world_width = T(wppx);
+            const int DETAIL_LEVEL = 50;
 
-            // 2. 以 CHUNK_SIZE 为步长，遍历整个 leaf_node 区域
-            for (int j_chunk = 0; j_chunk < DETAIL_LEVEL; j_chunk += CHUNK_SIZE) {
-                for (int i_chunk = 0; i_chunk < DETAIL_LEVEL; i_chunk += CHUNK_SIZE) {
+            while (!local_tasks.empty()) {
+                IndustryQuadtreeTaskT<T> task = local_tasks.top();
+                local_tasks.pop();
 
-                    local_chunk_points.clear(); // 为下一个块重置局部容器
+                Interval<T> x_interval(task.world_x, task.world_x + task.world_w);
+                Interval<T> y_interval(task.world_y + task.world_h, task.world_y);
+                Interval<T> result = evaluate_rpn<Interval<T>>(rpn.program, x_interval, y_interval, std::nullopt, rpn.precision_bits);
 
-                    // 3. 在 CHUNK_SIZE x CHUNK_SIZE 的单元内计算，并将点存入局部容器
-                    for (int j = j_chunk; j < j_chunk + CHUNK_SIZE; ++j) {
-                        for (int i = i_chunk; i < i_chunk + CHUNK_SIZE; ++i) {
-                            T current_x = leaf.world_x + T(i) * micro_w;
-                            T current_y = leaf.world_y + T(j) * micro_h;
-                            Interval<T> micro_x_interval(current_x, current_x + micro_w);
-                            Interval<T> micro_y_interval(current_y + micro_h, current_y);
-                            Interval<T> micro_result = evaluate_rpn<Interval<T>>(rpn.program, micro_x_interval, micro_y_interval, std::nullopt, rpn.precision_bits);
+                if (result.max >= T(0.0) && result.min <= T(0.0)) {
+                    if (task.world_w <= min_world_width) {
+                        const T micro_w = task.world_w / T(DETAIL_LEVEL);
+                        const T micro_h = task.world_h / T(DETAIL_LEVEL);
 
-                            if (micro_result.max >= T(0.0) && micro_result.min <= T(0.0)) {
-                                T center_x_world = current_x + micro_w / T(2.0);
-                                T center_y_world = current_y + micro_h / T(2.0);
-                                T screen_x = (center_x_world - T(world_origin.x)) / T(wppx);
-                                T screen_y = (center_y_world - T(world_origin.y)) / T(wppy);
-                                local_chunk_points.emplace_back(PointData{{ convert_to_double(screen_x), convert_to_double(screen_y) }, func_idx});
-                            }
-                        }
-                    }
+                        for (int j = 0; j < DETAIL_LEVEL; ++j) {
+                            for (int i = 0; i < DETAIL_LEVEL; ++i) {
+                                T current_x = task.world_x + T(i) * micro_w;
+                                T current_y = task.world_y + T(j) * micro_h;
+                                Interval<T> micro_x_interval(current_x, current_x + micro_w);
+                                Interval<T> micro_y_interval(current_y + micro_h, current_y);
+                                Interval<T> micro_result = evaluate_rpn<Interval<T>>(rpn.program, micro_x_interval, micro_y_interval, std::nullopt, rpn.precision_bits);
 
-                    // 4. 如果这个块产生了点，则对这批点进行筛选
-                    if (!local_chunk_points.empty()) {
-                        for (const auto& new_point : local_chunk_points) {
-                            PixelCoord coord = { static_cast<int>(new_point.position.x), static_cast<int>(new_point.position.y) };
-                            tbb::concurrent_hash_map<PixelCoord, PixelData, PixelCoordHash>::accessor acc;
-                            pixel_grid.insert(acc, coord);
-                            tbb::mutex::scoped_lock lock(acc->second.first);
-                            PointList& points = acc->second.second;
+                                if (micro_result.max >= T(0.0) && micro_result.min <= T(0.0)) {
+                                    T center_x_world = current_x + micro_w / T(2.0);
+                                    T center_y_world = current_y + micro_h / T(2.0);
 
-                            if (points.size() < 2) {
-                                points.push_back(new_point);
-                            } else {
-                                double sum_new = new_point.position.x + new_point.position.y;
-                                double sum0 = points[0].position.x + points[0].position.y;
-                                double sum1 = points[1].position.x + points[1].position.y;
-                                if (sum0 > sum1) {
-                                    std::swap(points[0], points[1]);
-                                    std::swap(sum0, sum1);
-                                }
-                                if (sum_new < sum0) {
-                                    points[0] = new_point;
-                                } else if (sum_new > sum1) {
-                                    points[1] = new_point;
+                                    double screen_x = convert_to_double((center_x_world - T(world_origin.x)) / T(wppx));
+                                    double screen_y = convert_to_double((center_y_world - T(world_origin.y)) / T(wppy));
+                                    PointData new_point{{screen_x, screen_y}, func_idx};
+
+                                    PixelCoord coord = { static_cast<int>(new_point.position.x), static_cast<int>(new_point.position.y) };
+                                    PixelGrid::accessor acc;
+                                    pixel_grid.insert(acc, coord);
+                                    tbb::mutex::scoped_lock lock(acc->second.first);
+                                    PointList& points = acc->second.second;
+
+                                    if (points.size() < 2) {
+                                        points.push_back(new_point);
+                                    } else {
+                                        double sum_new = new_point.position.x + new_point.position.y;
+                                        double sum0 = points[0].position.x + points[0].position.y;
+                                        double sum1 = points[1].position.x + points[1].position.y;
+                                        if (sum0 > sum1) { std::swap(points[0], points[1]); std::swap(sum0, sum1); }
+                                        if (sum_new < sum0) points[0] = new_point;
+                                        else if (sum_new > sum1) points[1] = new_point;
+                                    }
                                 }
                             }
                         }
+                    } else {
+                        T w_half = task.world_w / T(2.0); T h_half = task.world_h / T(2.0);
+                        local_tasks.push({task.world_x, task.world_y, w_half, h_half});
+                        local_tasks.push({task.world_x + w_half, task.world_y, w_half, h_half});
+                        local_tasks.push({task.world_x, task.world_y + h_half, w_half, h_half});
+                        local_tasks.push({task.world_x + w_half, task.world_y + h_half, w_half, h_half});
                     }
-                    // 局部容器 local_chunk_points 在此块处理完后，内容被清空，内存被复用
                 }
-            }
-        }
-    );
+            } // end while
 
-    // ====================================================================
-    //   阶段 3: 结果复制 (保持不变)
-    // ====================================================================
+            // ====================================================================
+            //   ↓↓↓ [新增] 任务完成，更新并打印进度 ↓↓↓
+            // ====================================================================
+            size_t current_completed = completed_tasks.fetch_add(1, std::memory_order_relaxed) + 1;
+            int current_progress = static_cast<int>((current_completed * 100) / total_tasks);
+
+            // 为了避免多个线程同时尝试更新一个百分比，我们使用 compare_exchange_strong
+            // 这会原子性地检查 last_reported_progress 是否仍是旧值，如果是，则更新为新值
+            int expected_progress = last_reported_progress.load(std::memory_order_relaxed);
+            while (current_progress > expected_progress) {
+                if (last_reported_progress.compare_exchange_strong(expected_progress, current_progress)) {
+                    std::print("工业函数 {} 进度: {}%\n", func_idx, current_progress);
+                }
+                // 如果交换失败，意味着另一个线程刚刚更新了进度，
+                // 我们需要重新加载期望值，然后再次尝试或退出循环。
+                expected_progress = last_reported_progress.load(std::memory_order_relaxed);
+            }
+            // ====================================================================
+
+        }
+    ); // end parallel_for_each
+
+    // 确保最后一定会打印 100%
+    if (last_reported_progress.load() < 100) {
+        std::print("工业函数 {} 进度: 100%\n", func_idx);
+    }
+
+
     out_points.reserve(pixel_grid.size() * 2);
     for (const auto& pair : pixel_grid) {
         for (const auto& point : pair.second.second) {
