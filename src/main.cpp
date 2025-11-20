@@ -59,6 +59,7 @@ void calculate_points_for_wasm(
         const auto& absolute_point = ordered_absolute_points[i];
         auto& wasm_point = wasm_final_contiguous_buffer[i];
 
+        // 直接赋值，不减去 offset_x/y
         wasm_point.position.x = absolute_point.position.x;
         wasm_point.position.y = absolute_point.position.y;
         wasm_point.function_index = absolute_point.function_index;
@@ -143,12 +144,12 @@ int main() {
 
         std::vector<std::string> explicit_rpn = {};
         std::vector<std::string> parametric_rpn = {};
-        std::vector<std::string> industry_rpn = { "y x ln x 1 - / -;0" };
+        std::vector<std::string> industry_rpn = { "y x sin y cos + ln -;0" };
         std::cout << "已准备 " << industry_rpn.size() << " 个工业级 RPN 函数。\n";
 
         // --- 2. 设置所有绘图共享的视图属性 ---
-        double offset_x = 1, offset_y = 1;
-        double zoom = 10;
+        double offset_x = 0, offset_y = 0;
+        double zoom = 0.05;
         double screen_width = 2560.0, screen_height = 1600.0;
 
         // --- 3. 执行统一的并行计算 ---

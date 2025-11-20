@@ -21,7 +21,8 @@ void draw_points_in_tile(
     const Vec2& world_origin, double wppx, double wppy,
     const AlignedVector<RPNToken>& rpn_program, const AlignedVector<RPNToken>& rpn_program_check,
     unsigned int func_idx, unsigned int x_start, unsigned int x_end, unsigned int y_start, unsigned int y_end,
-    ThreadCacheForTiling& cache
+    ThreadCacheForTiling& cache,
+    double offset_x, double offset_y // <--- 新增参数
 ) {
     const unsigned int tile_w = x_end - x_start;
     if (tile_w > TILE_W || tile_w == 0) return;
@@ -67,8 +68,12 @@ void draw_points_in_tile(
 
                 // 正确地将点添加到并发向量中
                 if (try_get_intersection_point(intersection, p_tl, p_tr, v_tl, v_tr, rpn_program_check))
+                    intersection.x -= offset_x; // <--- 减去 offset
+                    intersection.y -= offset_y; // <--- 减去 offset
                     concurrent_points.emplace_back(PointData{intersection, func_idx});
                 if (try_get_intersection_point(intersection, p_tl, p_bl, v_tl, v_bl, rpn_program_check))
+                    intersection.x -= offset_x; // <--- 减去 offset
+                    intersection.y -= offset_y; // <--- 减去 offset
                     concurrent_points.emplace_back(PointData{intersection, func_idx});
             }
         }
@@ -83,7 +88,7 @@ void process_implicit_adaptive(
     double screen_width, double screen_height,
     const AlignedVector<RPNToken>& rpn_program,
     const AlignedVector<RPNToken>& rpn_program_check,
-    unsigned int func_idx
+    unsigned int func_idx,double offset_x, double offset_y // <--- 新增参数
 ) {
     // 1. 创建一个临时的并发向量，用于在此函数内部的并行任务之间收集点
     oneapi::tbb::concurrent_vector<PointData> concurrent_points;
@@ -187,7 +192,7 @@ void process_implicit_adaptive(
                 world_origin, wppx, wppy,
                 rpn_program, rpn_program_check, func_idx,
                 x_start, x_end, y_start, y_end,
-                cache
+                cache,offset_x, offset_y // <--- 传递 offset
             );
         }
     );

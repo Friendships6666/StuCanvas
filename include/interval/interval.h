@@ -163,22 +163,29 @@ Interval<T> interval_exp(const Interval<T>& i) {
 // ====================================================================
 template<typename T>
 Interval<T> interval_ln(const Interval<T>& i, unsigned int precision_bits = 53) {
-    // 如果整个区间都小于等于0，则函数无实数解。
-    // 不再抛出异常，而是返回一个代表极大负数的区间。
+    // 情况 1: 整个区间都在定义域外 (x <= 0)
+    // 例如 [-5, -2] 或 [-5, 0]
+    // 此时函数无定义，必须返回 NaN。
+    // 任何包含 NaN 的后续运算（如加减乘除）结果也会变成 NaN，
+    // 最终在绘图判断时 (min <= 0 && max >= 0) 会因为与 NaN 比较返回 false 而被自动剔除。
     if (i.max <= T(0.0)) {
-        T neg_inf = -get_infinity_interval<T>(precision_bits).max;
-        return Interval<T>{neg_inf, neg_inf};
+        T nan_val = std::numeric_limits<T>::quiet_NaN();
+        return Interval<T>{nan_val, nan_val};
     }
 
     T min_val;
-    // 如果区间下限小于等于0（但上限大于0），则对数可以趋近于负无穷。
+    // 情况 2: 区间跨越了 0 (例如 [-0.5, 2])
+    // 实际上有效的输入部分是 (0, 2]，当 x 趋近于 0+ 时，ln(x) 趋近于 -infinity。
+    // 所以区间的下界应该是负无穷大。
     if (i.min <= T(0.0)) {
-        min_val = -get_infinity_interval<T>(precision_bits).max;
+        min_val = -std::numeric_limits<T>::infinity();
     } else {
-        // 如果整个区间都大于0，正常计算对数。
+        // 情况 3: 正常区间 (x > 0)，例如 [1, 2]
+        // 正常计算对数
         min_val = log(i.min);
     }
 
+    // 上界始终是 log(max)，因为我们已经排除了 max <= 0 的情况
     return Interval<T>{min_val, log(i.max)};
 }
 

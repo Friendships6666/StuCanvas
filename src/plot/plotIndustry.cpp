@@ -1,4 +1,6 @@
-﻿#include "../../include/plot/plotIndustry.h"
+﻿// --- 文件路径: src/plot/plotIndustry.cpp ---
+
+#include "../../include/plot/plotIndustry.h"
 #include "../../include/CAS/RPN/RPN.h"
 #include "../../include/interval/interval.h"
 #include <oneapi/tbb/concurrent_hash_map.h>
@@ -49,11 +51,12 @@ void execute_industry_processing(
     using PixelCoord = std::pair<int, int>;
     using PointList = std::vector<PointData>;
     using PixelData = std::pair<tbb::mutex, PointList>;
+    // 使用 Hash Map 进行像素级分桶，实现过滤逻辑
     using PixelGrid = tbb::concurrent_hash_map<PixelCoord, PixelData, PixelCoordHash>;
     PixelGrid pixel_grid;
 
     std::vector<IndustryQuadtreeTaskT<T>> initial_tasks;
-    const int num_tiles_xy = 128;
+    const int num_tiles_xy = 16;
     T initial_tile_w = T(screen_width * wppx) / T(num_tiles_xy);
     T initial_tile_h = T(screen_height * wppy) / T(num_tiles_xy);
 
@@ -80,8 +83,8 @@ void execute_industry_processing(
             std::stack<IndustryQuadtreeTaskT<T>> local_tasks;
             local_tasks.push(initial_task);
 
-            const T min_world_width = T(wppx);
-            const int DETAIL_LEVEL = 50;
+            const T min_world_width = T(0.5*wppx);
+            const int DETAIL_LEVEL = 10;
 
             while (!local_tasks.empty()) {
                 IndustryQuadtreeTaskT<T> task = local_tasks.top();
@@ -111,32 +114,44 @@ void execute_industry_processing(
                                     // ====================================================================
                                     //   ↓↓↓ [核心修改] ↓↓↓
                                     // --------------------------------------------------------------------
-                                    //   将世界坐标直接存入点数据中，以保证与其它函数类型一致。
+                                    //   1. 计算屏幕坐标 (Screen Coordinates)
+                                    //   2. 将屏幕坐标存入 PointData
+                                    //   3. 使用整数像素坐标作为 Hash Key 进行过滤 (每个像素最多2个点)
                                     // ====================================================================
+
+                                    // 计算精确的浮点屏幕坐标
+                                    double screen_x_val = convert_to_double((center_x_world - T(world_origin.x)) / T(wppx));
+                                    double screen_y_val = convert_to_double((center_y_world - T(world_origin.y)) / T(wppy));
+
                                     PointData new_point{
-                                        {convert_to_double(center_x_world), convert_to_double(center_y_world)},
+                                        {screen_x_val, screen_y_val}, // 存储屏幕坐标
                                         func_idx
                                     };
 
-                                    // 仍然需要计算屏幕坐标，但仅用于哈希表的键，以实现像素级别的点合并
-                                    double screen_x = convert_to_double((center_x_world - T(world_origin.x)) / T(wppx));
-                                    double screen_y = convert_to_double((center_y_world - T(world_origin.y)) / T(wppy));
-                                    PixelCoord coord = { static_cast<int>(screen_x), static_cast<int>(screen_y) };
+                                    // 计算整数像素坐标，用于分桶
+                                    PixelCoord coord = { static_cast<int>(screen_x_val), static_cast<int>(screen_y_val) };
 
                                     PixelGrid::accessor acc;
                                     pixel_grid.insert(acc, coord);
                                     tbb::mutex::scoped_lock lock(acc->second.first);
                                     PointList& points = acc->second.second;
 
+                                    // --- 过滤逻辑 ---
                                     if (points.size() < 2) {
+                                        // 如果当前像素内的点少于2个，直接添加
                                         points.push_back(new_point);
                                     } else {
+                                        // 如果已经有2个点，保留分布最广的两个点（基于 x+y 的和）
+                                        // 这种启发式方法有助于在像素内保留对角线两端的点，减少视觉聚集
                                         double sum_new = new_point.position.x + new_point.position.y;
                                         double sum0 = points[0].position.x + points[0].position.y;
                                         double sum1 = points[1].position.x + points[1].position.y;
+
+                                        // 确保 points[0] 是较小的 sum，points[1] 是较大的 sum
                                         if (sum0 > sum1) { std::swap(points[0], points[1]); std::swap(sum0, sum1); }
-                                        if (sum_new < sum0) points[0] = new_point;
-                                        else if (sum_new > sum1) points[1] = new_point;
+
+                                        if (sum_new < sum0) points[0] = new_point;      // 替换最小值
+                                        else if (sum_new > sum1) points[1] = new_point; // 替换最大值
                                     }
                                 }
                             }

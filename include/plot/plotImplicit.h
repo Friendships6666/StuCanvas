@@ -14,13 +14,13 @@ struct ThreadCacheForTiling {
     ThreadCacheForTiling();
 };
 
-// 函数签名已更新
 void process_implicit_adaptive(
     oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
     const Vec2& world_origin, double wppx, double wppy,
     double screen_width, double screen_height,
     const AlignedVector<RPNToken>& rpn_program,
     const AlignedVector<RPNToken>& rpn_program_check,
-    unsigned int func_idx
+    unsigned int func_idx,
+    double offset_x, double offset_y // <--- 新增参数
 );
 #endif //PLOTIMPLICIT_H

@@ -54,7 +54,8 @@ void calculate_points_core(
             process_implicit_adaptive(
                 &results_queue, world_origin, world_per_pixel_x, world_per_pixel_y,
                 screen_width, screen_height,
-                implicit_programs[i], implicit_programs_for_check[i], (unsigned int)i
+                implicit_programs[i], implicit_programs_for_check[i], (unsigned int)i,
+                offset_x, offset_y // <--- 传递参数
             );
         });
     }
