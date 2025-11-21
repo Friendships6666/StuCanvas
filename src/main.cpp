@@ -144,12 +144,12 @@ int main() {
 
         std::vector<std::string> explicit_rpn = {};
         std::vector<std::string> parametric_rpn = {};
-        std::vector<std::string> industry_rpn = { "y x sin y cos + ln -;0" };
+        std::vector<std::string> industry_rpn = { "y x tan -;0" };
         std::cout << "已准备 " << industry_rpn.size() << " 个工业级 RPN 函数。\n";
 
         // --- 2. 设置所有绘图共享的视图属性 ---
-        double offset_x = 0, offset_y = 0;
-        double zoom = 0.05;
+        double offset_x = 0, offset_y = 100000;
+        double zoom = 0.1;
         double screen_width = 2560.0, screen_height = 1600.0;
 
         // --- 3. 执行统一的并行计算 ---

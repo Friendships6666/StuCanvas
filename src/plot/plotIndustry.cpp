@@ -6,12 +6,20 @@
 #include <oneapi/tbb/concurrent_hash_map.h>
 #include <oneapi/tbb/parallel_for_each.h>
 #include <oneapi/tbb/mutex.h>
-#include <atomic> // 用于线程安全的原子操作
-#include <print>  // 用于 C++23 线程安全的打印
+#include <atomic>
+#include <print>
+#include <string>
+#include <sstream>
+#include <cmath>
 
-namespace { // 使用匿名命名空间封装模板化实现细节
+namespace {
 
-// ... [PixelCoordHash, IndustryQuadtreeTaskT, convert_to_double 保持不变] ...
+// =========================================================
+//                ↓↓↓ 全局调试开关 ↓↓↓
+// =========================================================
+constexpr bool ENABLE_DEBUG_PRINT = true;
+// =========================================================
+
 struct PixelCoordHash {
     static size_t hash(const std::pair<int, int>& p) {
         std::hash<int> hasher;
@@ -28,6 +36,7 @@ template<typename T>
 struct IndustryQuadtreeTaskT {
     T world_x, world_y;
     T world_w, world_h;
+    size_t group_id; // [新增] 任务组 ID，用于追踪日志
 };
 
 template<typename T>
@@ -41,7 +50,7 @@ double convert_to_double(const T& val) {
 
 template<typename T>
 void execute_industry_processing(
-    std::vector<PointData>& out_points, // 最终输出容器
+    std::vector<PointData>& out_points,
     const IndustrialRPN& rpn,
     unsigned int func_idx,
     const Vec2& world_origin,
@@ -51,7 +60,6 @@ void execute_industry_processing(
     using PixelCoord = std::pair<int, int>;
     using PointList = std::vector<PointData>;
     using PixelData = std::pair<tbb::mutex, PointList>;
-    // 使用 Hash Map 进行像素级分桶，实现过滤逻辑
     using PixelGrid = tbb::concurrent_hash_map<PixelCoord, PixelData, PixelCoordHash>;
     PixelGrid pixel_grid;
 
@@ -60,13 +68,17 @@ void execute_industry_processing(
     T initial_tile_w = T(screen_width * wppx) / T(num_tiles_xy);
     T initial_tile_h = T(screen_height * wppy) / T(num_tiles_xy);
 
+    // [新增] ID 计数器
+    size_t task_id_counter = 0;
+
     for (int i = 0; i < num_tiles_xy; ++i) {
         for (int j = 0; j < num_tiles_xy; ++j) {
             initial_tasks.push_back({
                 T(world_origin.x) + T(i) * initial_tile_w,
                 T(world_origin.y) + T(j) * initial_tile_h,
                 initial_tile_w,
-                initial_tile_h
+                initial_tile_h,
+                task_id_counter++ // [新增] 分配唯一 ID
             });
         }
     }
@@ -75,7 +87,9 @@ void execute_industry_processing(
     const size_t total_tasks = initial_tasks.size();
     std::atomic<int> last_reported_progress{-1};
 
-    std::print("工业函数 {} 进度: 0%\n", func_idx);
+    if constexpr (ENABLE_DEBUG_PRINT) {
+        std::print("--- [START] 函数 {} 启动, 总任务组数: {} ---\n", func_idx, total_tasks);
+    }
 
     oneapi::tbb::parallel_for_each(initial_tasks.begin(), initial_tasks.end(),
         [&](const IndustryQuadtreeTaskT<T>& initial_task) {
@@ -86,16 +100,52 @@ void execute_industry_processing(
             const T min_world_width = T(0.5*wppx);
             const int DETAIL_LEVEL = 10;
 
+            // 获取当前任务组的 ID，用于所有后续日志
+            const size_t TID = initial_task.group_id;
+
             while (!local_tasks.empty()) {
                 IndustryQuadtreeTaskT<T> task = local_tasks.top();
                 local_tasks.pop();
 
+                // 1. 计算区间
                 Interval<T> x_interval(task.world_x, task.world_x + task.world_w);
                 Interval<T> y_interval(task.world_y + task.world_h, task.world_y);
                 Interval<T> result = evaluate_rpn<Interval<T>>(rpn.program, x_interval, y_interval, std::nullopt, rpn.precision_bits);
 
-                if (result.max >= T(0.0) && result.min <= T(0.0)) {
-                    if (task.world_w <= min_world_width) {
+                // 2. 判断逻辑
+                bool has_zero = (result.max >= T(0.0) && result.min <= T(0.0));
+                bool is_small_enough = (task.world_w <= min_world_width);
+
+                // 3. 准备调试数据
+                double d_min = convert_to_double(result.min);
+                double d_max = convert_to_double(result.max);
+                double d_w = convert_to_double(task.world_w);
+
+                // 4. [原子化打印] 增加 [ID: TID] 前缀
+                if constexpr (ENABLE_DEBUG_PRINT) {
+                    std::string action_str;
+                    if (has_zero) {
+                        if (is_small_enough) action_str = "HIT -> Micro-Scan";
+                        else action_str = "HIT -> Subdivide";
+                    } else {
+                        action_str = "MISS -> Cull";
+                    }
+
+                    std::string range_str;
+                    if (std::isnan(d_min) || std::isnan(d_max)) {
+                        range_str = "[NaN, NaN]";
+                    } else {
+                        range_str = std::format("[{:.4g}, {:.4g}]", d_min, d_max);
+                    }
+
+                    std::print("[ID:{}] [Quad] w={:.4g} {} Zero:{} => {}\n",
+                        TID, d_w, range_str, (has_zero ? "YES" : "NO"), action_str);
+                }
+
+                // 5. 执行逻辑
+                if (has_zero) {
+                    if (is_small_enough) {
+                        // --- 进入微扫描 ---
                         const T micro_w = task.world_w / T(DETAIL_LEVEL);
                         const T micro_h = task.world_h / T(DETAIL_LEVEL);
 
@@ -107,28 +157,21 @@ void execute_industry_processing(
                                 Interval<T> micro_y_interval(current_y + micro_h, current_y);
                                 Interval<T> micro_result = evaluate_rpn<Interval<T>>(rpn.program, micro_x_interval, micro_y_interval, std::nullopt, rpn.precision_bits);
 
-                                if (micro_result.max >= T(0.0) && micro_result.min <= T(0.0)) {
+                                bool micro_has_zero = (micro_result.max >= T(0.0) && micro_result.min <= T(0.0));
+
+                                if (micro_has_zero) {
+                                    if constexpr (ENABLE_DEBUG_PRINT) {
+                                        std::print("[ID:{}]     [Micro] ({},{}) [{:.4g}, {:.4g}] HIT!\n",
+                                            TID, i, j, convert_to_double(micro_result.min), convert_to_double(micro_result.max));
+                                    }
+
                                     T center_x_world = current_x + micro_w / T(2.0);
                                     T center_y_world = current_y + micro_h / T(2.0);
 
-                                    // ====================================================================
-                                    //   ↓↓↓ [核心修改] ↓↓↓
-                                    // --------------------------------------------------------------------
-                                    //   1. 计算屏幕坐标 (Screen Coordinates)
-                                    //   2. 将屏幕坐标存入 PointData
-                                    //   3. 使用整数像素坐标作为 Hash Key 进行过滤 (每个像素最多2个点)
-                                    // ====================================================================
-
-                                    // 计算精确的浮点屏幕坐标
                                     double screen_x_val = convert_to_double((center_x_world - T(world_origin.x)) / T(wppx));
                                     double screen_y_val = convert_to_double((center_y_world - T(world_origin.y)) / T(wppy));
 
-                                    PointData new_point{
-                                        {screen_x_val, screen_y_val}, // 存储屏幕坐标
-                                        func_idx
-                                    };
-
-                                    // 计算整数像素坐标，用于分桶
+                                    PointData new_point{ {screen_x_val, screen_y_val}, func_idx };
                                     PixelCoord coord = { static_cast<int>(screen_x_val), static_cast<int>(screen_y_val) };
 
                                     PixelGrid::accessor acc;
@@ -136,50 +179,55 @@ void execute_industry_processing(
                                     tbb::mutex::scoped_lock lock(acc->second.first);
                                     PointList& points = acc->second.second;
 
-                                    // --- 过滤逻辑 ---
                                     if (points.size() < 2) {
-                                        // 如果当前像素内的点少于2个，直接添加
+                                        if constexpr (ENABLE_DEBUG_PRINT) std::print("[ID:{}]       [Pixel] ({},{}) ADD (Count:{})\n", TID, coord.first, coord.second, points.size() + 1);
                                         points.push_back(new_point);
                                     } else {
-                                        // 如果已经有2个点，保留分布最广的两个点（基于 x+y 的和）
-                                        // 这种启发式方法有助于在像素内保留对角线两端的点，减少视觉聚集
                                         double sum_new = new_point.position.x + new_point.position.y;
                                         double sum0 = points[0].position.x + points[0].position.y;
                                         double sum1 = points[1].position.x + points[1].position.y;
 
-                                        // 确保 points[0] 是较小的 sum，points[1] 是较大的 sum
                                         if (sum0 > sum1) { std::swap(points[0], points[1]); std::swap(sum0, sum1); }
 
-                                        if (sum_new < sum0) points[0] = new_point;      // 替换最小值
-                                        else if (sum_new > sum1) points[1] = new_point; // 替换最大值
+                                        if (sum_new < sum0) {
+                                            if constexpr (ENABLE_DEBUG_PRINT) std::print("[ID:{}]       [Pixel] ({},{}) REPLACE Min\n", TID, coord.first, coord.second);
+                                            points[0] = new_point;
+                                        } else if (sum_new > sum1) {
+                                            if constexpr (ENABLE_DEBUG_PRINT) std::print("[ID:{}]       [Pixel] ({},{}) REPLACE Max\n", TID, coord.first, coord.second);
+                                            points[1] = new_point;
+                                        } else {
+                                            // 被丢弃
+                                        }
                                     }
                                 }
                             }
                         }
                     } else {
+                        // --- 细分任务 ---
+                        // [新增] 必须将 TID (group_id) 传递给子任务
                         T w_half = task.world_w / T(2.0); T h_half = task.world_h / T(2.0);
-                        local_tasks.push({task.world_x, task.world_y, w_half, h_half});
-                        local_tasks.push({task.world_x + w_half, task.world_y, w_half, h_half});
-                        local_tasks.push({task.world_x, task.world_y + h_half, w_half, h_half});
-                        local_tasks.push({task.world_x + w_half, task.world_y + h_half, w_half, h_half});
+                        local_tasks.push({task.world_x, task.world_y, w_half, h_half, TID});
+                        local_tasks.push({task.world_x + w_half, task.world_y, w_half, h_half, TID});
+                        local_tasks.push({task.world_x, task.world_y + h_half, w_half, h_half, TID});
+                        local_tasks.push({task.world_x + w_half, task.world_y + h_half, w_half, h_half, TID});
                     }
                 }
-            } // end while
+            }
 
             size_t current_completed = completed_tasks.fetch_add(1, std::memory_order_relaxed) + 1;
             int current_progress = static_cast<int>((current_completed * 100) / total_tasks);
             int expected_progress = last_reported_progress.load(std::memory_order_relaxed);
             while (current_progress > expected_progress) {
                 if (last_reported_progress.compare_exchange_strong(expected_progress, current_progress)) {
-                    std::print("工业函数 {} 进度: {}%\n", func_idx, current_progress);
+                    // 进度日志
                 }
                 expected_progress = last_reported_progress.load(std::memory_order_relaxed);
             }
         }
-    ); // end parallel_for_each
+    );
 
-    if (last_reported_progress.load() < 100) {
-        std::print("工业函数 {} 进度: 100%\n", func_idx);
+    if constexpr (ENABLE_DEBUG_PRINT) {
+        std::print("--- [END] 函数 {} 处理完成 ---\n", func_idx);
     }
 
     out_points.reserve(pixel_grid.size() * 2);

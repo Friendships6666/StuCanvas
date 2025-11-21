@@ -29,23 +29,26 @@ template<typename T>
 struct Interval;
 
 /**
- * @brief 根据给定的精度，获取一个表示“整个数轴”的区间 [-MAX, +MAX]。
+ * @brief 根据给定的精度，获取一个表示“整个数轴”的区间 [-Inf, +Inf]。
  * @tparam T 数值类型 (double, hp_float等)。
  * @param precision_bits 对于高精度类型，需要指定的二进制位数。
- * @return 一个覆盖最大范围的 Interval。
+ * @return 一个覆盖最大范围的 Interval (从负无穷到正无穷)。
  */
 template<typename T>
 Interval<T> get_infinity_interval(unsigned int precision_bits = 53) {
-    T max_val;
+    T inf_val;
     if constexpr (std::is_same_v<T, double> || std::is_same_v<T, float>) {
-        max_val = std::numeric_limits<T>::max();
+        // 获取标准浮点类型的无穷大
+        inf_val = std::numeric_limits<T>::infinity();
     } else if constexpr (std::is_same_v<T, hp_float>) {
-        hp_float calculated_max;
-        calculated_max.precision(precision_bits);
-        calculated_max = std::numeric_limits<hp_float>::max();
-        max_val = calculated_max;
+        // 获取高精度类型的无穷大
+        hp_float calculated_inf;
+        calculated_inf.precision(precision_bits); // 设置精度
+        calculated_inf = std::numeric_limits<hp_float>::infinity();
+        inf_val = calculated_inf;
     }
-    return Interval<T>{-max_val, max_val};
+    // 返回 [-Inf, +Inf]
+    return Interval<T>{-inf_val, inf_val};
 }
 
 
