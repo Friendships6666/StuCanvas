@@ -66,31 +66,37 @@ void draw_points_in_tile(
 
                 if (!std::isfinite(v_tl) || !std::isfinite(v_tr) || !std::isfinite(v_bl)) continue;
 
-                // 正确地将点添加到并发向量中
-                if (try_get_intersection_point(intersection, p_tl, p_tr, v_tl, v_tr, rpn_program_check))
-                    intersection.x -= offset_x; // <--- 减去 offset
-                    intersection.y -= offset_y; // <--- 减去 offset
+                // =========================================================
+                // 关键修复：添加花括号 {}，防止无条件执行后续语句
+                // =========================================================
+                if (try_get_intersection_point(intersection, p_tl, p_tr, v_tl, v_tr, rpn_program_check)) {
+                    intersection.x -= offset_x;
+                    intersection.y -= offset_y;
                     concurrent_points.emplace_back(PointData{intersection, func_idx});
-                if (try_get_intersection_point(intersection, p_tl, p_bl, v_tl, v_bl, rpn_program_check))
-                    intersection.x -= offset_x; // <--- 减去 offset
-                    intersection.y -= offset_y; // <--- 减去 offset
+                }
+
+                if (try_get_intersection_point(intersection, p_tl, p_bl, v_tl, v_bl, rpn_program_check)) {
+                    intersection.x -= offset_x;
+                    intersection.y -= offset_y;
                     concurrent_points.emplace_back(PointData{intersection, func_idx});
+                }
+                // =========================================================
             }
         }
         std::swap(top_row_vals, bot_row_vals);
     }
 }
 
-// 主生产者函数，签名正确
+// 主生产者函数
 void process_implicit_adaptive(
     oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
     const Vec2& world_origin, double wppx, double wppy,
     double screen_width, double screen_height,
     const AlignedVector<RPNToken>& rpn_program,
     const AlignedVector<RPNToken>& rpn_program_check,
-    unsigned int func_idx,double offset_x, double offset_y // <--- 新增参数
+    unsigned int func_idx,double offset_x, double offset_y
 ) {
-    // 1. 创建一个临时的并发向量，用于在此函数内部的并行任务之间收集点
+    // 1. 创建一个临时的并发向量
     oneapi::tbb::concurrent_vector<PointData> concurrent_points;
 
     oneapi::tbb::combinable<ThreadCacheForTiling> thread_local_caches;
@@ -165,7 +171,7 @@ void process_implicit_adaptive(
         }
     }
 
-    // 3. 在 parallel_for_each 中，将临时的并发向量传递给绘图函数
+    // 3. 并行计算
     oneapi::tbb::parallel_for_each(leaf_nodes.begin(), leaf_nodes.end(),
         [&](const QuadtreeTask& leaf) {
             ThreadCacheForTiling& cache = thread_local_caches.local();
@@ -188,18 +194,16 @@ void process_implicit_adaptive(
             if (x_start >= x_end || y_start >= y_end) return;
 
             draw_points_in_tile(
-                concurrent_points, // 传递并发向量
+                concurrent_points,
                 world_origin, wppx, wppy,
                 rpn_program, rpn_program_check, func_idx,
                 x_start, x_end, y_start, y_end,
-                cache,offset_x, offset_y // <--- 传递 offset
+                cache,offset_x, offset_y
             );
         }
     );
 
-    // 4. 所有并行任务完成后，将并发向量的结果复制到常规向量中
+    // 4. 结果导出
     std::vector<PointData> final_points(concurrent_points.begin(), concurrent_points.end());
-
-    // 5. 将最终结果包推入主队列
     results_queue->push({func_idx, std::move(final_points)});
 }
