@@ -6,6 +6,7 @@
 #ifdef _WIN32
 
 #endif
+
 #ifdef __EMSCRIPTEN__
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
@@ -13,18 +14,14 @@
 AlignedVector<PointData> wasm_final_contiguous_buffer;
 AlignedVector<FunctionRange> wasm_function_ranges_buffer;
 
-// ====================================================================
-//          ↓↓↓ WASM 接口已更新 ↓↓↓
-// ====================================================================
 /**
  * @brief (WASM 导出) 为 WebAssembly 环境计算所有函数图像的点。
- * @param implicit_rpn_list  隐函数 RPN 字符串列表。
- * @param industry_rpn_list  工业级函数 RPN 字符串列表 ("RPN;精度")。
- * @param offset_x           视图中心的X世界坐标。
- * @param offset_y           视图中心的Y世界坐标。
- * @param zoom               视图的缩放级别。
- * @param screen_width       画布宽度（像素）。
- * @param screen_height      画布高度（像素）。
+ *
+ * 注意：此函数生成的点数据包含两种坐标系：
+ * 1. 普通隐函数 (Implicit): 绝对世界坐标 (World Space)。前端 Shader 需要减去 Offset 并乘以 Zoom。
+ * 2. 工业级函数 (Industry): 屏幕像素坐标 (Screen Pixel Space)。前端 Shader 应直接映射到 Clip Space，忽略变换。
+ *
+ * 索引顺序：[隐函数 0...N] -> [工业函数 0...M]
  */
 void calculate_points_for_wasm(
     const std::vector<std::string>& implicit_rpn_list,
@@ -33,66 +30,45 @@ void calculate_points_for_wasm(
     double zoom,
     double screen_width, double screen_height
 ) {
-    // 将普通的隐函数RPN列表转换为“pair”格式，其中常规RPN和检查RPN相同
+    // 1. 准备隐函数输入
     std::vector<std::pair<std::string, std::string>> implicit_rpn_pairs;
     implicit_rpn_pairs.reserve(implicit_rpn_list.size());
     for (const auto& rpn_str : implicit_rpn_list) {
         implicit_rpn_pairs.push_back({rpn_str, rpn_str});
     }
 
-    AlignedVector<PointData> ordered_absolute_points;
-    // 调用核心函数，现在传入了工业级函数列表
+    AlignedVector<PointData> ordered_points;
+
+    // 2. 调用核心计算
+    // calculate_points_core 内部会先处理 implicit_rpn_pairs，再处理 industry_rpn_list
+    // 因此 ordered_points 中的索引也是这个顺序。
     calculate_points_core(
-        ordered_absolute_points,
+        ordered_points,
         wasm_function_ranges_buffer,
         implicit_rpn_pairs,
-        industry_rpn_list, // 传递工业级函数
+        industry_rpn_list,
         offset_x, offset_y, zoom, screen_width, screen_height
     );
 
-    // 将 `calculate_points_core` 返回的绝对世界坐标点复制到WASM缓冲区。
-    // 这个阶段不做任何坐标变换。前端JS代码将根据计算时使用的`offset`（即`baseOffset`）
-    // 和当前的交互式`offset`在着色器中完成最终的坐标转换。
-    // 由于 plotIndustry.cpp 已被修改为返回世界坐标，此处的逻辑对所有点都正确有效。
-    wasm_final_contiguous_buffer.resize(ordered_absolute_points.size());
-    for (size_t i = 0; i < ordered_absolute_points.size(); ++i) {
-        const auto& absolute_point = ordered_absolute_points[i];
-        auto& wasm_point = wasm_final_contiguous_buffer[i];
-
-        // 直接赋值，不减去 offset_x/y
-        wasm_point.position.x = absolute_point.position.x;
-        wasm_point.position.y = absolute_point.position.y;
-        wasm_point.function_index = absolute_point.function_index;
+    // 3. 填充 WASM 缓冲区
+    // 这里直接拷贝坐标，不进行任何转换。
+    // Implicit 点是 World 坐标，Industry 点是 Pixel 坐标。
+    wasm_final_contiguous_buffer.resize(ordered_points.size());
+    // 使用 memcpy 加速拷贝 (PointData 结构简单时安全，否则用循环)
+    if (!ordered_points.empty()) {
+        std::memcpy(wasm_final_contiguous_buffer.data(), ordered_points.data(), ordered_points.size() * sizeof(PointData));
     }
 }
 
-uintptr_t get_points_ptr() {
-    return reinterpret_cast<uintptr_t>(wasm_final_contiguous_buffer.data());
-}
-size_t get_points_size() {
-    return wasm_final_contiguous_buffer.size();
-}
-
-uintptr_t get_function_ranges_ptr() {
-    return reinterpret_cast<uintptr_t>(wasm_function_ranges_buffer.data());
-}
-size_t get_function_ranges_size() {
-    return wasm_function_ranges_buffer.size();
-}
+uintptr_t get_points_ptr() { return reinterpret_cast<uintptr_t>(wasm_final_contiguous_buffer.data()); }
+size_t get_points_size() { return wasm_final_contiguous_buffer.size(); }
+uintptr_t get_function_ranges_ptr() { return reinterpret_cast<uintptr_t>(wasm_function_ranges_buffer.data()); }
+size_t get_function_ranges_size() { return wasm_function_ranges_buffer.size(); }
 
 EMSCRIPTEN_BINDINGS(my_module) {
     emscripten::register_vector<std::string>("VectorString");
-    emscripten::value_object<Vec2>("Vec2")
-        .field("x", &Vec2::x)
-        .field("y", &Vec2::y);
-    emscripten::value_object<PointData>("PointData")
-        .field("position", &PointData::position)
-        .field("function_index", &PointData::function_index);
-    emscripten::value_object<FunctionRange>("FunctionRange")
-        .field("start_index", &FunctionRange::start_index)
-        .field("point_count", &FunctionRange::point_count);
 
-    // 更新导出函数以匹配新的 C++ 签名
+    // 导出函数
     emscripten::function("calculate_points", &calculate_points_for_wasm);
     emscripten::function("get_points_ptr", &get_points_ptr);
     emscripten::function("get_points_size", &get_points_size);

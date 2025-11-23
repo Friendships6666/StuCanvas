@@ -1,9 +1,9 @@
 #ifndef MULTI_INTERVAL_RPN_H
 #define MULTI_INTERVAL_RPN_H
 
-#include "../../pch.h"
+#include "../../../pch.h"
 #include "../../interval/MultiInterval.h"
-#include "RPN.h"
+
 
 template<typename T>
 MultiInterval<T> evaluate_rpn_multi(
