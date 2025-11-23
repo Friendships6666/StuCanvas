@@ -5,7 +5,7 @@
 
 #include "../../../pch.h"
 #include "../../functions/functions.h"
-#include "../../interval/interval.h" // 引入 Interval<T> 模板
+#include "../../interval/interval.h"
 
 // ====================================================================
 //          ↓↓↓ RPN Token 定义 ↓↓↓
@@ -38,46 +38,56 @@ constexpr size_t RPN_MAX_STACK_DEPTH = 64;
 //          ↓↓↓ RPN 解析器声明 ↓↓↓
 // ====================================================================
 
-// 旧版解析器，用于解析纯 RPN 字符串
 AlignedVector<RPNToken> parse_rpn(const std::string& rpn_string);
 
 
 /**
- * @brief 存储一个 RPN 程序及其所需的运行时计算精度。
+ * @brief 存储一个 RPN 程序及其所需的运行时计算精度和细分参数。
  */
 struct IndustrialRPN {
     AlignedVector<RPNToken> program;
     unsigned int precision_bits;
+    // 新增细分控制参数
+    double min_pixel_threshold = 0.1; // 最终细分精度
+    double start_pixel_threshold = 10.0; // 初始细分精度
+    double step_factor = 2.0; // 细分步长
 };
 
 /**
- * @brief 解析 "RPN字符串;精度" 格式的工业级 RPN 输入。
- * @param rpn_with_precision 输入字符串，例如 "x 2 pow;256"。
- * @return 一个包含 RPN 程序和精度的 IndustrialRPN 结构体。
- * @throws std::runtime_error 如果格式无效或精度不是有效数字。
+ * @brief 解析 "RPN字符串;精度;最小像素;起始像素;步长" 格式的工业级 RPN 输入。
  */
 inline IndustrialRPN parse_industrial_rpn(const std::string& rpn_with_precision) {
-    size_t semicolon_pos = rpn_with_precision.rfind(';');
-    if (semicolon_pos == std::string::npos) {
-        throw std::runtime_error("Invalid industrial RPN format: semicolon not found in '" + rpn_with_precision + "'");
+    std::vector<std::string> parts;
+    std::stringstream ss(rpn_with_precision);
+    std::string item;
+    while (std::getline(ss, item, ';')) {
+        parts.push_back(item);
     }
 
-    std::string rpn_part = rpn_with_precision.substr(0, semicolon_pos);
-    std::string precision_part = rpn_with_precision.substr(semicolon_pos + 1);
-
-    if (rpn_part.empty() || precision_part.empty()) {
-        throw std::runtime_error("Invalid industrial RPN format: RPN or precision part is empty in '" + rpn_with_precision + "'");
+    if (parts.size() < 2) {
+        throw std::runtime_error("Invalid industrial RPN format: must have at least 'RPN;Precision'. Input: '" + rpn_with_precision + "'");
     }
 
+    IndustrialRPN result;
+
+    // 1. 解析 RPN 和 精度
     try {
-        unsigned int precision = std::stoul(precision_part);
-        AlignedVector<RPNToken> program = parse_rpn(rpn_part);
-        return {std::move(program), precision};
-    } catch (const std::invalid_argument&) {
-        throw std::runtime_error("Invalid precision value in '" + rpn_with_precision + "': not a valid number.");
-    } catch (const std::out_of_range&) {
-        throw std::runtime_error("Precision value in '" + rpn_with_precision + "' is out of range.");
+        result.program = parse_rpn(parts[0]);
+        result.precision_bits = std::stoul(parts[1]);
+    } catch (...) {
+        throw std::runtime_error("Invalid RPN or Precision in '" + rpn_with_precision + "'");
     }
+
+    // 2. 解析可选的细分参数
+    try {
+        if (parts.size() >= 3) result.min_pixel_threshold = std::stod(parts[2]);
+        if (parts.size() >= 4) result.start_pixel_threshold = std::stod(parts[3]);
+        if (parts.size() >= 5) result.step_factor = std::stod(parts[4]);
+    } catch (...) {
+         throw std::runtime_error("Invalid subdivision parameters in '" + rpn_with_precision + "'");
+    }
+
+    return result;
 }
 
 
@@ -176,9 +186,6 @@ FORCE_INLINE T evaluate_rpn(
                 else s[sp - 1] = abs(s[sp - 1]);
                 break;
 
-            // ====================================================================
-            //          ↓↓↓ 这是关键的修正区域 ↓↓↓
-            // ====================================================================
             case RPNTokenType::SIGN:
                 if constexpr (is_interval<T>::value) {
                     s[sp - 1] = interval_sign(s[sp - 1]);
@@ -189,14 +196,10 @@ FORCE_INLINE T evaluate_rpn(
                 else if constexpr (std::is_same_v<T, batch_type>) {
                     s[sp - 1] = xs::sign(s[sp - 1]);
                 }
-                // 明确处理 double 和 hp_float 的情况
                 else if constexpr (std::is_same_v<T, double> || std::is_same_v<T, hp_float>) {
                     s[sp - 1] = (s[sp - 1] > T(0)) - (s[sp - 1] < T(0));
                 }
                 break;
-            // ====================================================================
-            //                          ↑↑↑ 修改结束 ↑↑↑
-            // ====================================================================
 
             case RPNTokenType::SAFE_LN:
                 if constexpr (is_interval<T>::value) { s[sp - 1] = interval_ln(s[sp - 1], precision_bits); }
