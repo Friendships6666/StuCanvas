@@ -1,6 +1,4 @@
-﻿// --- 文件路径: src/plot/plotIndustry.cpp ---
-
-#include "../../include/plot/plotIndustry.h"
+﻿#include "../../include/plot/plotIndustry.h"
 #include "../../include/CAS/RPN/RPN.h"
 #include "../../include/interval/interval.h"
 #include "../../include/interval/MultiInterval.h"
@@ -37,7 +35,7 @@ inline double convert_to_double(const T& val) {
 }
 
 // =========================================================
-//        ↓↓↓ 核心优化：4路批量计算结构 (Batch-4) ↓↓↓
+//        ↓↓↓ 4路批量计算结构 (Batch-4) ↓↓↓
 // =========================================================
 
 template<typename T>
@@ -46,7 +44,6 @@ struct MultiIntervalBundle4 {
 
     MultiIntervalBundle4() {}
 
-    // 广播构造
     MultiIntervalBundle4(T val) {
         MultiInterval<T> m(val);
         v[0] = m; v[1] = m; v[2] = m; v[3] = m;
@@ -58,7 +55,6 @@ struct MultiIntervalBundle4 {
     }
 };
 
-// 批量运算宏
 #define BUNDLE_OP(OP) \
     MultiIntervalBundle4<T> res; \
     res.v[0] = A.v[0] OP B.v[0]; \
@@ -95,9 +91,24 @@ template<typename T> MultiIntervalBundle4<T> batch_tan(const MultiIntervalBundle
 template<typename T> MultiIntervalBundle4<T> batch_exp(const MultiIntervalBundle4<T>& A) { BUNDLE_FUNC(multi_exp) }
 template<typename T> MultiIntervalBundle4<T> batch_ln(const MultiIntervalBundle4<T>& A) { BUNDLE_FUNC(multi_ln) }
 template<typename T> MultiIntervalBundle4<T> batch_abs(const MultiIntervalBundle4<T>& A) { BUNDLE_FUNC(multi_abs) }
-// Gamma 已移除
 
-// 批量 RPN 求值器
+// =========================================================
+//  【核心优化】TLS RPN 栈获取
+//   作用：替代 stack[64] 数组。
+//   原因：stack[64] 在 T=hp_float 时高达 64KB+，在递归中极易栈溢出。
+//   优势：移至堆内存 (Vector)，且复用内存 (TLS + clear)。
+// =========================================================
+template<typename T>
+std::vector<MultiIntervalBundle4<T>>& get_tls_rpn_stack() {
+    static thread_local std::vector<MultiIntervalBundle4<T>> stack;
+    if (stack.capacity() < 64) {
+        stack.reserve(64);
+    }
+    stack.clear();
+    return stack;
+}
+
+// 批量 RPN 求值器 (优化版)
 template<typename T>
 MultiIntervalBundle4<T> evaluate_rpn_batch4(
     const AlignedVector<RPNToken>& prog,
@@ -105,36 +116,60 @@ MultiIntervalBundle4<T> evaluate_rpn_batch4(
     const MultiIntervalBundle4<T>& y_bundle,
     const MultiIntervalBundle4<T>& t_bundle
 ) {
-    MultiIntervalBundle4<T> stack[64];
-    int sp = 0;
+    // 获取 TLS 缓存的栈
+    std::vector<MultiIntervalBundle4<T>>& stack = get_tls_rpn_stack<T>();
 
     for (const auto& token : prog) {
         switch (token.type) {
             case RPNTokenType::PUSH_CONST:
-                stack[sp++] = MultiIntervalBundle4<T>(T(token.value));
+                // emplace_back 在有 reserve 的情况下极其高效
+                stack.emplace_back(T(token.value));
                 break;
-            case RPNTokenType::PUSH_X: stack[sp++] = x_bundle; break;
-            case RPNTokenType::PUSH_Y: stack[sp++] = y_bundle; break;
-            case RPNTokenType::PUSH_T: stack[sp++] = t_bundle; break;
+            case RPNTokenType::PUSH_X: stack.push_back(x_bundle); break;
+            case RPNTokenType::PUSH_Y: stack.push_back(y_bundle); break;
+            case RPNTokenType::PUSH_T: stack.push_back(t_bundle); break;
 
-            case RPNTokenType::ADD: --sp; stack[sp-1] = stack[sp-1] + stack[sp]; break;
-            case RPNTokenType::SUB: --sp; stack[sp-1] = stack[sp-1] - stack[sp]; break;
-            case RPNTokenType::MUL: --sp; stack[sp-1] = stack[sp-1] * stack[sp]; break;
-            case RPNTokenType::DIV: --sp; stack[sp-1] = stack[sp-1] / stack[sp]; break;
-            case RPNTokenType::POW: --sp; stack[sp-1] = batch_pow(stack[sp-1], stack[sp]); break;
+            case RPNTokenType::ADD: {
+                // Vector 操作替代数组指针操作
+                auto b = stack.back(); stack.pop_back();
+                stack.back() = stack.back() + b;
+                break;
+            }
+            case RPNTokenType::SUB: {
+                auto b = stack.back(); stack.pop_back();
+                stack.back() = stack.back() - b;
+                break;
+            }
+            case RPNTokenType::MUL: {
+                auto b = stack.back(); stack.pop_back();
+                stack.back() = stack.back() * b;
+                break;
+            }
+            case RPNTokenType::DIV: {
+                auto b = stack.back(); stack.pop_back();
+                stack.back() = stack.back() / b;
+                break;
+            }
+            case RPNTokenType::POW: {
+                auto b = stack.back(); stack.pop_back();
+                stack.back() = batch_pow(stack.back(), b);
+                break;
+            }
 
-            case RPNTokenType::SIN: stack[sp-1] = batch_sin(stack[sp-1]); break;
-            case RPNTokenType::COS: stack[sp-1] = batch_cos(stack[sp-1]); break;
-            case RPNTokenType::TAN: stack[sp-1] = batch_tan(stack[sp-1]); break;
-            case RPNTokenType::EXP: stack[sp-1] = batch_exp(stack[sp-1]); break;
-            case RPNTokenType::LN:  stack[sp-1] = batch_ln(stack[sp-1]); break;
-            case RPNTokenType::ABS: stack[sp-1] = batch_abs(stack[sp-1]); break;
+            // 一元运算：原地修改栈顶
+            case RPNTokenType::SIN: stack.back() = batch_sin(stack.back()); break;
+            case RPNTokenType::COS: stack.back() = batch_cos(stack.back()); break;
+            case RPNTokenType::TAN: stack.back() = batch_tan(stack.back()); break;
+            case RPNTokenType::EXP: stack.back() = batch_exp(stack.back()); break;
+            case RPNTokenType::LN:  stack.back() = batch_ln(stack.back()); break;
+            case RPNTokenType::ABS: stack.back() = batch_abs(stack.back()); break;
 
             default: break;
         }
     }
-    if (sp == 0) return MultiIntervalBundle4<T>();
-    return stack[0];
+
+    if (stack.empty()) return MultiIntervalBundle4<T>();
+    return stack.back();
 }
 
 // =========================================================
@@ -147,7 +182,7 @@ void execute_industry_processing(
     unsigned int func_idx,
     const Vec2& world_origin,
     double wppx, double wppy,
-    double screen_width, double screen_height
+    double screen_width, double screen_height,double offset_x,double offset_y,double zoom
 ) {
     // 1. 全局剔除
     {
@@ -156,7 +191,6 @@ void execute_industry_processing(
         T x1 = T(world_origin.x); T x2 = x1 + screen_w;
         T y1 = T(world_origin.y) + screen_h; T y2 = T(world_origin.y);
 
-        // [修复] 使用三元运算符代替 std::min/max
         Interval<T> full_x(x1, x2);
         Interval<T> full_y((y1 < y2 ? y1 : y2), (y1 > y2 ? y1 : y2));
         Interval<T> t_param(T(0));
@@ -173,7 +207,7 @@ void execute_industry_processing(
     using LocalPointBuffer = std::vector<PointData>;
     oneapi::tbb::enumerable_thread_specific<LocalPointBuffer> tls_buffers;
 
-    // 3. 任务分块 (16x16)
+    // 3. 任务分块
     const int num_tiles_x = 2;
     const int num_tiles_y = 2;
     const int total_tiles = num_tiles_x * num_tiles_y;
@@ -207,11 +241,8 @@ void execute_industry_processing(
 
                     // 检查是否需要细分
                     if (std::abs(convert_to_double(task.world_w)) <= pixel_threshold) {
-                        // === 叶子节点 (单次计算) ===
                         T cx = task.world_x + task.world_w * 0.5;
                         T cy = task.world_y + task.world_h * 0.5;
-
-                        // [修复] 使用三元运算符代替 std::min/max
                         T y1 = task.world_y;
                         T y2 = task.world_y + task.world_h;
                         Interval<T> x_int(task.world_x, task.world_x + task.world_w);
@@ -225,20 +256,15 @@ void execute_industry_processing(
                         MultiInterval<T> multi_res = evaluate_rpn_multi<T>(rpn.program, x_int, y_int, t_param, rpn.precision_bits);
 
                         if (multi_res.contains_zero()) {
+                            // 直接用计算出的中心点世界坐标减去偏移量
+                            double wx_offset = convert_to_double(cx - T(offset_x));
+                            double wy_offset = convert_to_double(cy - T(offset_y));
 
-
-
-                            double sx = convert_to_double((cx - T(world_origin.x)) / T(wppx));
-                            double sy = convert_to_double((cy - T(world_origin.y)) / T(wppy));
-                            local_buffer.push_back(PointData{ {sx, sy}, func_idx });
-
+                            local_buffer.push_back(PointData{ {wx_offset, wy_offset}, func_idx });
                         }
                         continue;
                     }
-
-                    // =========================================================
-                    // 【核心优化】批量处理 4 个子节点 (Batch Processing)
-                    // =========================================================
+                    // 批量处理 4 个子节点
                     T w2 = task.world_w * 0.5;
                     T h2 = task.world_h * 0.5;
                     T xm = task.world_x + w2;
@@ -246,17 +272,13 @@ void execute_industry_processing(
 
                     MultiIntervalBundle4<T> x_bundle, y_bundle;
 
-                    // X Bundle
                     x_bundle.v[0] = Interval<T>(task.world_x, xm);
                     x_bundle.v[1] = Interval<T>(xm, task.world_x + task.world_w);
                     x_bundle.v[2] = x_bundle.v[0];
                     x_bundle.v[3] = x_bundle.v[1];
 
-                    // Y Bundle
-                    // [修复] 使用三元运算符代替 std::min/max
                     T y_min_top = (task.world_y < ym ? task.world_y : ym);
                     T y_max_top = (task.world_y > ym ? task.world_y : ym);
-
                     T y_end = task.world_y + task.world_h;
                     T y_min_bot = (ym < y_end ? ym : y_end);
                     T y_max_bot = (ym > y_end ? ym : y_end);
@@ -266,12 +288,11 @@ void execute_industry_processing(
                     y_bundle.v[2] = Interval<T>(y_min_bot, y_max_bot);
                     y_bundle.v[3] = y_bundle.v[2];
 
-                    // 批量求值
                     MultiIntervalBundle4<T> res_bundle = evaluate_rpn_batch4<T>(
                         rpn.program, x_bundle, y_bundle, t_bundle
                     );
 
-                    // 检查结果并入栈 (倒序)
+                    // 倒序入栈
                     if (res_bundle.v[3].contains_zero()) stack.push({xm, ym, w2, h2});
                     if (res_bundle.v[2].contains_zero()) stack.push({task.world_x, ym, w2, h2});
                     if (res_bundle.v[1].contains_zero()) stack.push({xm, task.world_y, w2, h2});
@@ -281,7 +302,6 @@ void execute_industry_processing(
         }
     );
 
-    // 4. 合并结果
     size_t total_points = 0;
     for (const auto& buf : tls_buffers) total_points += buf.size();
     out_points.reserve(total_points);
@@ -289,10 +309,6 @@ void execute_industry_processing(
 }
 
 } // namespace
-
-// =========================================================
-//              对外接口
-// =========================================================
 
 void process_single_industry_function(
     oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
@@ -310,12 +326,12 @@ void process_single_industry_function(
 
         if (rpn.precision_bits == 0) {
             execute_industry_processing<double>(
-                local_points, rpn, func_idx, world_origin, wppx, wppy, screen_width, screen_height
+                local_points, rpn, func_idx, world_origin, wppx, wppy, screen_width, screen_height,offset_x,offset_y, zoom
             );
         } else {
             hp_float::default_precision(rpn.precision_bits);
             execute_industry_processing<hp_float>(
-                local_points, rpn, func_idx, world_origin, wppx, wppy, screen_width, screen_height
+                local_points, rpn, func_idx, world_origin, wppx, wppy, screen_width, screen_height,offset_x, offset_y, zoom
             );
         }
     } catch (const std::exception& e) {
