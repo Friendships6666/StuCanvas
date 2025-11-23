@@ -148,9 +148,9 @@ int main() {
         std::cout << "已准备 " << industry_rpn.size() << " 个工业级 RPN 函数。\n";
 
         // --- 2. 设置所有绘图共享的视图属性 ---
-        double offset_x = 0, offset_y = 100000;
+        double offset_x = 0, offset_y = 0;
         double zoom = 0.1;
-        double screen_width = 2560.0, screen_height = 1600.0;
+        double screen_width = 1280, screen_height = 876;
 
         // --- 3. 执行统一的并行计算 ---
         std::cout << "\n--- Native EXE: 开始计算所有函数... ---" << std::endl;

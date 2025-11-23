@@ -38,6 +38,8 @@ add_executable(WasmTBBTest src/main.cpp
         src/CAS/AST/JsonAdapter.cpp
         include/plot/plotIndustry.h
         src/plot/plotIndustry.cpp
+        include/interval/MultiInterval.h
+        include/CAS/RPN/MultiIntervalRPN.h
 
 
 )
