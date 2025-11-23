@@ -182,11 +182,8 @@ Interval_Batch interval_tan_batch(const Interval_Batch& i) {
     return {final_min, final_max};
 }
 
-/**
- * @brief 统一的、智能的区间幂函数 SIMD 版本 (已修正)。
- * 该函数内部会判断指数的性质，并自动应用正确的区间计算逻辑。
- * 它假设 CAS 已经处理了定义域问题（例如，为非整数次幂确保底数为正）。
- */
+// --- 文件路径: src/interval/intervalEvaluate.cpp ---
+
 Interval_Batch interval_pow_batch(const Interval_Batch& base, const Interval_Batch& exp) {
     // ====================================================================
     // 步骤 1: 创建掩码，判断指数性质
@@ -201,7 +198,8 @@ Interval_Batch interval_pow_batch(const Interval_Batch& base, const Interval_Bat
     // 步骤 2: 计算两种可能路径的 min 和 max 分量
     // ====================================================================
 
-    // --- 路径 A (偶数版本) 的 min/max 分量 ---
+    // --- 路径 A (偶数版本: x^2, x^4) ---
+    // 处理底数跨越0的情况，结果必定非负
     batch_type even_case_min, even_case_max;
     {
         auto min_is_pos = (base.min >= B_ZERO);
@@ -209,7 +207,6 @@ Interval_Batch interval_pow_batch(const Interval_Batch& base, const Interval_Bat
         auto pow_min = xs::pow(base.min, exp.min);
         auto pow_max = xs::pow(base.max, exp.min);
 
-        // --- 修正点: 不再创建临时的 Interval_Batch，直接计算 min/max 分量 ---
         batch_type pos_case_min = pow_min;
         batch_type pos_case_max = pow_max;
 
@@ -226,25 +223,54 @@ Interval_Batch interval_pow_batch(const Interval_Batch& base, const Interval_Bat
         even_case_max = xs::select(min_is_pos, pos_case_max, inner_selected_max);
     }
 
-    // --- 路径 B (单调版本) 的 min/max 分量 ---
+    // --- 路径 B (常规单调版本: n^x, x^3, x^2.5 等) ---
+    // 直接计算端点。注意：如果 base < 0 且 exp 不是整数，xs::pow 会产生 NaN
     batch_type monotonic_case_min, monotonic_case_max;
     {
         auto p1 = xs::pow(base.min, exp.min);
-        auto p2 = xs::pow(base.max, exp.min);
-        monotonic_case_min = xs::min(p1, p2);
-        monotonic_case_max = xs::max(p1, p2);
+        auto p2 = xs::pow(base.max, exp.max); // 注意这里用 max 对 max，交叉组合在 swap 处理
+
+        // 修正：对于 n^x (n>1)，min^min 是下界。对于 n^x (0<n<1)，min^max 是下界。
+        // 为了通用，我们计算全部四个组合看似太慢。
+        // 实际上 xs::pow 对于 n^x 是单调的。
+        // 但为了安全处理 exp 是区间的情况 (3^[-1, 1]) -> [0.33, 3]
+        // 我们需要计算交叉项
+
+        auto p1_min = xs::pow(base.min, exp.min);
+        auto p2_min = xs::pow(base.max, exp.min);
+        auto p1_max = xs::pow(base.min, exp.max);
+        auto p2_max = xs::pow(base.max, exp.max);
+
+        // 如果底数 > 0，则结果有效。我们取所有组合的极值。
+        // 这里的开销比标量小，因为是 SIMD 并行
+        monotonic_case_min = xs::min(xs::min(p1_min, p2_min), xs::min(p1_max, p2_max));
+        monotonic_case_max = xs::max(xs::max(p1_min, p2_min), xs::max(p1_max, p2_max));
     }
 
     // ====================================================================
-    // 步骤 3: 使用掩码选择最终的 min 和 max 分量
+    // 步骤 3: 选择结果
     // ====================================================================
+
+    // 如果是偶数整数次幂，使用路径 A，否则使用路径 B
     batch_type final_min = xs::select(is_positive_even_integer_mask, even_case_min, monotonic_case_min);
     batch_type final_max = xs::select(is_positive_even_integer_mask, even_case_max, monotonic_case_max);
 
-    // 最后，应用常量检查。如果指数不是一个常量，则返回最保守的结果。
-    final_min = xs::select(is_constant_mask, final_min, B_NEG_INF);
-    final_max = xs::select(is_constant_mask, final_max, B_INF);
+    // ====================================================================
+    // 步骤 4: 最终安全性检查 (关键修复点)
+    // ====================================================================
 
-    // 一次性构造并返回，解决了所有编译错误和警告。
+    // 我们不再简单地检查 is_constant_mask。
+    // 只要满足以下任一条件，结果就是有效的：
+    // 1. 底数全 > 0 (base.min > 0) -> 这涵盖了 3^x
+    // 2. 指数是整数 (is_integer_mask) -> 这涵盖了 (-3)^2
+
+    auto base_is_positive = (base.min > B_ZERO);
+    // 只要底数大于0，或者指数是整数，就是合法的
+    auto is_valid_domain = base_is_positive | is_integer_mask;
+
+    // 如果定义域无效 (例如底数含负数 且 指数非整数)，返回无穷大区间
+    final_min = xs::select(is_valid_domain, final_min, B_NEG_INF);
+    final_max = xs::select(is_valid_domain, final_max, B_INF);
+
     return {final_min, final_max};
 }

@@ -291,17 +291,39 @@ MultiInterval<T> multi_gamma(const MultiInterval<T>& A) {
     return res;
 }
 
-// 幂函数 (使用 TLS)
+// --- 文件路径: include/interval/MultiInterval.h ---
+
+// 放到文件末尾的 multi_pow 实现
+
 template<typename T>
 MultiInterval<T> multi_pow(const MultiInterval<T>& Base, const MultiInterval<T>& Exp) {
     MultiInterval<T> res;
+
+    // =========================================================
+    // 1. 快速路径优化 (Fast Path)
+    // 90% 的情况是单区间对单区间 (例如 y - x^2)，直接计算可避免开销
+    // =========================================================
+    if (Base.count == 1 && Exp.count == 1) {
+        // 直接调用 include/interval/interval.h 中已修复的 interval_pow
+        // 由于 interval_pow 现在内部处理了命名空间，这里直接调用是安全的
+        res.parts[0] = interval_pow(Base.parts[0], Exp.parts[0]);
+        res.count = 1;
+        return res;
+    }
+
+    // =========================================================
+    // 2. 慢速路径：笛卡尔积 (Cartesian Product)
+    // 处理多区间的情况 (例如 tan(x) 产生的多段区间作为底数)
+    // =========================================================
     std::vector<Interval<T>>& temp_buffer = get_tls_interval_buffer<T>();
 
-    for(int i = 0; i < Base.count; ++i) {
-        for(int j = 0; j < Exp.count; ++j) {
+    for (int i = 0; i < Base.count; ++i) {
+        for (int j = 0; j < Exp.count; ++j) {
             temp_buffer.push_back(interval_pow(Base.parts[i], Exp.parts[j]));
         }
     }
+
+    // 3. 加载并简化结果 (合并重叠区间)
     res.load_and_simplify(temp_buffer.data(), (int)temp_buffer.size());
     return res;
 }

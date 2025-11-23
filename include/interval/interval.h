@@ -105,44 +105,119 @@ Interval<T> interval_div(const Interval<T>& a, const Interval<T>& b, unsigned in
     return interval_mul(a, b_inv);
 }
 
-// --- 幂、根、指数、对数 ---
+// --- 文件路径: include/interval/interval.h ---
+
+// --- 文件路径: include/interval/interval.h ---
+
+// --- 文件路径: include/interval/interval.h ---
+
 template<typename T>
 Interval<T> interval_pow(const Interval<T>& base, const Interval<T>& exp, unsigned int precision_bits = 53) {
-    if (exp.min != exp.max) {
-       return get_infinity_interval<T>(precision_bits);
-    }
-    const T e = exp.min;
+    // =========================================================
+    //  不使用 using 声明，完全通过 if constexpr 分流
+    //  避免任何潜在的命名空间冲突
+    // =========================================================
 
-    if (floor(e) == e && e > 0) {
-        long long n;
+    // ----------------------------------------------------------------
+    // 路径 A: 指数是确定的整数 (处理 x^2, x^3 等)
+    // ----------------------------------------------------------------
+    if (exp.min == exp.max) {
+        const T e = exp.min;
+
+        // 计算 floor(e)
+        T floor_e;
+        if constexpr (std::is_same_v<T, hp_float>) floor_e = boost::multiprecision::floor(e);
+        else floor_e = std::floor(e);
+
+        if (floor_e == e) {
+            long long n;
+            if constexpr (std::is_same_v<T, hp_float>) n = e.template convert_to<long long>();
+            else n = static_cast<long long>(e);
+
+            // 偶数次幂: [-2, 3]^2 -> [0, 9]
+            if (n % 2 == 0) {
+                if (base.min < T(0.0) && base.max > T(0.0)) {
+                    T abs_min, abs_max;
+                    if constexpr (std::is_same_v<T, hp_float>) {
+                        abs_min = boost::multiprecision::abs(base.min);
+                        abs_max = boost::multiprecision::abs(base.max);
+                    } else {
+                        abs_min = std::abs(base.min);
+                        abs_max = std::abs(base.max);
+                    }
+
+                    T val1, val2;
+                    if constexpr (std::is_same_v<T, hp_float>) {
+                        val1 = boost::multiprecision::pow(abs_min, n);
+                        val2 = boost::multiprecision::pow(abs_max, n);
+                    } else {
+                        val1 = std::pow(abs_min, n);
+                        val2 = std::pow(abs_max, n);
+                    }
+
+                    // std::max 支持 boost 类型（只要定义了 < 运算符）
+                    return Interval<T>{T(0.0), std::max(val1, val2)};
+                }
+            }
+        }
+    }
+
+    // ----------------------------------------------------------------
+    // 路径 B: 底数严格大于 0 (处理 3^x, x^x, x^y 等)
+    // 利用公式: base^exp = e^(exp * ln(base))
+    // ----------------------------------------------------------------
+    if (base.min > T(0.0)) {
+        Interval<T> ln_base = interval_ln(base, precision_bits);
+        Interval<T> product = interval_mul(exp, ln_base);
+        return interval_exp(product);
+    }
+
+    // 边界修正：底数是 [0, y] 且指数 > 0
+    if (base.min == T(0.0) && base.max >= T(0.0) && exp.min > T(0.0)) {
+         Interval<T> safe_base = base;
+         safe_base.min = std::numeric_limits<T>::epsilon();
+         Interval<T> ln_res = interval_ln(safe_base, precision_bits);
+         Interval<T> res = interval_exp(interval_mul(exp, ln_res));
+         res.min = T(0.0);
+         return res;
+    }
+
+    // ----------------------------------------------------------------
+    // 路径 C: 传统标量计算 (兜底)
+    // ----------------------------------------------------------------
+    if (exp.min == exp.max) {
+        const T e = exp.min;
+        T p1, p2;
+
         if constexpr (std::is_same_v<T, hp_float>) {
-            n = e.template convert_to<long long>();
+            p1 = boost::multiprecision::pow(base.min, e);
+            p2 = boost::multiprecision::pow(base.max, e);
         } else {
-            n = static_cast<long long>(e);
+            p1 = std::pow(base.min, e);
+            p2 = std::pow(base.max, e);
         }
 
-        if (n % 2 == 0) {
-            if (base.min >= T(0.0)) return Interval<T>{pow(base.min, e), pow(base.max, e)};
-            if (base.max < T(0.0)) return Interval<T>{pow(base.max, e), pow(base.min, e)};
-            // --- 最终修复: 使用ADL ---
-            using std::max;
-            using boost::multiprecision::max;
-            return Interval<T>{T(0.0), max(pow(base.min, e), pow(base.max, e))};
+        bool is_p1_nan, is_p2_nan;
+        if constexpr (std::is_same_v<T, hp_float>) {
+            // boost::math::isnan 位于 boost/math/special_functions/fpclassify.hpp
+            // 如果未包含，可以直接用 != 自身来判断 NaN，或者依赖 std::isnan 对模板的支持
+            using boost::math::isnan;
+            is_p1_nan = isnan(p1);
+            is_p2_nan = isnan(p2);
+        } else {
+            is_p1_nan = std::isnan(p1);
+            is_p2_nan = std::isnan(p2);
         }
+
+        if (is_p1_nan || is_p2_nan) {
+            return get_infinity_interval<T>(precision_bits);
+        }
+
+        // std::min/max 对 boost 类型也是安全的
+        return Interval<T>{std::min(p1, p2), std::max(p1, p2)};
     }
 
-    T p1 = pow(base.min, e);
-    T p2 = pow(base.max, e);
-
-    if (isnan(p1) || isnan(p2)) {
-        return get_infinity_interval<T>(precision_bits);
-    }
-    // --- 最终修复: 使用ADL ---
-    using std::min;
-    using std::max;
-    using boost::multiprecision::min;
-    using boost::multiprecision::max;
-    return Interval<T>{min(p1, p2), max(p1, p2)};
+    return get_infinity_interval<T>(precision_bits);
 }
 
 template<typename T>
