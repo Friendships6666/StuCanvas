@@ -42,6 +42,10 @@ extern std::atomic<size_t> g_points_atomic_index;
 #endif
 
 namespace {
+    // 【内存优化】将最大点数限制在 150万 (约 35MB)
+    // 对于 2K 屏幕，这已经足够覆盖极其复杂的曲线
+    constexpr size_t MAX_POINTS_CAPACITY = 1500000;
+
     std::mutex g_debug_mutex;
     std::atomic<int> g_debug_log_count{0};
     const int MAX_DEBUG_LOGS = 5;
@@ -66,54 +70,38 @@ namespace {
         }
     }
 
-    // =========================================================
-    // 【优化核心】本地极速 RPN 求值器 (Fixed Stack)
-    //  完全替代 include/CAS/RPN/MultiIntervalRPN.h 中的版本
-    //  消除 std::vector 的构造/析构开销，全在栈上运行
-    // =========================================================
+    // 本地极速 RPN 求值器 (保持不变)
     template<typename T>
     MultiInterval<T> evaluate_rpn_fast_local(
         const AlignedVector<RPNToken>& prog,
         const Interval<T>& x_val,
         const Interval<T>& y_val
     ) {
-        // 使用固定数组代替 vector，极大的性能提升点
-        // 32深度对于绝大多数数学公式绰绰有余
         MultiInterval<T> stack[32];
         int sp = 0;
-
-        // 预先构造好变量，避免循环内重复构造
         MultiInterval<T> mx(x_val);
         MultiInterval<T> my(y_val);
 
         for (const auto& token : prog) {
             switch (token.type) {
-                case RPNTokenType::PUSH_CONST:
-                    stack[sp++] = MultiInterval<T>(T(token.value));
-                    break;
+                case RPNTokenType::PUSH_CONST: stack[sp++] = MultiInterval<T>(T(token.value)); break;
                 case RPNTokenType::PUSH_X: stack[sp++] = mx; break;
                 case RPNTokenType::PUSH_Y: stack[sp++] = my; break;
-                case RPNTokenType::PUSH_T: stack[sp++] = MultiInterval<T>(T(0)); break; // T not supported yet
-
-                // 二元运算
+                case RPNTokenType::PUSH_T: stack[sp++] = MultiInterval<T>(T(0)); break;
                 case RPNTokenType::ADD: { sp--; stack[sp-1] = stack[sp-1] + stack[sp]; break; }
                 case RPNTokenType::SUB: { sp--; stack[sp-1] = stack[sp-1] - stack[sp]; break; }
                 case RPNTokenType::MUL: { sp--; stack[sp-1] = stack[sp-1] * stack[sp]; break; }
                 case RPNTokenType::DIV: { sp--; stack[sp-1] = stack[sp-1] / stack[sp]; break; }
                 case RPNTokenType::POW: { sp--; stack[sp-1] = multi_pow(stack[sp-1], stack[sp]); break; }
-
-                // 一元运算
                 case RPNTokenType::SIN: stack[sp-1] = multi_sin(stack[sp-1]); break;
                 case RPNTokenType::COS: stack[sp-1] = multi_cos(stack[sp-1]); break;
                 case RPNTokenType::TAN: stack[sp-1] = multi_tan(stack[sp-1]); break;
                 case RPNTokenType::EXP: stack[sp-1] = multi_exp(stack[sp-1]); break;
                 case RPNTokenType::LN:  stack[sp-1] = multi_ln(stack[sp-1]); break;
                 case RPNTokenType::ABS: stack[sp-1] = multi_abs(stack[sp-1]); break;
-
                 default: break;
             }
         }
-
         if (sp == 0) return MultiInterval<T>();
         return stack[sp-1];
     }
@@ -143,7 +131,6 @@ namespace {
             [&](const oneapi::tbb::blocked_range<size_t>& range) {
 
                 auto& local_next_tasks = next_tasks_tls.local();
-                // 预留空间，减少扩容
                 if (local_next_tasks.capacity() < 128) local_next_tasks.reserve(256);
 
                 Interval<T> ix, iy;
@@ -152,19 +139,14 @@ namespace {
                 for (size_t i = range.begin(); i != range.end(); ++i) {
                     const auto& task = current_tasks[i];
 
-                    // 1. 构造区间
                     ix = Interval<T>(task.x, task.x + task.w);
                     T y_bottom = task.y + task.h;
                     if (task.y < y_bottom) iy = Interval<T>(task.y, y_bottom);
                     else iy = Interval<T>(y_bottom, task.y);
 
-                    // 2. 计算 (使用本地优化的 evaluate)
                     res = evaluate_rpn_fast_local<T>(rpn.program, ix, iy);
 
-                    // 3. 快速剔除
                     if (!res.contains_zero()) continue;
-
-                    // --- 包含零 ---
 
                     // A. 写入点
                     double cx_dbl = to_double(task.x + task.w * 0.5);
@@ -176,17 +158,19 @@ namespace {
                     if (px >= 0 && px < sw && py >= 0 && py < sh) {
                         size_t p_idx = (size_t)py * sw + px;
 
-                        // 【优化】Test-Test-Set 模式
-                        // 先读取，如果已经满了就不进行原子操作，减少总线锁竞争
                         if (pixel_counts[p_idx] <= 2) {
                             if (ATOMIC_INC_U8(&pixel_counts[p_idx]) <= 2) {
-                                // 原子申请位置
                                 size_t write_idx = g_points_atomic_index.fetch_add(1, std::memory_order_relaxed);
 
+                                // 【内存安全】严格检查边界，防止溢出
                                 if (write_idx < buffer_capacity) {
                                     double final_x = cx_dbl - offset_x;
                                     double final_y = cy_dbl - offset_y;
                                     raw_buffer_ptr[write_idx] = PointData{ {final_x, final_y}, func_idx };
+                                } else {
+                                    // 缓冲区已满，停止写入（但可能继续分裂以保持精度，或者直接放弃）
+                                    // 这里选择继续分裂，因为下一阶段可能会有更准确的点（虽然写不进去了）
+                                    // 实际上如果满了，通常意味着点太密了，不写也罢。
                                 }
                             }
                         }
@@ -215,13 +199,15 @@ namespace {
         double screen_width, double screen_height,
         double offset_x, double offset_y
     ) {
-        // 1. 预分配
-        if (wasm_final_contiguous_buffer.capacity() < 5000000) {
-            wasm_final_contiguous_buffer.reserve(5000000);
+        // 1. 预分配 (限制最大容量)
+        if (wasm_final_contiguous_buffer.capacity() < MAX_POINTS_CAPACITY) {
+            wasm_final_contiguous_buffer.reserve(MAX_POINTS_CAPACITY);
         }
-        if (wasm_final_contiguous_buffer.size() < 5000000) {
-            wasm_final_contiguous_buffer.resize(5000000);
+        // 确保 size 足够大以允许指针访问
+        if (wasm_final_contiguous_buffer.size() < MAX_POINTS_CAPACITY) {
+            wasm_final_contiguous_buffer.resize(MAX_POINTS_CAPACITY);
         }
+
         PointData* raw_buffer_ptr = wasm_final_contiguous_buffer.data();
         size_t buffer_capacity = wasm_final_contiguous_buffer.size();
 
@@ -233,7 +219,7 @@ namespace {
 
         // 3. 初始任务划分 (保持 16x16)
         std::vector<IndustryTask<T>> current_tasks;
-        int grid_x = 32; int grid_y = 32;
+        int grid_x = 16; int grid_y = 16;
         T total_w = T(screen_width * wppx);
         T total_h = T(screen_height * wppy);
         T step_w = total_w / T(grid_x);
@@ -282,6 +268,8 @@ namespace {
 
             // 同步
             size_t points_count = g_points_atomic_index.load(std::memory_order_relaxed);
+            // 如果超过容量，截断显示
+            if (points_count > buffer_capacity) points_count = buffer_capacity;
 
             #ifdef __EMSCRIPTEN__
             if (wasm_function_ranges_buffer.size() <= func_idx) {
@@ -329,8 +317,9 @@ void process_single_industry_function(
 ) {
     IndustrialRPN rpn = parse_industrial_rpn(industry_rpn);
 
-    if (wasm_final_contiguous_buffer.size() < 5000000) {
-        wasm_final_contiguous_buffer.resize(5000000);
+    // 确保 Buffer 初始化 (使用较小的容量)
+    if (wasm_final_contiguous_buffer.size() < MAX_POINTS_CAPACITY) {
+        wasm_final_contiguous_buffer.resize(MAX_POINTS_CAPACITY);
     }
 
     if (rpn.precision_bits == 0) {
@@ -344,6 +333,7 @@ void process_single_industry_function(
         );
     }
 
+    // Native 调试用：Resize 到实际大小 (可选，为了节省 Native 内存)
     size_t final_count = g_points_atomic_index.load();
     if (final_count < wasm_final_contiguous_buffer.size()) {
         wasm_final_contiguous_buffer.resize(final_count);

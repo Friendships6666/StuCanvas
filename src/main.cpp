@@ -36,6 +36,9 @@ std::unique_ptr<oneapi::tbb::task_group> g_global_task_group;
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 
+// 引用 plotIndustry.cpp 中的原子索引，用于获取工业函数的实际点数
+extern std::atomic<size_t> g_points_atomic_index;
+
 void calculate_points_worker(
     std::vector<std::string> implicit_rpn_list,
     std::vector<std::string> industry_rpn_list,
@@ -43,14 +46,36 @@ void calculate_points_worker(
     double zoom,
     double screen_width, double screen_height
 ) {
+    // 1. 准备隐函数输入
     std::vector<std::pair<std::string, std::string>> implicit_rpn_pairs;
     implicit_rpn_pairs.reserve(implicit_rpn_list.size());
     for (const auto& rpn_str : implicit_rpn_list) {
         implicit_rpn_pairs.push_back({rpn_str, rpn_str});
     }
 
-    AlignedVector<PointData> ordered_points;
+    AlignedVector<PointData> ordered_points; // 存放普通隐函数的计算结果
 
+    // =========================================================
+    // 【优化】WASM 端内存策略
+    // =========================================================
+    bool has_industry = !industry_rpn_list.empty();
+
+    if (has_industry) {
+        // 只有存在工业函数时，才重置索引并预留大内存
+        g_points_atomic_index.store(0);
+
+        // 预留空间，防止 plotIndustry 内部频繁 realloc
+        // 注意：这里用 reserve 即可，plotIndustry 内部会处理 resize/swap
+        if (wasm_final_contiguous_buffer.capacity() < 3096120) {
+            wasm_final_contiguous_buffer.reserve(3096120);
+        }
+    } else {
+        // 如果只有普通函数，不需要重置 g_points_atomic_index，
+        // 也不需要预分配 100MB+ 内存，保持现状即可。
+    }
+
+    // 2. 执行核心计算
+    // plotIndustry 会在后台线程中不断更新 wasm_final_contiguous_buffer 并通知 JS
     calculate_points_core(
         ordered_points,
         wasm_function_ranges_buffer,
@@ -59,84 +84,42 @@ void calculate_points_worker(
         offset_x, offset_y, zoom, screen_width, screen_height
     );
 
-    if (!ordered_points.empty()) {
-        wasm_final_contiguous_buffer.resize(ordered_points.size());
-        std::memcpy(wasm_final_contiguous_buffer.data(), ordered_points.data(), ordered_points.size() * sizeof(PointData));
+    // 3. 最终合并与同步 (处理混合绘制的情况)
+    if (has_industry) {
+        // 工业模式下，wasm_final_contiguous_buffer 已经被 plotIndustry 填充了数据
+        // 我们需要把 ordered_points (普通隐函数结果) 追加进去
+
+        size_t industry_count = wasm_final_contiguous_buffer.size(); // 此时 buffer 已经是 swap 过的，size 是真实的
+        size_t implicit_count = ordered_points.size();
+
+        if (implicit_count > 0) {
+            // 扩容以容纳隐函数点
+            wasm_final_contiguous_buffer.resize(industry_count + implicit_count);
+
+            // 将隐函数点拷贝到尾部
+            std::memcpy(
+                wasm_final_contiguous_buffer.data() + industry_count,
+                ordered_points.data(),
+                implicit_count * sizeof(PointData)
+            );
+        }
+
+        // 此时 wasm_final_contiguous_buffer 包含了 [工业点 ... 隐函数点]
+    }
+    else {
+        // 纯普通模式：直接覆盖 buffer
+        if (!ordered_points.empty()) {
+            wasm_final_contiguous_buffer.resize(ordered_points.size());
+            std::memcpy(wasm_final_contiguous_buffer.data(), ordered_points.data(), ordered_points.size() * sizeof(PointData));
+        } else {
+            // 如果没有点，清空 buffer
+            wasm_final_contiguous_buffer.clear();
+        }
     }
 
+    // 4. 结束标记
     g_is_calculating.store(false, std::memory_order_release);
     g_industry_stage_version.fetch_add(1, std::memory_order_release);
-}
-
-void start_calculation_async(
-    const std::vector<std::string>& implicit_rpn_list,
-    const std::vector<std::string>& industry_rpn_list,
-    double offset_x, double offset_y,
-    double zoom,
-    double screen_width, double screen_height
-) {
-    if (g_global_task_group) {
-        g_global_task_group->wait();
-    } else {
-        g_global_task_group = std::make_unique<oneapi::tbb::task_group>();
-    }
-
-    double dx = g_last_offset_x - offset_x;
-    double dy = g_last_offset_y - offset_y;
-    bool is_first_run = (g_last_zoom == 0.0);
-
-    if (!is_first_run && !wasm_final_contiguous_buffer.empty()) {
-        double view_w = screen_width / zoom * 1.5;
-        double view_h = screen_height / zoom * 1.5;
-
-        auto new_end = std::remove_if(wasm_final_contiguous_buffer.begin(), wasm_final_contiguous_buffer.end(),
-            [&](PointData& p) {
-                p.position.x += dx;
-                p.position.y += dy;
-                if (std::abs(p.position.x) > view_w || std::abs(p.position.y) > view_h) {
-                    return true;
-                }
-                return false;
-            }
-        );
-        wasm_final_contiguous_buffer.erase(new_end, wasm_final_contiguous_buffer.end());
-        g_preserved_points = wasm_final_contiguous_buffer;
-        g_industry_stage_version.fetch_add(1, std::memory_order_release);
-    } else {
-        g_preserved_points.clear();
-    }
-
-    g_last_offset_x = offset_x;
-    g_last_offset_y = offset_y;
-    g_last_zoom = zoom;
-
-    g_is_calculating.store(true, std::memory_order_release);
-
-    g_global_task_group->run([=]() {
-        calculate_points_worker(
-            implicit_rpn_list,
-            industry_rpn_list,
-            offset_x, offset_y, zoom, screen_width, screen_height
-        );
-    });
-}
-
-int get_data_version() { return g_industry_stage_version.load(std::memory_order_acquire); }
-bool is_calculating() { return g_is_calculating.load(std::memory_order_acquire); }
-uintptr_t get_points_ptr() { return reinterpret_cast<uintptr_t>(wasm_final_contiguous_buffer.data()); }
-size_t get_points_size() { return wasm_final_contiguous_buffer.size(); }
-uintptr_t get_function_ranges_ptr() { return reinterpret_cast<uintptr_t>(wasm_function_ranges_buffer.data()); }
-size_t get_function_ranges_size() { return wasm_function_ranges_buffer.size(); }
-
-EMSCRIPTEN_BINDINGS(my_module) {
-    emscripten::register_vector<std::string>("VectorString");
-    emscripten::function("start_calculation", &start_calculation_async);
-    emscripten::function("get_data_version", &get_data_version);
-    emscripten::function("is_calculating", &is_calculating);
-    emscripten::function("get_points_ptr", &get_points_ptr);
-    emscripten::function("get_points_size", &get_points_size);
-    emscripten::function("get_function_ranges_ptr", &get_function_ranges_ptr);
-    emscripten::function("get_function_ranges_size", &get_function_ranges_size);
 }
 
 #else
@@ -165,8 +148,8 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
     // 2. 【核心修复】使用 resize 而不是 reserve
     // 这确保 vector 认为自己有 500万大小，后续的指针写入是合法的覆盖操作
     if (!industry_rpn_list.empty()) {
-        if (wasm_final_contiguous_buffer.size() < 5000000) {
-            wasm_final_contiguous_buffer.resize(5000000);
+        if (wasm_final_contiguous_buffer.size() < 3096120) {
+            wasm_final_contiguous_buffer.resize(3096120);
         }
     }
 
@@ -225,7 +208,7 @@ int main() {
         // 【新增】添加一个标准的圆方程作为普通隐函数测试
         // x^2 + y^2 - 1 = 0  => RPN: x 2 pow y 2 pow + 1 -
         std::vector<std::string> implicit_rpn_direct_list = {
-            "x x * y y * + 10 -"
+
         };
 
         if (!implicit_rpn_direct_list.empty()) {
@@ -237,7 +220,7 @@ int main() {
         }
 
         // 工业级函数
-        std::vector<std::string> industry_rpn = {  };
+        std::vector<std::string> industry_rpn = { "y x tan -;0;0.1;10;2" };
         std::cout << "已准备 " << industry_rpn.size() << " 个工业级 RPN 函数。\n";
 
         // --- 2. 设置所有绘图共享的视图属性 ---
