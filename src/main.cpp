@@ -164,8 +164,10 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
 
     // 2. 【核心修复】使用 resize 而不是 reserve
     // 这确保 vector 认为自己有 500万大小，后续的指针写入是合法的覆盖操作
-    if (wasm_final_contiguous_buffer.size() < 5000000) {
-        wasm_final_contiguous_buffer.resize(5000000);
+    if (!industry_rpn_list.empty()) {
+        if (wasm_final_contiguous_buffer.size() < 5000000) {
+            wasm_final_contiguous_buffer.resize(5000000);
+        }
     }
 
     // 3. 核心计算 (Task Group 并行：同时计算普通隐函数和工业级函数)
