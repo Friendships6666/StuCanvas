@@ -113,7 +113,7 @@ struct MultiInterval {
             if (top.max >= curr.min) {
                 top.max = max(top.max, curr.max);
             } else {
-                write_idx++;
+                ++write_idx;
                 buffer[write_idx] = curr;
             }
         }
