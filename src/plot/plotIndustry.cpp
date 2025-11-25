@@ -87,7 +87,7 @@ namespace {
                 case RPNTokenType::PUSH_CONST: stack[sp++] = MultiInterval<T>(T(token.value)); break;
                 case RPNTokenType::PUSH_X: stack[sp++] = mx; break;
                 case RPNTokenType::PUSH_Y: stack[sp++] = my; break;
-                case RPNTokenType::PUSH_T: stack[sp++] = MultiInterval<T>(T(0)); break;
+
                 case RPNTokenType::ADD: { sp--; stack[sp-1] = stack[sp-1] + stack[sp]; break; }
                 case RPNTokenType::SUB: { sp--; stack[sp-1] = stack[sp-1] - stack[sp]; break; }
                 case RPNTokenType::MUL: { sp--; stack[sp-1] = stack[sp-1] * stack[sp]; break; }
