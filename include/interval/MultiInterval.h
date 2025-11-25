@@ -85,7 +85,7 @@ struct MultiInterval {
     }
 
     bool contains_zero() const {
-        T zero(0);
+        T zero{0};
         if (count == 1) {
             return parts[0].min <= zero && parts[0].max >= zero;
         }

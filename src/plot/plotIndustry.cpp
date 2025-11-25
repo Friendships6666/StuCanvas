@@ -51,7 +51,7 @@ namespace {
     const int MAX_DEBUG_LOGS = 5;
 
     template<typename T>
-    inline double to_double(const T& val) { return static_cast<double>(val); }
+    double to_double(const T& val) { return static_cast<double>(val); }
 
     template<typename T>
     struct IndustryTask {
