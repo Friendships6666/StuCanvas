@@ -44,7 +44,7 @@ extern std::atomic<size_t> g_points_atomic_index;
 namespace {
     // 【内存优化】将最大点数限制在 150万 (约 35MB)
     // 对于 2K 屏幕，这已经足够覆盖极其复杂的曲线
-    constexpr size_t MAX_POINTS_CAPACITY = 1500000;
+    constexpr size_t MAX_POINTS_CAPACITY = 5000000;
 
     std::mutex g_debug_mutex;
     std::atomic<int> g_debug_log_count{0};
