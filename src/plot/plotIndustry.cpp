@@ -77,7 +77,7 @@ namespace {
         const Interval<T>& x_val,
         const Interval<T>& y_val
     ) {
-        MultiInterval<T> stack[32];
+        MultiInterval<T> stack[256];
         int sp = 0;
         MultiInterval<T> mx(x_val);
         MultiInterval<T> my(y_val);
