@@ -1,16 +1,16 @@
-﻿#include "../../pch.h"
+﻿// --- 文件路径: src/plot/plotCall.cpp ---
+
+#include "../../pch.h"
 #include "../../include/plot/plotCall.h"
 #include "../../include/CAS/RPN/RPN.h"
 #include "../../include/plot/plotImplicit.h"
-#include "../../include/plot/plotIndustry.h"
-
-// 显式和参数方程的辅助代码已移除
+// 移除 plotIndustry.h 的引用
 
 void calculate_points_core(
     AlignedVector<PointData>& out_points,
     AlignedVector<FunctionRange>& out_ranges,
     const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
-    const std::vector<std::string>& industry_rpn_list,
+    // 移除 industry_rpn_list
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height
@@ -21,15 +21,10 @@ void calculate_points_core(
     const auto thread_count = std::thread::hardware_concurrency();
     oneapi::tbb::global_control control(oneapi::tbb::global_control::max_allowed_parallelism, thread_count);
 
-    // ====================================================================
-    //          ↓↓↓ 核心修正：更改队列类型 ↓↓↓
-    // ====================================================================
     oneapi::tbb::concurrent_bounded_queue<FunctionResult> results_queue;
-    // ====================================================================
-
     oneapi::tbb::task_group task_group;
 
-    const size_t total_functions = implicit_rpn_pairs.size() + industry_rpn_list.size();
+    const size_t total_functions = implicit_rpn_pairs.size();
     if (total_functions == 0) return;
 
     // --- 准备计算参数 ---
@@ -52,43 +47,27 @@ void calculate_points_core(
                 &results_queue, world_origin, world_per_pixel_x, world_per_pixel_y,
                 screen_width, screen_height,
                 implicit_programs[i], implicit_programs_for_check[i], (unsigned int)i,
-                offset_x, offset_y // <--- 传递参数
+                offset_x, offset_y
             );
         });
     }
 
-    // --- 派发工业级函数任务 ---
-    const unsigned int industry_index_offset = (unsigned int)implicit_rpn_pairs.size();
-    for (size_t i = 0; i < industry_rpn_list.size(); ++i) {
-        task_group.run([&, i] {
-            const unsigned int final_func_idx = (unsigned int)i + industry_index_offset;
-            process_single_industry_function(
-                &results_queue, industry_rpn_list[i], final_func_idx,
-                world_origin, world_per_pixel_x, world_per_pixel_y,
-                screen_width, screen_height,
-                offset_x, offset_y, zoom
-            );
-        });
-    }
-
-    // --- 主线程作为消费者，实时处理结果 ---
+    // --- 移除工业级函数派发逻辑 ---
     std::cout << "--- 开始实时接收和处理函数计算结果 ---" << std::endl;
+    // --- 消费结果 ---
     std::map<unsigned int, std::vector<PointData>> collected_results;
-
     for (size_t i = 0; i < total_functions; ++i) {
         FunctionResult result;
-        results_queue.pop(result); // 现在这一行可以正常编译了
-
+        results_queue.pop(result);
         std::cout << "已完成函数 " << result.function_index
-                  << " 的计算，获得 " << result.points.size() << " 个点。" << std::endl;
-
+          << " 的计算，获得 " << result.points.size() << " 个点。" << std::endl;
         collected_results[result.function_index] = std::move(result.points);
     }
     std::cout << "--- 所有函数计算均已完成 ---" << std::endl;
 
-    // --- 对所有收到的结果进行排序和整理 ---
+    // --- 整理结果 ---
     std::vector<PointData> all_points_buffer;
-    all_points_buffer.reserve(100000); // 预估
+    all_points_buffer.reserve(100000);
     out_ranges.resize(total_functions);
     uint32_t current_start_index = 0;
 
@@ -108,6 +87,5 @@ void calculate_points_core(
     }
 
     out_points.assign(all_points_buffer.begin(), all_points_buffer.end());
-
-    task_group.wait(); // 确保所有TBB任务都已结束
+    task_group.wait();
 }

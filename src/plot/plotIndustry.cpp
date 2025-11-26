@@ -20,19 +20,20 @@
 #include <array>
 
 // =========================================================
-//        ↓↓↓ 全局变量引用 ↓↓↓
+//        ↓↓↓ 全局变量引用 (已修改为独立容器) ↓↓↓
 // =========================================================
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
 
-extern AlignedVector<PointData> wasm_final_contiguous_buffer;
-extern AlignedVector<FunctionRange> wasm_function_ranges_buffer;
+// 修改点：引用新的全局隔离容器
+extern AlignedVector<PointData> g_industry_points;
+extern AlignedVector<FunctionRange> g_industry_ranges;
+extern std::atomic<size_t> g_industry_atomic_index;
+
 extern std::atomic<int> g_industry_stage_version;
 extern AlignedVector<PointData> g_preserved_points;
-
-extern std::atomic<size_t> g_points_atomic_index;
 
 #if defined(_MSC_VER)
     #include <windows.h>
@@ -42,8 +43,7 @@ extern std::atomic<size_t> g_points_atomic_index;
 #endif
 
 namespace {
-    // 【内存优化】将最大点数限制在 150万 (约 35MB)
-    // 对于 2K 屏幕，这已经足够覆盖极其复杂的曲线
+    // 【内存优化】将最大点数限制在 500万 (约 120MB)
     constexpr size_t MAX_POINTS_CAPACITY = 5000000;
 
     std::mutex g_debug_mutex;
@@ -70,13 +70,14 @@ namespace {
         }
     }
 
-    // 本地极速 RPN 求值器 (保持不变)
+    // 本地极速 RPN 求值器
     template<typename T>
     MultiInterval<T> evaluate_rpn_fast_local(
         const AlignedVector<RPNToken>& prog,
         const Interval<T>& x_val,
         const Interval<T>& y_val
     ) {
+        // 使用栈上的小数组，避免 vector 分配
         MultiInterval<T> stack[256];
         int sp = 0;
         MultiInterval<T> mx(x_val);
@@ -160,17 +161,15 @@ namespace {
 
                         if (pixel_counts[p_idx] <= 2) {
                             if (ATOMIC_INC_U8(&pixel_counts[p_idx]) <= 2) {
-                                size_t write_idx = g_points_atomic_index.fetch_add(1, std::memory_order_relaxed);
+                                // 修改点：使用 g_industry_atomic_index
+                                size_t write_idx = g_industry_atomic_index.fetch_add(1, std::memory_order_relaxed);
 
                                 // 【内存安全】严格检查边界，防止溢出
                                 if (write_idx < buffer_capacity) {
                                     double final_x = cx_dbl - offset_x;
                                     double final_y = cy_dbl - offset_y;
+                                    // 写入到传入的 raw_buffer_ptr (指向 g_industry_points)
                                     raw_buffer_ptr[write_idx] = PointData{ {final_x, final_y}, func_idx };
-                                } else {
-                                    // 缓冲区已满，停止写入（但可能继续分裂以保持精度，或者直接放弃）
-                                    // 这里选择继续分裂，因为下一阶段可能会有更准确的点（虽然写不进去了）
-                                    // 实际上如果满了，通常意味着点太密了，不写也罢。
                                 }
                             }
                         }
@@ -199,17 +198,17 @@ namespace {
         double screen_width, double screen_height,
         double offset_x, double offset_y
     ) {
-        // 1. 预分配 (限制最大容量)
-        if (wasm_final_contiguous_buffer.capacity() < MAX_POINTS_CAPACITY) {
-            wasm_final_contiguous_buffer.reserve(MAX_POINTS_CAPACITY);
+        // 1. 预分配 (限制最大容量) - 修改为 g_industry_points
+        if (g_industry_points.capacity() < MAX_POINTS_CAPACITY) {
+            g_industry_points.reserve(MAX_POINTS_CAPACITY);
         }
         // 确保 size 足够大以允许指针访问
-        if (wasm_final_contiguous_buffer.size() < MAX_POINTS_CAPACITY) {
-            wasm_final_contiguous_buffer.resize(MAX_POINTS_CAPACITY);
+        if (g_industry_points.size() < MAX_POINTS_CAPACITY) {
+            g_industry_points.resize(MAX_POINTS_CAPACITY);
         }
 
-        PointData* raw_buffer_ptr = wasm_final_contiguous_buffer.data();
-        size_t buffer_capacity = wasm_final_contiguous_buffer.size();
+        PointData* raw_buffer_ptr = g_industry_points.data();
+        size_t buffer_capacity = g_industry_points.size();
 
         // 2. 初始化辅助结构
         int sw = (int)screen_width + 1;
@@ -249,8 +248,8 @@ namespace {
         while (!current_tasks.empty()) {
             auto stage_start = std::chrono::high_resolution_clock::now();
 
-            // 重置状态
-            g_points_atomic_index.store(0, std::memory_order_relaxed);
+            // 重置状态 - 修改为 g_industry_atomic_index
+            g_industry_atomic_index.store(0, std::memory_order_relaxed);
             std::memset(pixel_counts.data(), 0, pixel_counts.size() * sizeof(uint8_t));
             for (auto& local : next_tasks_tls) local.clear();
 
@@ -267,16 +266,21 @@ namespace {
             );
 
             // 同步
-            size_t points_count = g_points_atomic_index.load(std::memory_order_relaxed);
+            size_t points_count = g_industry_atomic_index.load(std::memory_order_relaxed);
             // 如果超过容量，截断显示
             if (points_count > buffer_capacity) points_count = buffer_capacity;
 
             #ifdef __EMSCRIPTEN__
-            if (wasm_function_ranges_buffer.size() <= func_idx) {
-                wasm_function_ranges_buffer.resize(func_idx + 1);
+            // 修改点：使用 g_industry_ranges
+            // 确保 Range 容器足够大。注意 func_idx 包含隐函数偏移量，所以这里直接 resize 是安全的
+            if (g_industry_ranges.size() <= func_idx) {
+                g_industry_ranges.resize(func_idx + 1);
             }
-            wasm_function_ranges_buffer[func_idx] = {0, (uint32_t)points_count};
+            // 这里的 Range 是相对于 g_industry_points 缓冲区的 (start=0)
+            // Web 端合并时需要加上 g_implicit_points.size() 的偏移
+            g_industry_ranges[func_idx] = {0, (uint32_t)points_count};
             #endif
+
             g_industry_stage_version.fetch_add(1, std::memory_order_release);
 
             auto stage_dur = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - stage_start).count();
@@ -317,9 +321,9 @@ void process_single_industry_function(
 ) {
     IndustrialRPN rpn = parse_industrial_rpn(industry_rpn);
 
-    // 确保 Buffer 初始化 (使用较小的容量)
-    if (wasm_final_contiguous_buffer.size() < MAX_POINTS_CAPACITY) {
-        wasm_final_contiguous_buffer.resize(MAX_POINTS_CAPACITY);
+    // 同样使用 g_industry_points
+    if (g_industry_points.size() < MAX_POINTS_CAPACITY) {
+        g_industry_points.resize(MAX_POINTS_CAPACITY);
     }
 
     if (rpn.precision_bits == 0) {
@@ -333,10 +337,10 @@ void process_single_industry_function(
         );
     }
 
-    // Native 调试用：Resize 到实际大小 (可选，为了节省 Native 内存)
-    size_t final_count = g_points_atomic_index.load();
-    if (final_count < wasm_final_contiguous_buffer.size()) {
-        wasm_final_contiguous_buffer.resize(final_count);
+    // Native 调试用：Resize 到实际大小
+    size_t final_count = g_industry_atomic_index.load();
+    if (final_count < g_industry_points.size()) {
+        g_industry_points.resize(final_count);
     }
 
     results_queue->push({func_idx, {}});
