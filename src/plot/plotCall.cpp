@@ -3,9 +3,6 @@
 #include "../../include/CAS/RPN/RPN.h"
 #include "../../include/plot/plotImplicit.h"
 #include "../../include/plot/plotIndustry.h"
-// 显式和参数方程的头文件已移除
-// #include "../../include/plot/plotExplicit.h"
-// #include "../../include/plot/plotParametric.h"
 
 // 显式和参数方程的辅助代码已移除
 

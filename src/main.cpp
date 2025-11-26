@@ -267,7 +267,7 @@ int main() {
 
         // 测试普通隐函数
         std::vector<std::string> implicit_rpn_direct_list = {
-            "x x * y y * + 10 -"
+            "y 1 x / sin 1 x / sin / -"
         };
         if (!implicit_rpn_direct_list.empty()) {
             for(const auto& rpn_str : implicit_rpn_direct_list) {
@@ -277,7 +277,7 @@ int main() {
         }
 
         // 测试工业级函数
-        std::vector<std::string> industry_rpn = { "y x tan -;0;0.1;10;2" };
+        std::vector<std::string> industry_rpn = {  };
         std::cout << "已准备 " << industry_rpn.size() << " 个工业级 RPN 函数。\n";
 
         double offset_x = 0, offset_y = 0;
