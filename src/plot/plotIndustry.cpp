@@ -33,7 +33,7 @@ extern std::atomic<int> g_industry_stage_version;
 #endif
 
 namespace {
-    // 【安全限制】硬物理上限 (约 1.2GB RAM)，防止浏览器 OOM 崩溃
+    // 【安全限制】硬物理上限 (约 1.2GB RAM)
     constexpr size_t HARD_LIMIT_POINTS = 50000000;
 
     std::mutex g_debug_mutex;
@@ -56,7 +56,7 @@ namespace {
         const Interval<T>& x_val,
         const Interval<T>& y_val
     ) {
-        MultiInterval<T> stack[256];
+        MultiInterval<T> stack[64];
         int sp = 0;
         MultiInterval<T> mx(x_val);
         MultiInterval<T> my(y_val);
@@ -135,8 +135,7 @@ namespace {
                                 // 原子获取写入位置
                                 size_t write_idx = g_points_atomic_index.fetch_add(1, std::memory_order_relaxed);
 
-                                // 【关键安全检查】
-                                // 如果未扩容导致溢出，则丢弃点（等待下一阶段扩容）
+                                // 安全写入
                                 if (write_idx < buffer_capacity) {
                                     double final_x = cx_dbl - offset_x;
                                     double final_y = cy_dbl - offset_y;
@@ -169,7 +168,7 @@ namespace {
         double screen_width, double screen_height,
         double offset_x, double offset_y
     ) {
-        // 1. 获取初始指针和容量 (由 main.cpp 提供初始值，如 20万)
+        // 1. 获取初始指针和容量
         PointData* raw_buffer_ptr = wasm_final_contiguous_buffer.data();
         size_t buffer_capacity = wasm_final_contiguous_buffer.size();
 
@@ -178,9 +177,8 @@ namespace {
         int sh = (int)screen_height + 1;
         static std::vector<uint8_t> pixel_counts;
         if (pixel_counts.size() < sw * sh) pixel_counts.resize(sw * sh);
-        std::memset(pixel_counts.data(), 0, pixel_counts.size() * sizeof(uint8_t));
 
-        // 3. 初始任务划分 (16x16)
+        // 3. 初始任务划分
         std::vector<IndustryTask<T>> current_tasks;
         int grid_x = 16; int grid_y = 16;
         T total_w = T(screen_width * wppx);
@@ -201,7 +199,7 @@ namespace {
 
         oneapi::tbb::enumerable_thread_specific<std::vector<IndustryTask<T>>> next_tasks_tls;
 
-        // 4. 阶段循环 (细分过程)
+        // 4. 阶段循环
         double current_threshold = rpn.start_pixel_threshold;
         double min_threshold = rpn.min_pixel_threshold;
         double step_factor = rpn.step_factor > 1.0 ? rpn.step_factor : 2.0;
@@ -212,42 +210,44 @@ namespace {
             auto stage_start = std::chrono::high_resolution_clock::now();
 
             // =========================================================
-            // 【核心优化】分阶段智能扩容 (Check and Grow)
+            // 1. 智能扩容检查
             // =========================================================
             size_t current_used = g_points_atomic_index.load(std::memory_order_relaxed);
-
-            // 预测策略：
-            // 1. 如果使用率超过 80%
-            // 2. 或者剩余空间太小，不足以容纳当前任务可能产生的点 (估算为任务数 * 2)
             size_t tasks_count = current_tasks.size();
+
+            // 此时 current_used 实际上是 "上一轮用了多少"，因为我们还没清零
+            // 如果上一轮用量就已经很大了，那么这一轮肯定不够，得扩容
             bool need_grow = (current_used > buffer_capacity * 0.8) ||
                              ((buffer_capacity > current_used) && (buffer_capacity - current_used < tasks_count * 2));
 
             if (need_grow && buffer_capacity < HARD_LIMIT_POINTS) {
-                // 几何增长 (1.5倍)，并确保至少增加任务数的预留
                 size_t new_capacity = static_cast<size_t>(buffer_capacity * 1.5);
                 if (new_capacity < current_used + tasks_count * 4) {
                     new_capacity = current_used + tasks_count * 4;
                 }
-
-                // 封顶
                 if (new_capacity > HARD_LIMIT_POINTS) new_capacity = HARD_LIMIT_POINTS;
 
-                // 如果新容量确实更大，则执行扩容
                 if (new_capacity > buffer_capacity) {
-                    // resize 会保留已有数据
                     wasm_final_contiguous_buffer.resize(new_capacity);
-
-                    // 【重要】扩容后，底层指针可能改变，必须重新获取！
                     raw_buffer_ptr = wasm_final_contiguous_buffer.data();
                     buffer_capacity = wasm_final_contiguous_buffer.size();
-
-                    // std::cout << "[Industry] Auto-Growing memory to " << buffer_capacity << std::endl;
                 }
             }
 
-            // 清空 TLS
+            // =========================================================
+            // 2. 【关键修复】状态重置 (准备开始新一轮绘制)
+            // =========================================================
+
+            // 重置索引：新点将覆盖旧点，而不是追加
+            g_points_atomic_index.store(0, std::memory_order_relaxed);
+
+            // 重置像素计数：清空画布占用标记
+            std::memset(pixel_counts.data(), 0, pixel_counts.size() * sizeof(uint8_t));
+
+            // 清空 TLS 任务缓冲
             for (auto& local : next_tasks_tls) local.clear();
+
+            // =========================================================
 
             double next_threshold_val = current_threshold / step_factor;
             if (next_threshold_val < min_threshold) next_threshold_val = min_threshold;
@@ -261,9 +261,8 @@ namespace {
                 raw_buffer_ptr, buffer_capacity
             );
 
-            // 同步进度给 JS (防闪烁)
+            // 同步进度给 JS
             size_t points_count = g_points_atomic_index.load(std::memory_order_relaxed);
-            // 限制范围显示，防止 JS 读越界
             if (points_count > buffer_capacity) points_count = buffer_capacity;
 
             #ifdef __EMSCRIPTEN__
@@ -311,8 +310,6 @@ void process_single_industry_function(
 ) {
     IndustrialRPN rpn = parse_industrial_rpn(industry_rpn);
 
-    // 移除了这里的 resize，完全由 execute_industry_fast 和 main.cpp 控制
-
     if (rpn.precision_bits == 0) {
         execute_industry_fast<double>(
             rpn, func_idx, world_origin, wppx, wppy, screen_width, screen_height, offset_x, offset_y
@@ -324,7 +321,6 @@ void process_single_industry_function(
         );
     }
 
-    // Native 调试用：截断 buffer 到实际大小
     size_t final_count = g_points_atomic_index.load();
     if (final_count < wasm_final_contiguous_buffer.size()) {
         wasm_final_contiguous_buffer.resize(final_count);

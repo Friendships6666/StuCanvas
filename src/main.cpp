@@ -276,7 +276,7 @@ int main() {
         std::cout << "\n--- 准备隐式函数 ---\n";
 
         // 测试普通隐函数
-        std::vector<std::string> implicit_rpn_direct_list  (100,"x 2 pow y 2 pow + 10 -");
+        std::vector<std::string> implicit_rpn_direct_list = {};
 
         if (!implicit_rpn_direct_list.empty()) {
             for(const auto& rpn_str : implicit_rpn_direct_list) {
@@ -285,7 +285,7 @@ int main() {
         }
 
         // 测试工业级函数 (此处为空)
-        std::vector<std::string> industry_rpn = { };
+        std::vector<std::string> industry_rpn = {     "y x tan -;0;0.1;10;2"};
 
         double offset_x = 0, offset_y = 0;
         double zoom = 0.1;
