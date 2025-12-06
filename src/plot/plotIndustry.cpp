@@ -17,7 +17,12 @@
 #include <iostream>
 #include <chrono>
 #include <mutex>
-
+#if defined(_MSC_VER)
+    #include <windows.h>
+    #define ATOMIC_INC_U8(ptr) (_InterlockedExchangeAdd8((char*)(ptr), 1) + 1)
+#else
+    #define ATOMIC_INC_U8(ptr) (__atomic_add_fetch((ptr), 1, __ATOMIC_RELAXED))
+#endif
 // 全局变量引用
 extern AlignedVector<PointData> wasm_final_contiguous_buffer;
 extern std::atomic<size_t> g_points_atomic_index;
@@ -134,8 +139,8 @@ namespace {
                         if (px >= 0 && px < sw && py >= 0 && py < sh) {
                             size_t p_idx = (size_t)py * sw + px;
                             // 简单的原子去重
-                            if (pixel_counts[p_idx] <= 1) {
-                                if (ATOMIC_INC_U8(&pixel_counts[p_idx]) <= 1) {
+                            if (pixel_counts[p_idx] <= 2) {
+                                if (ATOMIC_INC_U8(&pixel_counts[p_idx]) <= 2) {
                                     size_t write_idx = g_points_atomic_index.fetch_add(1, std::memory_order_relaxed);
                                     if (write_idx < buffer_capacity) {
                                         double final_x = cx_dbl - offset_x;
