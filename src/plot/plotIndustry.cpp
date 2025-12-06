@@ -36,6 +36,9 @@ namespace {
     // 【安全限制】硬物理上限 (约 1.2GB RAM)
     constexpr size_t HARD_LIMIT_POINTS = 50000000;
 
+    // --- 新增：互斥锁，用于串行化多个工业级函数的计算，防止缓冲区写入交错 ---
+    std::mutex g_industry_mutex;
+
     std::mutex g_debug_mutex;
     std::atomic<int> g_debug_log_count{0};
     const int MAX_DEBUG_LOGS = 5;
@@ -166,7 +169,8 @@ namespace {
         const Vec2& world_origin,
         double wppx, double wppy,
         double screen_width, double screen_height,
-        double offset_x, double offset_y
+        double offset_x, double offset_y,
+        size_t start_global_index // --- 新增参数：当前函数的起始写入位置 ---
     ) {
         // 1. 获取初始指针和容量
         PointData* raw_buffer_ptr = wasm_final_contiguous_buffer.data();
@@ -175,8 +179,9 @@ namespace {
         // 2. 初始化辅助结构
         int sw = (int)screen_width + 1;
         int sh = (int)screen_height + 1;
-        static std::vector<uint8_t> pixel_counts;
-        if (pixel_counts.size() < sw * sh) pixel_counts.resize(sw * sh);
+
+        // --- 修改：移除 static，改为局部变量，避免不同函数间干扰 ---
+        std::vector<uint8_t> pixel_counts(sw * sh, 0);
 
         // 3. 初始任务划分
         std::vector<IndustryTask<T>> current_tasks;
@@ -215,8 +220,6 @@ namespace {
             size_t current_used = g_points_atomic_index.load(std::memory_order_relaxed);
             size_t tasks_count = current_tasks.size();
 
-            // 此时 current_used 实际上是 "上一轮用了多少"，因为我们还没清零
-            // 如果上一轮用量就已经很大了，那么这一轮肯定不够，得扩容
             bool need_grow = (current_used > buffer_capacity * 0.8) ||
                              ((buffer_capacity > current_used) && (buffer_capacity - current_used < tasks_count * 2));
 
@@ -235,16 +238,15 @@ namespace {
             }
 
             // =========================================================
-            // 2. 【关键修复】状态重置 (准备开始新一轮绘制)
+            // 2. 状态重置
+            // --- 修改：移除了 g_points_atomic_index.store(0) ---
+            // 这里的逻辑改为追加模式，不再每阶段重置缓冲区，保留粗糙阶段的点，
+            // 既解决了多函数覆盖问题，也避免了单函数阶段间的数据丢失。
+            // --- 修改：移除了 memset(pixel_counts) ---
+            // 保留上一阶段的像素标记，避免同一位置重复绘制。
             // =========================================================
 
-            // 重置索引：新点将覆盖旧点，而不是追加
-            g_points_atomic_index.store(0, std::memory_order_relaxed);
-
-            // 重置像素计数：清空画布占用标记
-            std::memset(pixel_counts.data(), 0, pixel_counts.size() * sizeof(uint8_t));
-
-            // 清空 TLS 任务缓冲
+            // 清空 TLS 任务缓冲 (这是每轮循环必须的)
             for (auto& local : next_tasks_tls) local.clear();
 
             // =========================================================
@@ -262,14 +264,17 @@ namespace {
             );
 
             // 同步进度给 JS
-            size_t points_count = g_points_atomic_index.load(std::memory_order_relaxed);
-            if (points_count > buffer_capacity) points_count = buffer_capacity;
+            size_t current_global_index = g_points_atomic_index.load(std::memory_order_relaxed);
+            if (current_global_index > buffer_capacity) current_global_index = buffer_capacity;
 
             #ifdef __EMSCRIPTEN__
             if (wasm_function_ranges_buffer.size() <= func_idx) {
                 wasm_function_ranges_buffer.resize(func_idx + 1);
             }
-            wasm_function_ranges_buffer[func_idx] = {0, (uint32_t)points_count};
+            // --- 修改：Range 计算逻辑，使用 start_global_index ---
+            // 确保每个函数的 Range 是正确的 [start, length]，而不是 [0, total]
+            size_t count = (current_global_index >= start_global_index) ? (current_global_index - start_global_index) : 0;
+            wasm_function_ranges_buffer[func_idx] = {(uint32_t)start_global_index, (uint32_t)count};
             #endif
             g_industry_stage_version.fetch_add(1, std::memory_order_release);
 
@@ -295,7 +300,7 @@ namespace {
         }
 
         auto total_dur = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - total_start).count();
-        std::cout << "--- [Industry] Finished. Total Time: " << total_dur << " ms ---" << std::endl;
+        // std::cout << "--- [Industry] Finished. Total Time: " << total_dur << " ms ---" << std::endl;
     }
 }
 
@@ -308,23 +313,37 @@ void process_single_industry_function(
     double screen_width, double screen_height,
     double offset_x, double offset_y, double zoom
 ) {
+    // --- 新增：加锁 ---
+    // 强制串行化执行，确保多个工业级函数按顺序写入全局连续缓冲区。
+    // 这解决了数据交错问题，使得 `FunctionRange` 可以正确表示一段连续的内存。
+    std::lock_guard<std::mutex> lock(g_industry_mutex);
+
     IndustrialRPN rpn = parse_industrial_rpn(industry_rpn);
+
+    // --- 新增：捕获当前全局写入位置作为本函数的起始位置 ---
+    size_t start_index = g_points_atomic_index.load(std::memory_order_relaxed);
 
     if (rpn.precision_bits == 0) {
         execute_industry_fast<double>(
-            rpn, func_idx, world_origin, wppx, wppy, screen_width, screen_height, offset_x, offset_y
+            rpn, func_idx, world_origin, wppx, wppy, screen_width, screen_height, offset_x, offset_y, start_index
         );
     } else {
         hp_float::default_precision(rpn.precision_bits);
         execute_industry_fast<hp_float>(
-            rpn, func_idx, world_origin, wppx, wppy, screen_width, screen_height, offset_x, offset_y
+            rpn, func_idx, world_origin, wppx, wppy, screen_width, screen_height, offset_x, offset_y, start_index
         );
     }
 
+    // 确保缓冲区 size 正确 (虽然 execute 内部有 resize，但为了保险)
     size_t final_count = g_points_atomic_index.load();
     if (final_count < wasm_final_contiguous_buffer.size()) {
-        wasm_final_contiguous_buffer.resize(final_count);
+        // 只有当 vector 比 atomic 大很多时才需要 resize 减小？
+        // 通常不需要 shrink，保持 capacity 即可
+        // wasm_final_contiguous_buffer.resize(final_count);
+        // 实际上 main.cpp 会处理最终 resize，这里可以不做，或者只 resize 确保数据可访问
+        if (final_count > wasm_final_contiguous_buffer.size()) wasm_final_contiguous_buffer.resize(final_count);
     }
 
+    // 发送完成信号 (数据已在 buffer 中)
     results_queue->push({func_idx, {}});
 }

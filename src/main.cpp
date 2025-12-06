@@ -285,7 +285,7 @@ int main() {
         }
 
         // 测试工业级函数 (此处为空)
-        std::vector<std::string> industry_rpn = {     "y x tan -;0;0.1;10;2"};
+        std::vector<std::string> industry_rpn = {     "y x tan -;0;0.1;10;2","y x tan -;0;0.1;10;2"};
 
         double offset_x = 0, offset_y = 0;
         double zoom = 0.1;
