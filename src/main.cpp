@@ -210,7 +210,7 @@ void start_industry_async(
         g_industry_stage_version.fetch_add(1, std::memory_order_release);
     });
 }
-
+void cancel_industry_calculation();
 // Getters
 int get_data_version() { return g_industry_stage_version.load(std::memory_order_acquire); }
 bool is_calculating() { return g_is_calculating.load(std::memory_order_acquire); }
@@ -234,6 +234,7 @@ EMSCRIPTEN_BINDINGS(my_module) {
     emscripten::function("get_points_size", &get_points_size);
     emscripten::function("get_function_ranges_ptr", &get_function_ranges_ptr);
     emscripten::function("get_function_ranges_size", &get_function_ranges_size);
+    emscripten::function("cancel_calculation", &cancel_industry_calculation);
 }
 
 #else
@@ -285,7 +286,7 @@ int main() {
         }
 
         // 测试工业级函数 (此处为空)
-        std::vector<std::string> industry_rpn = {     "y x tan -;0;0.1;10;2","y x tan -;0;0.1;10;2"};
+        std::vector<std::string> industry_rpn = {     "y x tan -;0;0.1;10;2"};
 
         double offset_x = 0, offset_y = 0;
         double zoom = 0.1;
