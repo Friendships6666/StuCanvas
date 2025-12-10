@@ -1,33 +1,32 @@
+// --- 文件路径: include/plot/plotIndustry.h ---
+
 #ifndef PLOTINDUSTRY_H
 #define PLOTINDUSTRY_H
 
 #include "../../pch.h"
 #include "plotCall.h"
+#include <oneapi/tbb/concurrent_queue.h>
 
 /**
- * @brief 处理单个工业级精度函数（高精度或双精度）的绘图任务。
+ * @brief 工业级精度绘图任务入口 (Windows Native 重构版)
  *
- * 此函数作为该功能模块的入口点。它会解析输入的RPN字符串以确定所需的计算精度，
- * 然后分派给相应的模板化实现（高精度hp_float或标准double）。
- * 函数内部实现了两阶段并行计算策略：
- * 1. 使用四叉树算法快速剔除没有函数曲线穿过的广阔区域。
- * 2. 对四叉树细分到像素级别的“叶节点”区域，启动大规模并行计算，
- *    在每个像素内部进行100x100的微区块扫描，以高精度定位曲线并生成点。
+ * 逻辑流程:
+ * 1. 解析 "RPN;Precision" 字符串。
+ * 2. 初始化 16x16 像素的网格任务。
+ * 3. 阶段一：使用普通区间算术筛选活跃网格。
+ * 4. 阶段二：使用扩展区间算术(MultiInterval)进行四叉树细分。
+ * 5. 将结果汇总到 results_queue。
  *
- * 计算完成后，所有生成的点将被打包成一个 FunctionResult 结构体，并推入线程安全的结果队列中。
- *
- * @param results_queue   指向线程安全队列的指针，用于将计算结果异步返回给主调用线程。
- * @param industry_rpn    一个特殊格式的字符串，格式为 "RPN表达式;精度"，例如 "x 2 pow y 2 pow - 1;256"。
- *                        如果精度为0，则使用双精度(double)进行计算。
- * @param func_idx        当前函数的唯一索引，用于在最终结果中标识这些点。
- * @param world_origin    当前屏幕视图左上角在世界坐标系中的位置。
- * @param wppx            世界坐标系中每个像素的宽度。
- * @param wppy            世界坐标系中每个像素的高度（通常为负值）。
- * @param screen_width    屏幕的总宽度（以像素为单位）。
- * @param screen_height   屏幕的总高度（以像素为单位）。
- * @param offset_x        视图的X轴偏移量（未使用，但保留以兼容接口）。
- * @param offset_y        视图的Y轴偏移量（未使用，但保留以兼容接口）。
- * @param zoom            视图的缩放级别（未使用，但保留以兼容接口）。
+ * @param results_queue  结果输出队列
+ * @param industry_rpn   "RPN公式;精度;..."
+ * @param func_idx       函数索引
+ * @param world_origin   世界坐标原点 (对应屏幕(0,0))
+ * @param wppx           X轴像素的世界宽度
+ * @param wppy           Y轴像素的世界高度 (通常为负)
+ * @param screen_width   屏幕宽度
+ * @param screen_height  屏幕高度
+ * @param offset_x       输出时需要减去的中心偏移 X
+ * @param offset_y       输出时需要减去的中心偏移 Y
  */
 void process_single_industry_function(
     oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
@@ -36,7 +35,7 @@ void process_single_industry_function(
     const Vec2& world_origin,
     double wppx, double wppy,
     double screen_width, double screen_height,
-    double offset_x, double offset_y, double zoom
+    double offset_x, double offset_y
 );
 
 #endif // PLOTINDUSTRY_H

@@ -88,17 +88,17 @@ void calculate_points_core(
         });
     }
 
-    // 7. 派发任务：工业级函数 (索引 N ~ N+M-1)
     for (size_t i = 0; i < total_industry; ++i) {
         task_group.run([&, i] {
             unsigned int func_idx = (unsigned int)(total_implicit + i);
+            // 修正：移除最后一个参数 zoom，匹配新的函数签名
             process_single_industry_function(
                 &results_queue,
                 industry_rpn_list[i],
                 func_idx,
                 world_origin, world_per_pixel_x, world_per_pixel_y,
                 screen_width, screen_height,
-                offset_x, offset_y, zoom
+                offset_x, offset_y
             );
         });
     }
