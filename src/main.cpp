@@ -288,7 +288,7 @@ int main() {
         // 测试工业级函数 (此处为空)
         // 对应方程: y - tan(x) = 0
         // 参数保持您原来的设置: 0(双精度); 0.01(最小粒度); 10(起始粒度); 2(步进)
-        std::vector<std::string> industry_rpn = { "y x tan -;0;0.1;10;2" };
+        std::vector<std::string> industry_rpn = { "y x tan -;0;0.1;2;2" };
 
         double offset_x = 0, offset_y = 0;
         double zoom = 0.1;
