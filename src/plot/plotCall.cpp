@@ -15,7 +15,8 @@ void calculate_points_core(
     AlignedVector<PointData>& out_points,
     AlignedVector<FunctionRange>& out_ranges,
     const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
-    const std::vector<std::string>& industry_rpn_list, // <--- 实现对应的新参数
+    const std::vector<std::string>& implicit_rpn_direct_list, // ★★★ 新增参数 ★★★
+    const std::vector<std::string>& industry_rpn_list,
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height
@@ -24,7 +25,9 @@ void calculate_points_core(
     out_points.clear();
     out_ranges.clear();
 
-    const size_t total_implicit = implicit_rpn_pairs.size();
+    const size_t count_pairs = implicit_rpn_pairs.size();
+    const size_t count_direct = implicit_rpn_direct_list.size();
+    const size_t total_implicit = count_pairs + count_direct; // 总隐函数数量
     const size_t total_industry = industry_rpn_list.size();
     const size_t total_functions = total_implicit + total_industry;
 
@@ -49,8 +52,7 @@ void calculate_points_core(
     double centered_x_0 = (0.0 * 2.0 - 1.0) * aspect_ratio;
     double centered_y_0 = -(0.0 * 2.0 - 1.0);
 
-    // 计算世界原点 (屏幕左上角对应的世界坐标，或者视图中心对应的世界坐标，取决于具体实现约定)
-    // 这里的实现逻辑是：视图中心对应的 offset_x/y
+    // 计算世界原点
     Vec2 world_origin = {
         (centered_x_0 / zoom) + offset_x,
         (centered_y_0 / zoom) + offset_y
@@ -60,19 +62,28 @@ void calculate_points_core(
     double world_per_pixel_x = (2.0 * aspect_ratio) / (zoom * screen_width);
     double world_per_pixel_y = -2.0 / (zoom * screen_height); // Y轴通常翻转
 
-    // 5. 解析 RPN (为了避免在并行任务中重复解析，可以选择预先解析，或者在任务内解析)
-    // 这里为了代码简洁和避免跨线程对象生命周期问题，我们在任务启动前解析隐函数
+    // 5. 解析 RPN
     std::vector<AlignedVector<RPNToken>> implicit_programs;
     std::vector<AlignedVector<RPNToken>> implicit_programs_check;
     implicit_programs.reserve(total_implicit);
     implicit_programs_check.reserve(total_implicit);
 
+    // 5.1 处理 Pairs (来自 JSON 中缀表达式转换)
     for (const auto& pair : implicit_rpn_pairs) {
         implicit_programs.emplace_back(parse_rpn(pair.first));
         implicit_programs_check.emplace_back(parse_rpn(pair.second));
     }
 
-    // 6. 派发任务：普通隐函数 (索引 0 ~ N-1)
+    // 5.2 处理 Direct List (直接输入的 RPN)
+    for (const auto& rpn_str : implicit_rpn_direct_list) {
+        auto tokens = parse_rpn(rpn_str);
+        implicit_programs.push_back(tokens);
+        // 对于直接输入的 RPN，如果没有显式区分 check/compute，则使用同一套逻辑
+        // (注：如果后续需要优化，可以扩展接口传入 check 版本)
+        implicit_programs_check.push_back(tokens);
+    }
+
+    // 6. 派发任务：所有普通隐函数 (索引 0 ~ total_implicit-1)
     for (size_t i = 0; i < total_implicit; ++i) {
         // 按值捕获必要的参数
         task_group.run([&, i] {
@@ -88,17 +99,18 @@ void calculate_points_core(
         });
     }
 
+    // 7. 派发任务：工业级函数 (索引 total_implicit ~ total_functions-1)
     for (size_t i = 0; i < total_industry; ++i) {
         task_group.run([&, i] {
             unsigned int func_idx = (unsigned int)(total_implicit + i);
-            // 修正：移除最后一个参数 zoom，匹配新的函数签名
             process_single_industry_function(
                 &results_queue,
                 industry_rpn_list[i],
                 func_idx,
                 world_origin, world_per_pixel_x, world_per_pixel_y,
                 screen_width, screen_height,
-                offset_x, offset_y
+                offset_x, offset_y,
+                zoom // ★★★ 传入 zoom 用于 Watchdog 校验 ★★★
             );
         });
     }
@@ -110,17 +122,14 @@ void calculate_points_core(
     for (size_t i = 0; i < total_functions; ++i) {
         FunctionResult res;
         // 阻塞等待结果，直到取到一个
+        // 对于 Industry 函数，如果被 Cancel 或完成，会推入一个空向量来解除这里的阻塞
         results_queue.pop(res);
-
-        // 简单的进度日志 (可选)
-        // std::cout << "Received points for function " << res.function_index
-        //           << ": " << res.points.size() << std::endl;
 
         // 将结果暂存到 map 中以按索引排序 (因为多线程完成顺序是不确定的)
         sorted_results[res.function_index] = std::move(res.points);
     }
 
-    // 9. 等待所有任务彻底结束 (理论上上面循环结束时任务基本都完了，但这步确保安全)
+    // 9. 等待所有任务彻底结束
     task_group.wait();
 
     // 10. 扁平化结果到 out_points 并构建 out_ranges
