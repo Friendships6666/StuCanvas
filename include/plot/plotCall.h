@@ -19,8 +19,9 @@ struct FunctionResult {
  * @param out_ranges [输出] 存储每个函数的点在 out_points 中的起始位置和长度。
  * @param implicit_rpn_pairs 普通隐函数列表 (pair: <计算RPN, 检查RPN>)。
  * @param implicit_rpn_direct_list 直接RPN字符串列表 (计算和检查相同)。
+ * @param explicit_rpn_list ★★★ 新增：普通显函数列表 (字符串: "x sin", "x x *") ★★★
  * @param industry_rpn_list 工业级隐函数列表 (string: "RPN;精度;参数...")。
- * @param industry_parametric_list ★★★ 新增：工业级参数方程列表 (string: "xRPN;yRPN;tMin;tMax;精度") ★★★
+ * @param industry_parametric_list 工业级参数方程列表
  * @param offset_x 视图中心 X 偏移。
  * @param offset_y 视图中心 Y 偏移。
  * @param zoom 缩放级别。
@@ -32,8 +33,9 @@ void calculate_points_core(
     AlignedVector<FunctionRange>& out_ranges,
     const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
     const std::vector<std::string>& implicit_rpn_direct_list,
+    const std::vector<std::string>& explicit_rpn_list, // <--- 新增
     const std::vector<std::string>& industry_rpn_list,
-    const std::vector<std::string>& industry_parametric_list, // <--- 新增参数
+    const std::vector<std::string>& industry_parametric_list,
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height

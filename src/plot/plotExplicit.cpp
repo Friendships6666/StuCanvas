@@ -2,121 +2,162 @@
 
 #include "../../pch.h"
 #include "../../include/plot/plotExplicit.h"
+#include "../../include/functions/functions.h"
 
-struct SubdivisionTask { Vec2 p1; Vec2 p2; int depth; };
+#include <oneapi/tbb/parallel_for.h>
+#include <vector>
+#include <cmath>
+#include <algorithm>
+#include <iterator>
 
+constexpr double SAMPLING_DENSITY = 1.0;
+constexpr int BLOCK_GRAIN_SIZE = 1024; // 稍微调大分块，适应 unrolling
 
-void process_explicit_chunk(
-    double y_min_world, double y_max_world,
-    double x_start, double x_end, const AlignedVector<RPNToken>& rpn_program,
-    double max_dist_sq, int max_depth,
-    oneapi::tbb::concurrent_vector<PointData>& all_points,
+// 强制内联辅助函数，避免函数调用开销
+template<typename T>
+FORCE_INLINE void write_batch_to_buffer(
+    const T& x_batch, const T& y_batch,
+    PointData*& out_ptr, int& valid_count,
     unsigned int func_idx)
 {
-    AlignedVector<SubdivisionTask> tasks_container;
-    tasks_container.reserve(max_depth * 2);
-    std::stack<SubdivisionTask, AlignedVector<SubdivisionTask>> tasks(std::move(tasks_container));
+    constexpr int batch_size = T::size;
+    alignas(T::arch_type::alignment()) double x_store[batch_size];
+    alignas(T::arch_type::alignment()) double y_store[batch_size];
 
-    AlignedVector<SubdivisionTask> active_tasks;
-    active_tasks.reserve(BATCH_SIZE);
+    x_batch.store_aligned(x_store);
+    y_batch.store_aligned(y_store);
 
-    auto is_culled = [&](double y1, double y2) {
-        if (y1 > y_max_world && y2 > y_max_world) return true;
-        if (y1 < y_min_world && y2 < y_min_world) return true;
-        return false;
-    };
-
-    // 更新调用
-    double y_start = evaluate_rpn<double>(rpn_program, x_start);
-    double y_end = evaluate_rpn<double>(rpn_program, x_end);
-
-    if (std::isfinite(y_start) && std::isfinite(y_end)) {
-        if (!is_culled(y_start, y_end)) {
-            all_points.emplace_back(PointData{ {x_start, y_start}, func_idx });
-            tasks.push({ {x_start, y_start}, {x_end, y_end}, 0 });
-        }
-    } else if (std::isfinite(y_start)) {
-        all_points.emplace_back(PointData{ {x_start, y_start}, func_idx });
+    // 编译器会自动将此循环展开为 movups/movntps
+    for (int k = 0; k < batch_size; ++k) {
+        // 利用指针直接写入，避免数组索引乘法
+        out_ptr->position.x = x_store[k];
+        out_ptr->position.y = y_store[k];
+        out_ptr->function_index = func_idx;
+        out_ptr++;
     }
+    valid_count += batch_size;
+}
 
-    while (true) {
-        while (active_tasks.size() < BATCH_SIZE && !tasks.empty()) {
-            active_tasks.push_back(tasks.top());
-            tasks.pop();
+void process_explicit_chunk(
+    double /*y_min_world*/, double /*y_max_world*/,
+    double x_start_world, double x_end_world,
+    const AlignedVector<RPNToken>& rpn_program,
+    oneapi::tbb::concurrent_vector<PointData>& all_points,
+    unsigned int func_idx,
+    double screen_width
+) {
+    int total_samples = static_cast<int>(std::ceil(screen_width * SAMPLING_DENSITY));
+    if (total_samples <= 0) total_samples = 100;
+
+    double step_x = (x_end_world - x_start_world) / static_cast<double>(total_samples);
+
+    int num_blocks = (total_samples + BLOCK_GRAIN_SIZE - 1) / BLOCK_GRAIN_SIZE;
+    std::vector<std::vector<PointData>> block_buffers(num_blocks);
+
+    oneapi::tbb::parallel_for(0, num_blocks, [&](int block_idx) {
+        int start_idx = block_idx * BLOCK_GRAIN_SIZE;
+        int count = std::min(BLOCK_GRAIN_SIZE, total_samples - start_idx);
+
+        auto& local_buffer = block_buffers[block_idx];
+        local_buffer.resize(count);
+        PointData* out_ptr = local_buffer.data();
+        int valid_count = 0;
+
+        int i = 0;
+        constexpr int batch_size = batch_type::size;
+        // 2x Unrolling: 一次处理两个 batch
+        constexpr int unroll_factor = 2;
+        constexpr int step_stride = batch_size * unroll_factor;
+
+        const batch_type step_vec = batch_type(step_x);
+        const batch_type step_block_vec = batch_type(step_x * step_stride); // 用于外层循环步进
+        const batch_type step_offset_vec = batch_type(step_x * batch_size); // 用于 Batch 2 的偏移
+        const batch_type index_vec = get_index_vec();
+
+        // 初始 X 向量
+        batch_type x_batch_1 = batch_type(x_start_world) +
+                               (batch_type((double)start_idx) + index_vec) * step_vec;
+        batch_type x_batch_2 = x_batch_1 + step_offset_vec;
+
+        // --- SIMD ILP 路径 ---
+        // 每次循环处理 2 * batch_size 个点 (例如 AVX2 下是 8 个 double)
+        for (; i + step_stride <= count; i += step_stride) {
+
+            // 1. 并行发射计算指令 (打破数据依赖链)
+            // CPU 可以乱序执行这两组计算
+            batch_type y_batch_1 = evaluate_rpn<batch_type>(rpn_program, x_batch_1);
+            batch_type y_batch_2 = evaluate_rpn<batch_type>(rpn_program, x_batch_2);
+
+            // 2. 并行检查掩码
+            auto invalid_1 = xs::isnan(y_batch_1) | xs::isinf(y_batch_1);
+            auto invalid_2 = xs::isnan(y_batch_2) | xs::isinf(y_batch_2);
+
+            // 3. Fast Path: 两组都有效 (最常见情况)
+            if (xs::none(invalid_1) && xs::none(invalid_2)) {
+                write_batch_to_buffer(x_batch_1, y_batch_1, out_ptr, valid_count, func_idx);
+                write_batch_to_buffer(x_batch_2, y_batch_2, out_ptr, valid_count, func_idx);
+            }
+            else {
+                // 慢速路径：回退到逐个处理
+                // 处理 Batch 1
+                if (xs::none(invalid_1)) {
+                    write_batch_to_buffer(x_batch_1, y_batch_1, out_ptr, valid_count, func_idx);
+                } else if (!xs::all(invalid_1)) {
+                     // 部分有效
+                     alignas(batch_type::arch_type::alignment()) double x_s[batch_size], y_s[batch_size];
+                     x_batch_1.store_aligned(x_s); y_batch_1.store_aligned(y_s);
+                     for(int k=0; k<batch_size; ++k) {
+                         if(std::isfinite(y_s[k])) {
+                             out_ptr->position.x = x_s[k]; out_ptr->position.y = y_s[k];
+                             out_ptr->function_index = func_idx; out_ptr++; valid_count++;
+                         }
+                     }
+                }
+
+                // 处理 Batch 2
+                if (xs::none(invalid_2)) {
+                    write_batch_to_buffer(x_batch_2, y_batch_2, out_ptr, valid_count, func_idx);
+                } else if (!xs::all(invalid_2)) {
+                     alignas(batch_type::arch_type::alignment()) double x_s[batch_size], y_s[batch_size];
+                     x_batch_2.store_aligned(x_s); y_batch_2.store_aligned(y_s);
+                     for(int k=0; k<batch_size; ++k) {
+                         if(std::isfinite(y_s[k])) {
+                             out_ptr->position.x = x_s[k]; out_ptr->position.y = y_s[k];
+                             out_ptr->function_index = func_idx; out_ptr++; valid_count++;
+                         }
+                     }
+                }
+            }
+
+            // 更新 X 坐标
+            x_batch_1 += step_block_vec;
+            x_batch_2 += step_block_vec;
         }
-        if (active_tasks.empty()) break;
 
-        if (active_tasks.size() == BATCH_SIZE) {
-            alignas(batch_type::arch_type::alignment()) std::array<double, BATCH_SIZE> x1, y1, x2, y2, depth;
-            for (size_t i = 0; i < BATCH_SIZE; ++i) {
-                x1[i] = active_tasks[i].p1.x; y1[i] = active_tasks[i].p1.y;
-                x2[i] = active_tasks[i].p2.x; y2[i] = active_tasks[i].p2.y;
-                depth[i] = static_cast<double>(active_tasks[i].depth);
-            }
-
-            const batch_type x1_b = xs::load_aligned(x1.data());
-            const batch_type y1_b = xs::load_aligned(y1.data());
-            const batch_type x2_b = xs::load_aligned(x2.data());
-            const batch_type y2_b = xs::load_aligned(y2.data());
-            const batch_type depth_b = xs::load_aligned(depth.data());
-
-            const batch_type dx_b = x2_b - x1_b;
-            const batch_type dy_b = y2_b - y1_b;
-            const batch_type dist_sq_b = dx_b * dx_b + dy_b * dy_b;
-
-            const auto subdivide_mask = (dist_sq_b > batch_type(max_dist_sq)) & (depth_b < batch_type(max_depth));
-
-            if (xs::none(subdivide_mask)) {
-                for (const auto& task : active_tasks) {
-                    all_points.emplace_back(PointData{task.p2, func_idx});
-                }
-            } else {
-                const batch_type x_mid_b = x1_b + dx_b * 0.5;
-                // 更新调用
-                const batch_type y_mid_b = evaluate_rpn<batch_type>(rpn_program, x_mid_b);
-                const auto is_finite_mask = !xs::isinf(y_mid_b);
-
-                for (size_t i = 0; i < BATCH_SIZE; ++i) {
-                    if (subdivide_mask.get(i) && is_finite_mask.get(i)) {
-                        Vec2 p_mid = {x_mid_b.get(i), y_mid_b.get(i)};
-                        if (!is_culled(active_tasks[i].p1.y, p_mid.y)) {
-                            tasks.push({ active_tasks[i].p1, p_mid, active_tasks[i].depth + 1 });
-                        }
-                        if (!is_culled(p_mid.y, active_tasks[i].p2.y)) {
-                            tasks.push({ p_mid, active_tasks[i].p2, active_tasks[i].depth + 1 });
-                        }
-                    } else {
-                        all_points.emplace_back(PointData{active_tasks[i].p2, func_idx});
-                    }
-                }
-            }
-        } else {
-            for (const auto& task : active_tasks) {
-                double dx = task.p2.x - task.p1.x, dy = task.p2.y - task.p1.y;
-                double dist_sq = dx * dx + dy * dy;
-
-                if (dist_sq > max_dist_sq && task.depth < max_depth) {
-                    double x_mid = task.p1.x + dx / 2.0;
-                    // 更新调用
-                    double y_mid = evaluate_rpn<double>(rpn_program, x_mid);
-
-                    if (!std::isfinite(y_mid)) {
-                        all_points.emplace_back(PointData{task.p2, func_idx});
-                        continue;
-                    }
-
-                    Vec2 p_mid = {x_mid, y_mid};
-                    if (!is_culled(task.p1.y, p_mid.y)) {
-                        tasks.push({ task.p1, p_mid, task.depth + 1 });
-                    }
-                    if (!is_culled(p_mid.y, task.p2.y)) {
-                        tasks.push({ p_mid, task.p2, task.depth + 1 });
-                    }
-                } else {
-                    all_points.emplace_back(PointData{task.p2, func_idx});
-                }
+        // --- 标量尾部处理 ---
+        for (; i < count; ++i) {
+            double x = x_start_world + (start_idx + i) * step_x;
+            double y = evaluate_rpn<double>(rpn_program, x);
+            if (std::isfinite(y)) {
+                out_ptr->position.x = x; out_ptr->position.y = y;
+                out_ptr->function_index = func_idx; out_ptr++; valid_count++;
             }
         }
-        active_tasks.clear();
+
+        local_buffer.resize(valid_count);
+    });
+
+    // 4. 合并结果
+    size_t total_valid_points = 0;
+    for (const auto& buf : block_buffers) total_valid_points += buf.size();
+
+    auto it = all_points.grow_by(total_valid_points);
+    size_t offset = 0;
+
+    for (auto& buf : block_buffers) {
+        if (!buf.empty()) {
+            std::move(buf.begin(), buf.end(), it + offset);
+            offset += buf.size();
+        }
     }
 }
