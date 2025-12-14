@@ -42,7 +42,8 @@ constexpr size_t INITIAL_BUFFER_CAPACITY = 200000;
 struct CalculationRequest {
     std::vector<std::string> implicit_rpn_list;        // Pairs (中缀转RPN)
     std::vector<std::string> implicit_rpn_direct_list; // Direct (直接RPN)
-    std::vector<std::string> explicit_rpn_list;        // ★★★ 新增：普通显函数 (y=f(x)) ★★★
+    std::vector<std::string> explicit_rpn_list;        // 普通显函数 (y=f(x))
+    std::vector<std::string> explicit_parametric_list; // ★★★ 新增：普通参数方程 (x(t), y(t)) ★★★
     std::vector<std::string> industry_rpn_list;        // 工业级隐函数
     std::vector<std::string> industry_parametric_list; // 工业级参数方程
     double offset_x;
@@ -52,11 +53,12 @@ struct CalculationRequest {
     double screen_height;
 };
 
-// 前向声明
+// 前向声明 (注意参数列表更新)
 void calculate_points_internal(
     const std::vector<std::string>& implicit_rpn_list,
     const std::vector<std::string>& implicit_rpn_direct_list,
-    const std::vector<std::string>& explicit_rpn_list, // <--- 新增参数
+    const std::vector<std::string>& explicit_rpn_list,
+    const std::vector<std::string>& explicit_parametric_list, // <--- 新增参数
     const std::vector<std::string>& industry_rpn_list,
     const std::vector<std::string>& industry_parametric_list,
     double offset_x, double offset_y,
@@ -172,7 +174,8 @@ private:
                         calculate_points_internal(
                             req.implicit_rpn_list,
                             req.implicit_rpn_direct_list,
-                            req.explicit_rpn_list, // <--- 传入显函数列表
+                            req.explicit_rpn_list,
+                            req.explicit_parametric_list, // <--- 传入
                             req.industry_rpn_list,
                             req.industry_parametric_list,
                             req.offset_x, req.offset_y,
@@ -226,7 +229,8 @@ void ensure_manager() {
 void calculate_points_internal(
     const std::vector<std::string>& implicit_rpn_list,
     const std::vector<std::string>& implicit_rpn_direct_list,
-    const std::vector<std::string>& explicit_rpn_list, // <--- 新增
+    const std::vector<std::string>& explicit_rpn_list,
+    const std::vector<std::string>& explicit_parametric_list, // <--- 新增参数
     const std::vector<std::string>& industry_rpn_list,
     const std::vector<std::string>& industry_parametric_list,
     double offset_x, double offset_y,
@@ -250,36 +254,31 @@ void calculate_points_internal(
 
         // 工业模式下，普通函数也需要计算并合并
         AlignedVector<PointData> ordered_points;
-        if (!implicit_rpn_pairs.empty() || !implicit_rpn_direct_list.empty() || !explicit_rpn_list.empty()) {
+        if (!implicit_rpn_pairs.empty() || !implicit_rpn_direct_list.empty() ||
+            !explicit_rpn_list.empty() || !explicit_parametric_list.empty()) {
             ordered_points.reserve(INITIAL_BUFFER_CAPACITY / 2);
         }
 
+        // 注意：calculate_points_core 的签名需要同步更新 (在 plotCall.h/.cpp 中)
+        // 这里假设 plotCall 已经更新以接受 explicit_parametric_list
         calculate_points_core(
             ordered_points,
             wasm_function_ranges_buffer,
             implicit_rpn_pairs,
             implicit_rpn_direct_list,
-            explicit_rpn_list, // <--- 传入
+            explicit_rpn_list,
+            explicit_parametric_list, // <--- 传入
             industry_rpn_list,
             industry_parametric_list,
             offset_x, offset_y, zoom, screen_width, screen_height
         );
 
         // 如果有普通函数点，追加到全局 buffer
-        // 注意：工业函数点已经在 process_single_industry_function 中直接写入全局 buffer 或通过回调处理
-        // 这里的逻辑主要服务于普通函数结果的回填
-
-        // 简单处理：将 calculate_points_core 的结果视为全集
-        // 但根据之前的 industry 设计，工业点是异步多次回调写入的。
-        // 这里为了简化，假设 core 此时返回的是已完成的普通点集合。
-        // 工业点通过回调机制独立更新。
-
-        // 如果是混合模式，通常普通点作为背景一次性渲染，工业点层叠。
-        // 这里我们将 ordered_points 视为普通层的输出。
+        // 工业点通过回调机制独立更新，这里主要服务于普通函数结果的回填
         wasm_final_contiguous_buffer.assign(ordered_points.begin(), ordered_points.end());
     }
     else {
-        // --- 纯普通模式 (隐函数 + 显函数) ---
+        // --- 纯普通模式 (隐函数 + 显函数 + 参数方程) ---
         AlignedVector<PointData> ordered_points;
         ordered_points.reserve(INITIAL_BUFFER_CAPACITY);
         std::vector<std::string> empty_industry;
@@ -290,7 +289,8 @@ void calculate_points_internal(
             wasm_function_ranges_buffer,
             implicit_rpn_pairs,
             implicit_rpn_direct_list,
-            explicit_rpn_list, // <--- 传入
+            explicit_rpn_list,
+            explicit_parametric_list, // <--- 传入
             empty_industry,
             empty_parametric,
             offset_x, offset_y, zoom, screen_width, screen_height
@@ -325,10 +325,12 @@ void set_js_callback(emscripten::val callback) {
 }
 
 // 同步计算接口 (普通模式)
+// 更新接口：增加 explicit_parametric_list
 void calculate_implicit_sync(
     const std::vector<std::string>& implicit_rpn_list,
     const std::vector<std::string>& implicit_rpn_direct_list,
-    const std::vector<std::string>& explicit_rpn_list, // <--- 新增显函数列表
+    const std::vector<std::string>& explicit_rpn_list,
+    const std::vector<std::string>& explicit_parametric_list, // <--- 新增
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height
@@ -342,7 +344,8 @@ void calculate_implicit_sync(
     calculate_points_internal(
         implicit_rpn_list,
         implicit_rpn_direct_list,
-        explicit_rpn_list, // Pass
+        explicit_rpn_list,
+        explicit_parametric_list, // Pass
         empty_industry,
         empty_parametric,
         offset_x, offset_y, zoom, screen_width, screen_height
@@ -408,15 +411,36 @@ int main() {
         // 2. 普通显函数测试: y = sin(x) * 10
         // RPN: "x sin 10 *"
         std::vector<std::string> explicit_rpn = {
-            "x sin 101 *"
+
         };
 
-        // 3. 工业函数 (空)
+        // 3. ★★★ 普通参数方程测试 ★★★
+        // 蝴蝶曲线 (Butterfly Curve)
+        // x = sin(t) * (e^cos(t) - 2cos(4t) - sin(t/12)^5)
+        // y = cos(t) * (e^cos(t) - 2cos(4t) - sin(t/12)^5)
+        // t 范围 [0, 12pi]
+
+        // 简化版测试: 螺旋线
+        // x = t * cos(t)
+        // y = t * sin(t)
+        // t: [0, 20]
+
+        // 格式: "x_rpn;y_rpn;t_min;t_max"
+        std::string spiral_parametric =
+            "_t_ _t_ cos *;"  // x = t * cos(t)
+            "_t_ _t_ sin *;"  // y = t * sin(t)
+            "0;2000";           // t in [0, 20]
+
+        std::vector<std::string> explicit_parametric = {
+            spiral_parametric
+        };
+
+        // 4. 工业函数 (空)
         std::vector<std::string> industry_rpn = { };
         std::vector<std::string> industry_parametric = { };
 
         double offset_x = 0, offset_y = 0;
-        double zoom = 0.1;
+        double zoom = 0.01;
         double screen_width = 2560, screen_height = 1600;
 
         std::cout << "--- Native EXE: 开始计算... ---" << std::endl;
@@ -428,7 +452,8 @@ int main() {
         calculate_points_internal(
             implicit_rpn,
             std::vector<std::string>{}, // direct
-            explicit_rpn,               // <--- 传入显函数
+            explicit_rpn,
+            explicit_parametric,        // <--- 传入普通参数方程
             industry_rpn,
             industry_parametric,
             offset_x, offset_y, zoom, screen_width, screen_height
@@ -447,7 +472,7 @@ int main() {
             std::cout << "Func " << i << ": Start=" << r.start_index << ", Count=" << r.point_count << std::endl;
         }
 
-        // 导出点数据到文件以便绘图检查
+        // 导出点数据到文件
         std::ofstream outfile("points.txt");
         if (outfile.is_open()) {
             outfile << std::fixed << std::setprecision(6);

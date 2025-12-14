@@ -4,7 +4,8 @@
 #include "../../include/plot/plotCall.h"
 #include "../../include/CAS/RPN/RPN.h"
 #include "../../include/plot/plotImplicit.h"
-#include "../../include/plot/plotExplicit.h" // ★★★ 包含显函数头文件 ★★★
+#include "../../include/plot/plotExplicit.h"
+#include "../../include/plot/plotParametric.h" // ★★★ 包含普通参数方程头文件 ★★★
 #include "../../include/plot/plotIndustry.h"
 #include "../../include/plot/plotIndustryParametric.h"
 
@@ -13,13 +14,44 @@
 #include <oneapi/tbb/global_control.h>
 #include <map>
 #include <algorithm> // for std::min, std::max
+#include <sstream>
+
+// 辅助：解析 "x_rpn;y_rpn;t_min;t_max" 格式
+struct ExplicitParamConfig {
+    std::string x_rpn;
+    std::string y_rpn;
+    double t_min = 0.0;
+    double t_max = 1.0;
+};
+
+ExplicitParamConfig parse_explicit_param_config(const std::string& input) {
+    ExplicitParamConfig config;
+    std::vector<std::string> parts;
+    std::stringstream ss(input);
+    std::string item;
+    while(std::getline(ss, item, ';')) {
+        parts.push_back(item);
+    }
+    if (parts.size() >= 2) {
+        config.x_rpn = parts[0];
+        config.y_rpn = parts[1];
+    }
+    if (parts.size() >= 4) {
+        try {
+            config.t_min = std::stod(parts[2]);
+            config.t_max = std::stod(parts[3]);
+        } catch(...) {}
+    }
+    return config;
+}
 
 void calculate_points_core(
     AlignedVector<PointData>& out_points,
     AlignedVector<FunctionRange>& out_ranges,
     const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
     const std::vector<std::string>& implicit_rpn_direct_list,
-    const std::vector<std::string>& explicit_rpn_list, // <--- 新增
+    const std::vector<std::string>& explicit_rpn_list,
+    const std::vector<std::string>& explicit_parametric_list, // <--- 新增参数实现
     const std::vector<std::string>& industry_rpn_list,
     const std::vector<std::string>& industry_parametric_list,
     double offset_x, double offset_y,
@@ -32,12 +64,16 @@ void calculate_points_core(
 
     const size_t count_pairs = implicit_rpn_pairs.size();
     const size_t count_direct = implicit_rpn_direct_list.size();
-    const size_t count_explicit = explicit_rpn_list.size(); // <--- 新增
+    const size_t count_explicit = explicit_rpn_list.size();
+    const size_t count_exp_parametric = explicit_parametric_list.size(); // <--- 新增计数
 
+    // 索引计算
     const size_t total_implicit = count_pairs + count_direct;
-    // 显函数索引接在普通隐函数之后
     const size_t explicit_start_idx = total_implicit;
-    const size_t total_normal = total_implicit + count_explicit;
+    const size_t exp_parametric_start_idx = explicit_start_idx + count_explicit; // <--- 新增起始索引
+
+    // 普通模式总数
+    const size_t total_normal = exp_parametric_start_idx + count_exp_parametric;
 
     const size_t total_industry_implicit = industry_rpn_list.size();
     const size_t total_industry_parametric = industry_parametric_list.size();
@@ -47,20 +83,18 @@ void calculate_points_core(
 
     if (total_functions == 0) return;
 
-    // 2. 配置 TBB
+    // 2. 配置 TBB 并发控制
     const auto thread_count = std::thread::hardware_concurrency();
     oneapi::tbb::global_control control(oneapi::tbb::global_control::max_allowed_parallelism, thread_count);
 
-    // 3. 准备队列和任务组
+    // 3. 准备结果队列和任务组
     oneapi::tbb::concurrent_bounded_queue<FunctionResult> results_queue;
     results_queue.set_capacity(total_functions * 2);
 
     oneapi::tbb::task_group task_group;
 
-    // 4. 计算世界坐标系参数
+    // 4. 计算世界坐标系参数 (用于显函数和隐函数)
     double aspect_ratio = screen_width / screen_height;
-    // 屏幕左上角在归一化设备坐标中通常是 (-1, 1) 或者根据具体投影矩阵
-    // 这里沿用原有的逻辑推导
     double centered_x_0 = (0.0 * 2.0 - 1.0) * aspect_ratio;
     double centered_y_0 = -(0.0 * 2.0 - 1.0);
 
@@ -72,21 +106,17 @@ void calculate_points_core(
     double world_per_pixel_x = (2.0 * aspect_ratio) / (zoom * screen_width);
     double world_per_pixel_y = -2.0 / (zoom * screen_height);
 
-    // --- 计算屏幕边界的世界坐标 (用于显函数) ---
-    // x_start: 屏幕左侧 (pixel 0)
-    // x_end:   屏幕右侧 (pixel width)
+    // 计算屏幕边界的世界坐标
     double x_start_world = world_origin.x;
     double x_end_world = world_origin.x + screen_width * world_per_pixel_x;
-
-    // y_min/max: 屏幕顶部和底部
-    // 注意 wppy 通常是负数（屏幕Y向下，世界Y向上），所以 origin.y 是顶部(Top/Max)，加 height*wppy 是底部(Bottom/Min)
     double y_top_world = world_origin.y;
     double y_bottom_world = world_origin.y + screen_height * world_per_pixel_y;
-
     double y_min_world = std::min(y_top_world, y_bottom_world);
     double y_max_world = std::max(y_top_world, y_bottom_world);
 
-    // 5. 解析 RPN (普通隐函数)
+    // 5. 解析 RPN (预处理)
+
+    // 5.1 隐函数
     std::vector<AlignedVector<RPNToken>> implicit_programs;
     std::vector<AlignedVector<RPNToken>> implicit_programs_check;
     implicit_programs.reserve(total_implicit);
@@ -102,18 +132,37 @@ void calculate_points_core(
         implicit_programs_check.push_back(tokens);
     }
 
-    // 6. 解析 RPN (普通显函数) ★★★
+    // 5.2 显函数
     std::vector<AlignedVector<RPNToken>> explicit_programs;
     explicit_programs.reserve(count_explicit);
     for (const auto& rpn_str : explicit_rpn_list) {
         explicit_programs.emplace_back(parse_rpn(rpn_str));
     }
 
+    // 5.3 普通参数方程 (需要解析配置字符串)
+    struct ParsedParametric {
+        AlignedVector<RPNToken> x_prog;
+        AlignedVector<RPNToken> y_prog;
+        double t_min;
+        double t_max;
+    };
+    std::vector<ParsedParametric> exp_parametric_data;
+    exp_parametric_data.reserve(count_exp_parametric);
+    for (const auto& config_str : explicit_parametric_list) {
+        auto conf = parse_explicit_param_config(config_str);
+        exp_parametric_data.push_back({
+            parse_rpn(conf.x_rpn),
+            parse_rpn(conf.y_rpn),
+            conf.t_min,
+            conf.t_max
+        });
+    }
+
     // =========================================================
-    // 7. 派发任务
+    // 6. 派发任务
     // =========================================================
 
-    // 7.1 普通隐函数
+    // 6.1 普通隐函数
     for (size_t i = 0; i < total_implicit; ++i) {
         task_group.run([&, i] {
             process_implicit_adaptive(
@@ -128,44 +177,11 @@ void calculate_points_core(
         });
     }
 
-    // 7.2 ★★★ 普通显函数 ★★★
+    // 6.2 普通显函数
     for (size_t i = 0; i < count_explicit; ++i) {
         task_group.run([&, i] {
             unsigned int func_idx = (unsigned int)(explicit_start_idx + i);
-
-            // 显函数使用 concurrent_vector 来接收结果
             oneapi::tbb::concurrent_vector<PointData> points;
-
-            // 调用高性能显函数处理模块
-            // 注意：这里 offset_x/y 的处理逻辑是在 plotExplicit 内部通过 x_start_world 蕴含的
-            // 最终输出的点是 World 坐标，需要减去 offset 转换为相对坐标供前端渲染？
-            // 不，根据其他模块逻辑，PointData.position 通常存储的是“相对于 offset 的坐标”或者“世界坐标”。
-            // 检查 plotImplicit: intersection.x -= offset_x;
-            // 检查 plotIndustry: pt.position.x = cast_to_double(task.x) - offset_x;
-            // 所以，Points 输出必须是 (WorldPos - Offset)。
-
-            // plotExplicit 内部生成的是 World 坐标 (x_start + i*step)。
-            // 我们需要在 plotExplicit 内部或者这里减去 offset。
-            // 为了保持 plotExplicit 的通用性（纯数学计算），我们最好修改 plotExplicit 让其输出 World 坐标，
-            // 但目前的 plotExplicit 实现直接写入 all_points。
-
-            // === 修正策略 ===
-            // plotExplicit.cpp 中: raw_buffer[i].position.x = x; (这是世界坐标)
-            // 我们需要在存入 all_points 前减去 offset。
-            // 考虑到性能，最好在 plotExplicit 内部传入 offset_x/y 进行减法。
-            // 但如果不修改 plotExplicit 接口，我们需要在这里后处理。
-            // 鉴于 plotExplicit 是新写的，我们假设它生成的是世界坐标。
-            // 为了统一，我们暂时在下面做一次变换，或者修改 plotExplicit。
-            //
-            // 让我们采用最高效的方法：修改 plotExplicit 的调用，传入 offset，让其内部直接减。
-            // 但上一步 plotExplicit.h 没加 offset 参数。
-            //
-            // 变通：我们在 x_start_world 传入时就传入 (x_start_world - offset_x)?
-            // 不行，x 需要代入 RPN 计算 y。RPN 里的 x 是世界坐标。
-            //
-            // 所以：必须在 PointData 写入时减去 offset。
-            // 为了不再次修改 plotExplicit.h (假设已定稿)，我们在这里做一个后处理。
-            // 或者，由于我们是在 task 中运行，这点后处理开销可以接受。
 
             process_explicit_chunk(
                 y_min_world, y_max_world,
@@ -176,7 +192,7 @@ void calculate_points_core(
                 screen_width
             );
 
-            // 将 concurrent_vector 转为 vector 并进行坐标偏移修正
+            // 坐标修正：转换为相对坐标
             std::vector<PointData> res_vec;
             res_vec.reserve(points.size());
             for(const auto& p : points) {
@@ -185,7 +201,38 @@ void calculate_points_core(
                 new_p.position.y -= offset_y;
                 res_vec.push_back(new_p);
             }
+            results_queue.push({func_idx, std::move(res_vec)});
+        });
+    }
 
+    // 6.3 ★★★ 普通参数方程 ★★★
+    for (size_t i = 0; i < count_exp_parametric; ++i) {
+        task_group.run([&, i, exp_parametric_start_idx] {
+            unsigned int func_idx = (unsigned int)(exp_parametric_start_idx + i);
+            const auto& data = exp_parametric_data[i];
+
+            oneapi::tbb::concurrent_vector<PointData> points;
+
+            // 调用高性能参数方程处理模块
+            process_parametric_chunk(
+                data.x_prog,
+                data.y_prog,
+                data.t_min,
+                data.t_max,
+                points,
+                func_idx
+            );
+
+            // 坐标修正：转换为相对坐标
+            // process_parametric_chunk 生成的是纯数学坐标 (World)，需要减去 offset
+            std::vector<PointData> res_vec;
+            res_vec.reserve(points.size());
+            for(const auto& p : points) {
+                PointData new_p = p;
+                new_p.position.x -= offset_x;
+                new_p.position.y -= offset_y;
+                res_vec.push_back(new_p);
+            }
             results_queue.push({func_idx, std::move(res_vec)});
         });
     }
@@ -193,7 +240,7 @@ void calculate_points_core(
     // 索引偏移量更新
     size_t industry_start_idx = total_normal;
 
-    // 7.3 工业级隐函数
+    // 6.4 工业级隐函数
     for (size_t i = 0; i < total_industry_implicit; ++i) {
         task_group.run([&, i, industry_start_idx] {
             unsigned int func_idx = (unsigned int)(industry_start_idx + i);
@@ -209,11 +256,11 @@ void calculate_points_core(
         });
     }
 
-    // 7.4 工业级参数方程
-    size_t parametric_start_idx = industry_start_idx + total_industry_implicit;
+    // 6.5 工业级参数方程
+    size_t industry_parametric_start_idx = industry_start_idx + total_industry_implicit;
     for (size_t i = 0; i < total_industry_parametric; ++i) {
-        task_group.run([&, i, parametric_start_idx] {
-            unsigned int func_idx = (unsigned int)(parametric_start_idx + i);
+        task_group.run([&, i, industry_parametric_start_idx] {
+            unsigned int func_idx = (unsigned int)(industry_parametric_start_idx + i);
             process_industry_parametric(
                 &results_queue,
                 industry_parametric_list[i],
@@ -225,7 +272,7 @@ void calculate_points_core(
         });
     }
 
-    // 8. 收集结果
+    // 7. 收集结果
     std::map<unsigned int, std::vector<PointData>> sorted_results;
     for (size_t i = 0; i < total_functions; ++i) {
         FunctionResult res;
@@ -233,10 +280,10 @@ void calculate_points_core(
         sorted_results[res.function_index] = std::move(res.points);
     }
 
-    // 9. 等待结束
+    // 8. 等待结束
     task_group.wait();
 
-    // 10. 扁平化
+    // 9. 扁平化结果
     out_ranges.resize(total_functions);
     size_t total_points_count = 0;
     for (const auto& kv : sorted_results) total_points_count += kv.second.size();
