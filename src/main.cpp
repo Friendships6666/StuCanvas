@@ -14,7 +14,7 @@
 #include <cstring>
 #include <algorithm>
 #include <iostream>
-#include <fstream>
+#include <fstream> // 确保包含文件流头文件
 #include <iomanip>
 #include <optional>
 #include <vector>
@@ -40,9 +40,10 @@ constexpr size_t INITIAL_BUFFER_CAPACITY = 200000;
 // =========================================================
 
 struct CalculationRequest {
-    std::vector<std::string> implicit_rpn_list;       // 对应 Pairs (中缀转RPN)
+    std::vector<std::string> implicit_rpn_list;        // 对应 Pairs (中缀转RPN)
     std::vector<std::string> implicit_rpn_direct_list; // 对应 Direct (直接RPN)
-    std::vector<std::string> industry_rpn_list;
+    std::vector<std::string> industry_rpn_list;        // 工业级隐函数
+    std::vector<std::string> industry_parametric_list; // ★★★ 新增：工业级参数方程 ★★★
     double offset_x;
     double offset_y;
     double zoom;
@@ -55,6 +56,7 @@ void calculate_points_internal(
     const std::vector<std::string>& implicit_rpn_list,
     const std::vector<std::string>& implicit_rpn_direct_list,
     const std::vector<std::string>& industry_rpn_list,
+    const std::vector<std::string>& industry_parametric_list, // <--- 新增参数
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height
@@ -90,7 +92,6 @@ public:
 
         // ★★★ 核心 1：更新全局 Watchdog 目标 ★★★
         // 只有主线程（UI线程）有权设置目标。后台线程只能读。
-        // 这会让正在运行的 plotIndustry 线程检测到参数不一致，毫秒级内自动 return。
         UpdateTargetViewState(
             req.offset_x,
             req.offset_y,
@@ -178,17 +179,13 @@ private:
                 if (!skip) {
                     // ★★★ 重要：不要在这里调用 UpdateTargetViewState ★★★
                     // 目标状态已经在 submit_task 中由主线程设置了。
-                    // 后台线程只负责执行，不负责修改目标。这避免了时序竞争导致的“回滚旧视图”bug。
-
-                    std::vector<std::string> empty_implicit;
-                    // 如果需要在异步模式下计算普通隐函数，可以将 req.implicit_rpn_list 传进去
-                    // 这里假设异步模式只关注 Industry 函数，或者 req 中包含了需要的数据
 
                     g_global_task_group->run([=]() {
                         calculate_points_internal(
                             req.implicit_rpn_list, // 传入请求中的列表
                             req.implicit_rpn_direct_list,
                             req.industry_rpn_list,
+                            req.industry_parametric_list, // <--- 传递参数方程列表
                             req.offset_x, req.offset_y,
                             req.zoom,
                             req.screen_width, req.screen_height
@@ -196,7 +193,6 @@ private:
                     });
 
                     // 等待计算 (它会因为 Watchdog 检查或完成而返回)
-                    // 注意：plotIndustry 即使被 cancel 也会 push 一个空结果，解除 plotCall 中的阻塞，从而让这里的 wait 返回
                     g_global_task_group->wait();
                 }
 
@@ -250,6 +246,7 @@ void calculate_points_internal(
     const std::vector<std::string>& implicit_rpn_list,        // Pairs
     const std::vector<std::string>& implicit_rpn_direct_list, // Direct RPN
     const std::vector<std::string>& industry_rpn_list,
+    const std::vector<std::string>& industry_parametric_list, // <--- 新增参数
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height
@@ -261,11 +258,12 @@ void calculate_points_internal(
         implicit_rpn_pairs.push_back({rpn_str, rpn_str});
     }
 
-    bool has_industry = !industry_rpn_list.empty();
+    // 只要有任意一种工业级函数，就走工业模式逻辑
+    bool has_industry = !industry_rpn_list.empty() || !industry_parametric_list.empty();
 
     if (has_industry) {
         // --- 工业模式 ---
-        // 工业点由 plotIndustry 直接写入 wasm_final_contiguous_buffer 并触发回调。
+        // 工业点由 plotIndustry/plotIndustryParametric 直接写入 wasm_final_contiguous_buffer 并触发回调。
 
         if (wasm_final_contiguous_buffer.capacity() < INITIAL_BUFFER_CAPACITY) {
             wasm_final_contiguous_buffer.reserve(INITIAL_BUFFER_CAPACITY);
@@ -278,13 +276,13 @@ void calculate_points_internal(
         }
 
         // 调用核心计算
-        // 这里的 zoom 参数会一路传到 execute_native_solver 用于 Watchdog 校验
         calculate_points_core(
             ordered_points,
             wasm_function_ranges_buffer,
             implicit_rpn_pairs,
             implicit_rpn_direct_list,
             industry_rpn_list,
+            industry_parametric_list, // <--- 传递参数方程列表
             offset_x, offset_y, zoom, screen_width, screen_height
         );
 
@@ -295,9 +293,10 @@ void calculate_points_internal(
         // Ranges 索引偏移：Pairs + Direct
         size_t industry_start_idx = implicit_rpn_pairs.size() + implicit_rpn_direct_list.size();
 
-        if (wasm_function_ranges_buffer.size() <= industry_start_idx) {
-            // 注意：calculate_points_core 可能已经 resize 了，这里只是兜底
-            wasm_function_ranges_buffer.resize(industry_start_idx + industry_rpn_list.size());
+        // 确保 ranges buffer 足够大
+        size_t total_funcs = industry_start_idx + industry_rpn_list.size() + industry_parametric_list.size();
+        if (wasm_function_ranges_buffer.size() < total_funcs) {
+            wasm_function_ranges_buffer.resize(total_funcs);
         }
 
         if (implicit_count > 0) {
@@ -313,8 +312,7 @@ void calculate_points_internal(
             );
 
             // 修正普通函数的 Range (因为它们被排在 Industry 后面)
-            // 注意：这取决于 calculate_points_core 的逻辑，
-            // 假设 core 逻辑是 先排 implicit 再排 industry，
+            // 注意：calculate_points_core 的逻辑是先排 implicit 再排 industry
             // 但物理存储上，Industry 先占了位置（因为 assign），Implicit 后追加。
             // 所以 Implicit 的 Range 需要加上 Industry 的数量偏移。
             for(size_t i=0; i<industry_start_idx; ++i) {
@@ -323,10 +321,11 @@ void calculate_points_internal(
         }
     }
     else {
-        // --- 纯隐函数模式 ---
+        // --- 纯普通隐函数模式 ---
         AlignedVector<PointData> ordered_points;
         ordered_points.reserve(INITIAL_BUFFER_CAPACITY);
         std::vector<std::string> empty_industry;
+        std::vector<std::string> empty_parametric;
 
         calculate_points_core(
             ordered_points,
@@ -334,6 +333,7 @@ void calculate_points_internal(
             implicit_rpn_pairs,
             implicit_rpn_direct_list,
             empty_industry,
+            empty_parametric, // <--- 传递空列表
             offset_x, offset_y, zoom, screen_width, screen_height
         );
 
@@ -387,10 +387,12 @@ void calculate_implicit_sync(
     g_is_calculating.store(false);
 
     std::vector<std::string> empty_industry;
+    std::vector<std::string> empty_parametric;
     calculate_points_internal(
         implicit_rpn_list,
         implicit_rpn_direct_list,
         empty_industry,
+        empty_parametric,
         offset_x, offset_y, zoom, screen_width, screen_height
     );
 }
@@ -398,6 +400,7 @@ void calculate_implicit_sync(
 // 异步计算接口
 void start_industry_async(
     const std::vector<std::string>& industry_rpn_list,
+    const std::vector<std::string>& industry_parametric_list, // <--- 新增参数
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height
@@ -406,6 +409,7 @@ void start_industry_async(
 
     CalculationRequest req;
     req.industry_rpn_list = industry_rpn_list;
+    req.industry_parametric_list = industry_parametric_list; // <--- 填充
     // 异步任务这里暂不处理 implicit，如果需要混合，可扩展 JS 接口传入
     req.offset_x = offset_x;
     req.offset_y = offset_y;
@@ -434,7 +438,7 @@ EMSCRIPTEN_BINDINGS(my_module) {
 
     emscripten::function("set_js_callback", &set_js_callback);
     emscripten::function("calculate_implicit_sync", &calculate_implicit_sync);
-    emscripten::function("start_industry_async", &start_industry_async);
+    emscripten::function("start_industry_async", &start_industry_async); // JS端调用需要更新参数
     emscripten::function("cancel_calculation", &cancel_calculation_wrapper);
     emscripten::function("is_calculating", &is_calculating);
     emscripten::function("get_points_ptr", &get_points_ptr);
@@ -446,21 +450,25 @@ EMSCRIPTEN_BINDINGS(my_module) {
 #else
 
 // =========================================================
-//        ↓↓↓ Native EXE 逻辑 (Stub) ↓↓↓
+//        ↓↓↓ Native EXE 逻辑 (测试用) ↓↓↓
 // =========================================================
 
 std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_for_native(
     const std::vector<std::string>& implicit_rpn,
     const std::vector<std::string>& industry_rpn_list,
+    const std::vector<std::string>& industry_parametric_list, // <--- 新增
     double offset_x, double offset_y,
     double zoom,
     double screen_width, double screen_height
 ) {
-
-
-
     std::vector<std::string> empty_direct;
-    calculate_points_internal(empty_direct, implicit_rpn, industry_rpn_list, offset_x, offset_y, zoom, screen_width, screen_height);
+    calculate_points_internal(
+        empty_direct,
+        implicit_rpn,
+        industry_rpn_list,
+        industry_parametric_list, // <--- 传递
+        offset_x, offset_y, zoom, screen_width, screen_height
+    );
     return {
         std::vector<PointData>(wasm_final_contiguous_buffer.begin(), wasm_final_contiguous_buffer.end()),
         std::vector<FunctionRange>(wasm_function_ranges_buffer.begin(), wasm_function_ranges_buffer.end())
@@ -469,11 +477,29 @@ std::pair<std::vector<PointData>, std::vector<FunctionRange>> calculate_points_f
 
 int main() {
     try {
-        std::vector<std::string> implicit_rpn = {"x 2 pow y 2 pow + 10 -"};
+        // 1. 普通隐函数测试: 圆 x^2 + y^2 = 100
+        std::vector<std::string> implicit_rpn = {};
+
+        // 2. 工业隐函数测试: 空
         std::vector<std::string> industry_rpn = {  };
 
+        // 3. 工业参数方程测试: 圆 x=10cos(t), y=10sin(t)
+        // 格式: "x_rpn;y_rpn;t_min;t_max;precision"
+        // 3. 工业参数方程测试
+        // 格式: "x_rpn;y_rpn;t_min;t_max;precision"
+        // 修改为: x(t) = t, y(t) = ln(t), t属于[-3, 4]
+        // 3. 工业参数方程测试
+        // 格式: "x_rpn;y_rpn;t_min;t_max;precision"
+        // 修改为: x(t) = t, y(t) = sin(999999 * t)
+        std::string circle_parametric =
+            "_t_;"                 // x = t
+            "99 _t_ * sin;"    // y = sin(999999 * t)
+            "-3;3;0";            // t in [-10, 10], precision 0
+
+        std::vector<std::string> industry_parametric = { circle_parametric };
+
         double offset_x = 0, offset_y = 0;
-        double zoom = 0.1;
+        double zoom = 0.05;
         double screen_width = 2560, screen_height = 1600;
 
         std::cout << "--- Native EXE: 开始计算... ---" << std::endl;
@@ -491,6 +517,7 @@ int main() {
         auto results = calculate_points_for_native(
             implicit_rpn,
             industry_rpn,
+            industry_parametric, // <--- 传入参数方程
             offset_x, offset_y, zoom, screen_width, screen_height
         );
         const auto& final_points = results.first;
@@ -501,6 +528,27 @@ int main() {
         std::cout << "--- Native EXE: 计算完成 ---\n";
         std::cout << "总耗时: " << duration.count() << " 毫秒" << std::endl;
         std::cout << "总共生成了 " << final_points.size() << " 个点。" << std::endl;
+
+        // ★★★ 新增：将点数据写入文件 ★★★
+        std::ofstream outfile("points.txt");
+        if (outfile.is_open()) {
+            outfile << std::fixed << std::setprecision(6);
+            // 写入表头 (可选)
+            // outfile << "x y function_index\n";
+            for (const auto& p : final_points) {
+                outfile << p.position.x << " " << p.position.y << " " << p.function_index << "\n";
+            }
+            outfile.close();
+            std::cout << "已将点数据写入 points.txt" << std::endl;
+        } else {
+            std::cerr << "无法打开 points.txt 进行写入" << std::endl;
+        }
+
+        // 打印 Ranges 信息
+        for(size_t i=0; i<wasm_function_ranges_buffer.size(); ++i) {
+            auto& r = wasm_function_ranges_buffer[i];
+            std::cout << "Function " << i << ": Start=" << r.start_index << ", Count=" << r.point_count << std::endl;
+        }
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

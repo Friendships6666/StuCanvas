@@ -40,6 +40,8 @@ add_executable(WasmTBBTest src/main.cpp
         src/plot/plotIndustry.cpp
         include/interval/MultiInterval.h
         include/CAS/RPN/MultiIntervalRPN.h
+        src/plot/plotIndustryParametric.cpp
+        include/plot/plotIndustryParametric.h
 
 
 )
