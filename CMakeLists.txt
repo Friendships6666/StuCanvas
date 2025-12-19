@@ -42,6 +42,10 @@ add_executable(WasmTBBTest src/main.cpp
         include/CAS/RPN/MultiIntervalRPN.h
         src/plot/plotIndustryParametric.cpp
         include/plot/plotIndustryParametric.h
+        include/plot/plotLine.h
+        src/plot/plotLine.cpp
+        include/plot/plotSegment.h
+        src/plot/plotSegment.cpp
 
 
 )
@@ -63,7 +67,8 @@ find_package(simdjson REQUIRED)
 # (这里的语法完全复制自 vcpkg 的输出)
 pkg_check_modules(gmp REQUIRED IMPORTED_TARGET gmp)
 pkg_check_modules(mpfr REQUIRED IMPORTED_TARGET mpfr)
-
+find_package(Dawn CONFIG REQUIRED)
+target_link_libraries(WasmTBBTest PRIVATE dawn::webgpu_dawn)
 
 #  gmp
 find_package(PkgConfig REQUIRED)
@@ -84,11 +89,17 @@ target_link_libraries(WasmTBBTest PRIVATE
         simdjson::simdjson
         Boost::multiprecision
 
+
+
+
+
+
         # --- NEW: 链接 GMP::gmp 和 MPFR::mpfr ---
         PkgConfig::gmp
         PkgConfig::gmpxx
 
         PkgConfig::mpfr
+
 )
 if(TARGET xsimd::xsimd)
     message(STATUS "Found modern xsimd target: xsimd::xsimd")

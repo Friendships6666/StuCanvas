@@ -414,16 +414,6 @@ int main() {
 
         };
 
-        // 3. ★★★ 普通参数方程测试 ★★★
-        // 蝴蝶曲线 (Butterfly Curve)
-        // x = sin(t) * (e^cos(t) - 2cos(4t) - sin(t/12)^5)
-        // y = cos(t) * (e^cos(t) - 2cos(4t) - sin(t/12)^5)
-        // t 范围 [0, 12pi]
-
-        // 简化版测试: 螺旋线
-        // x = t * cos(t)
-        // y = t * sin(t)
-        // t: [0, 20]
 
         // 格式: "x_rpn;y_rpn;t_min;t_max"
         std::string spiral_parametric =
