@@ -1,48 +1,41 @@
 // --- 文件路径: include/plot/plotCall.h ---
-
 #ifndef PLOTCALL_H
 #define PLOTCALL_H
 
 #include "../../pch.h"
+#include "../graph/GeoGraph.h"
 #include <vector>
-#include <string>
+#include <tuple>
 
-// 定义函数计算结果的数据结构
+// 视图状态定义
+struct ViewState {
+    double screen_width;
+    double screen_height;
+    double offset_x;
+    double offset_y;
+    double zoom;
+    Vec2 world_origin;
+    double wppx;
+    double wppy;
+};
+
+// 并发计算结果载体
 struct FunctionResult {
     unsigned int function_index;
-    std::vector<PointData> points; // 计算出的点集
+    std::vector<PointData> points;
 };
 
 /**
- * @brief 核心绘图调度函数。
- * 负责协调所有类型的绘图任务，并行执行计算，最后将结果汇总到扁平化的输出缓冲区中。
- *
- * @param out_points [输出] 存储所有计算出的点，扁平化存储。
- * @param out_ranges [输出] 存储每个函数的点在 out_points 中的起始位置和长度。
- * @param implicit_rpn_pairs 普通隐函数列表 (pair: <计算RPN, 检查RPN>)。
- * @param implicit_rpn_direct_list 直接RPN字符串列表 (计算和检查相同)。
- * @param explicit_rpn_list 普通显函数列表 (字符串: "x sin", "x x *")。
- * @param explicit_parametric_list ★★★ 新增(第13参)：普通参数方程列表 (字符串: "x_rpn;y_rpn;t_min;t_max") ★★★
- * @param industry_rpn_list 工业级隐函数列表 (string: "RPN;精度;参数...")。
- * @param industry_parametric_list 工业级参数方程列表 (string: "xRPN;yRPN;tMin;tMax;精度")。
- * @param offset_x 视图中心 X 偏移。
- * @param offset_y 视图中心 Y 偏移。
- * @param zoom 缩放级别。
- * @param screen_width 屏幕宽度。
- * @param screen_height 屏幕高度。
+ * @brief 核心渲染调度入口
  */
 void calculate_points_core(
     AlignedVector<PointData>& out_points,
     AlignedVector<FunctionRange>& out_ranges,
-    const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
-    const std::vector<std::string>& implicit_rpn_direct_list,
-    const std::vector<std::string>& explicit_rpn_list,
-    const std::vector<std::string>& explicit_parametric_list, // <--- 修复：添加此参数
-    const std::vector<std::string>& industry_rpn_list,
-    const std::vector<std::string>& industry_parametric_list,
-    double offset_x, double offset_y,
-    double zoom,
-    double screen_width, double screen_height
+    std::vector<GeoNode>& node_pool,
+    const std::vector<uint32_t>& draw_order,      // 逻辑渲染顺序 (画家算法)
+    const std::vector<uint32_t>& dirty_node_ids,  // 局部更新时的脏节点
+    const ViewState& view,
+    bool is_global_update                         // true=全重算(重置内存), false=增量(追加)
 );
 
 #endif //PLOTCALL_H

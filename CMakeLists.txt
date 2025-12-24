@@ -42,10 +42,13 @@ add_executable(WasmTBBTest src/main.cpp
         include/CAS/RPN/MultiIntervalRPN.h
         src/plot/plotIndustryParametric.cpp
         include/plot/plotIndustryParametric.h
-        include/plot/plotLine.h
-        src/plot/plotLine.cpp
+
+
         include/plot/plotSegment.h
         src/plot/plotSegment.cpp
+        include/graph/GeoGraph.h
+        src/graph/GeoGraph.cpp
+
 
 
 )

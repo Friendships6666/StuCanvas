@@ -1,307 +1,268 @@
 ﻿// --- 文件路径: src/plot/plotCall.cpp ---
-
-#include "../../pch.h"
 #include "../../include/plot/plotCall.h"
-#include "../../include/CAS/RPN/RPN.h"
-#include "../../include/plot/plotImplicit.h"
+#include "../../include/graph/GeoGraph.h"
+#include "../../include/plot/plotSegment.h"   // 处理直线和线段
 #include "../../include/plot/plotExplicit.h"
-#include "../../include/plot/plotParametric.h" // ★★★ 包含普通参数方程头文件 ★★★
-#include "../../include/plot/plotIndustry.h"
-#include "../../include/plot/plotIndustryParametric.h"
+#include "../../include/plot/plotParametric.h"
+#include "../../include/plot/plotImplicit.h"
+#include "../../include/functions/lerp.h"
 
 #include <oneapi/tbb/concurrent_queue.h>
-#include <oneapi/tbb/task_group.h>
+#include <oneapi/tbb/parallel_for_each.h>
 #include <oneapi/tbb/global_control.h>
-#include <map>
-#include <algorithm> // for std::min, std::max
-#include <sstream>
+#include <variant>
+#include <algorithm>
+#include <cstring>
 
-// 辅助：解析 "x_rpn;y_rpn;t_min;t_max" 格式
-struct ExplicitParamConfig {
-    std::string x_rpn;
-    std::string y_rpn;
-    double t_min = 0.0;
-    double t_max = 1.0;
-};
+namespace {
 
-ExplicitParamConfig parse_explicit_param_config(const std::string& input) {
-    ExplicitParamConfig config;
-    std::vector<std::string> parts;
-    std::stringstream ss(input);
-    std::string item;
-    while(std::getline(ss, item, ';')) {
-        parts.push_back(item);
+    // =========================================================
+    // 1. 结果收集器 (ResultCollector)
+    // 负责将不同线程算出的结果，有序或无序地写入全局大 Buffer
+    // =========================================================
+    class ResultCollector {
+    public:
+        ResultCollector(AlignedVector<PointData>& buffer, std::vector<GeoNode>& nodes, bool reset)
+            : m_buffer(buffer), m_nodes(nodes)
+        {
+            // 全局模式：写指针重置为0，覆盖旧数据；增量模式：从末尾追加
+            m_write_ptr = reset ? 0 : buffer.size();
+        }
+
+        /**
+         * @brief 将队列里的数据同步到主显存 Buffer，并更新节点元数据
+         */
+        void Flush(oneapi::tbb::concurrent_bounded_queue<FunctionResult>& queue) {
+            FunctionResult res;
+            while (queue.try_pop(res)) {
+                size_t count = res.points.size();
+                GeoNode& node = m_nodes[res.function_index];
+
+                if (count == 0) {
+                    node.buffer_offset = 0;
+                    node.current_point_count = 0;
+                    continue;
+                }
+
+                size_t current_offset = m_write_ptr;
+
+                // 1. 检查物理扩容 (贪婪策略)
+                if (current_offset + count > m_buffer.capacity()) {
+                    m_buffer.reserve(std::max(m_buffer.capacity() * 2, current_offset + count));
+                }
+
+                // 2. 调整逻辑大小 (保证 JS HEAP 视图有效)
+                if (current_offset + count > m_buffer.size()) {
+                    m_buffer.resize(current_offset + count);
+                }
+
+                // 3. 高速拷贝 (POD 数据)
+                std::memcpy(
+                    m_buffer.data() + current_offset,
+                    res.points.data(),
+                    count * sizeof(PointData)
+                );
+
+                // 4. 更新节点的物理位置记录
+                node.buffer_offset = (uint32_t)current_offset;
+                node.current_point_count = (uint32_t)count;
+
+                // 5. 推进全局指针
+                m_write_ptr += count;
+            }
+        }
+
+    private:
+        AlignedVector<PointData>& m_buffer;
+        std::vector<GeoNode>& m_nodes;
+        size_t m_write_ptr;
+    };
+
+    // =========================================================
+    // 2. 任务分发器 (DispatchNodeTask)
+    // 负责解析 GeoNode 的类型并调用对应的底层计算模块
+    // =========================================================
+    void DispatchNodeTask(
+        GeoNode& node,
+        const std::vector<GeoNode>& pool,
+        const ViewState& view,
+        const NDCMap& ndc_map,
+        oneapi::tbb::concurrent_bounded_queue<FunctionResult>& queue
+    ) {
+        switch (node.render_type) {
+
+            case GeoNode::RenderType::Point: {
+                // 绘制单一几何点 (自由点、中点、交点、约束点)
+                if (std::holds_alternative<Data_Point>(node.data)) {
+                    const auto& p = std::get<Data_Point>(node.data);
+                    PointData pd;
+                    // 执行 Double -> Float Clip 转换
+                    world_to_clip_store(pd, p.x, p.y, ndc_map, node.id);
+                    queue.push({ node.id, {pd} });
+                }
+                break;
+            }
+
+            case GeoNode::RenderType::Line: {
+                // 绘制直线或线段
+                if (std::holds_alternative<Data_Line>(node.data)) {
+                    const auto& d = std::get<Data_Line>(node.data);
+                    // 动态提取父节点(端点)的最新数学坐标
+                    const auto& p1 = std::get<Data_Point>(pool[d.p1_id].data);
+                    const auto& p2 = std::get<Data_Point>(pool[d.p2_id].data);
+
+                    // 调用 Liang-Barsky 裁剪算法
+                    process_two_point_line(
+                        &queue, p1.x, p1.y, p2.x, p2.y,
+                        !d.is_infinite, node.id,
+                        view.world_origin, view.wppx, view.wppy,
+                        view.screen_width, view.screen_height,
+                        0.0, 0.0, ndc_map
+                    );
+                }
+                break;
+            }
+
+            case GeoNode::RenderType::Circle: {
+                // 绘制圆 (由 Solver_Circle 转换为隐式 RPN 后调用隐式引擎)
+                if (std::holds_alternative<Data_Circle>(node.data)) {
+                    const auto& d = std::get<Data_Circle>(node.data);
+                    process_implicit_adaptive(
+                        &queue, view.world_origin, view.wppx, view.wppy,
+                        view.screen_width, view.screen_height,
+                        d.implicit_rpn, d.implicit_rpn,
+                        node.id, 0.0, 0.0, ndc_map
+                    );
+                }
+                break;
+            }
+
+            case GeoNode::RenderType::Explicit: {
+                // 绘制显函数 y = f(x)
+                if (std::holds_alternative<Data_SingleRPN>(node.data)) {
+                    const auto& d = std::get<Data_SingleRPN>(node.data);
+                    process_explicit_chunk(
+
+                        view.world_origin.x, view.world_origin.x + view.screen_width * view.wppx,
+                        d.tokens, &queue, node.id, view.screen_width, ndc_map
+                    );
+                }
+                break;
+            }
+
+            case GeoNode::RenderType::Parametric: {
+                // 绘制参数方程 x=f(t), y=g(t)
+                if (std::holds_alternative<Data_DualRPN>(node.data)) {
+                    const auto& d = std::get<Data_DualRPN>(node.data);
+                    process_parametric_chunk(
+                        d.tokens_x, d.tokens_y, d.t_min, d.t_max,
+                        &queue, node.id, ndc_map
+                    );
+                }
+                break;
+            }
+
+            case GeoNode::RenderType::Implicit: {
+                // 绘制通用隐函数 f(x,y) = 0
+                if (std::holds_alternative<Data_SingleRPN>(node.data)) {
+                    const auto& d = std::get<Data_SingleRPN>(node.data);
+                    process_implicit_adaptive(
+                        &queue, view.world_origin, view.wppx, view.wppy,
+                        view.screen_width, view.screen_height,
+                        d.tokens, d.tokens, node.id, 0.0, 0.0, ndc_map
+                    );
+                }
+                break;
+            }
+
+            default: break;
+        }
     }
-    if (parts.size() >= 2) {
-        config.x_rpn = parts[0];
-        config.y_rpn = parts[1];
-    }
-    if (parts.size() >= 4) {
-        try {
-            config.t_min = std::stod(parts[2]);
-            config.t_max = std::stod(parts[3]);
-        } catch(...) {}
-    }
-    return config;
 }
 
+// =========================================================
+// 3. 主计算入口 (calculate_points_core)
+// =========================================================
 void calculate_points_core(
     AlignedVector<PointData>& out_points,
     AlignedVector<FunctionRange>& out_ranges,
-    const std::vector<std::pair<std::string, std::string>>& implicit_rpn_pairs,
-    const std::vector<std::string>& implicit_rpn_direct_list,
-    const std::vector<std::string>& explicit_rpn_list,
-    const std::vector<std::string>& explicit_parametric_list, // <--- 新增参数实现
-    const std::vector<std::string>& industry_rpn_list,
-    const std::vector<std::string>& industry_parametric_list,
-    double offset_x, double offset_y,
-    double zoom,
-    double screen_width, double screen_height
+    std::vector<GeoNode>& node_pool,
+    const std::vector<uint32_t>& draw_order,
+    const std::vector<uint32_t>& dirty_node_ids,
+    const ViewState& view,
+    bool is_global_update
 ) {
-    // 1. 清理输出容器
-    out_points.clear();
-    out_ranges.clear();
+    // A. 准备坐标转换器 (NDCMap)
+    // 即使是局部更新，视图中心也可能微调，每一帧刷新一次 map 保证一致性
+    double half_w = view.screen_width * 0.5;
+    double half_h = view.screen_height * 0.5;
+    Vec2 center_world = screen_to_world_inline({half_w, half_h}, view.world_origin, view.wppx, view.wppy);
 
-    const size_t count_pairs = implicit_rpn_pairs.size();
-    const size_t count_direct = implicit_rpn_direct_list.size();
-    const size_t count_explicit = explicit_rpn_list.size();
-    const size_t count_exp_parametric = explicit_parametric_list.size(); // <--- 新增计数
+    NDCMap ndc_map;
+    ndc_map.center_x = center_world.x;
+    ndc_map.center_y = center_world.y;
+    ndc_map.scale_x = 2.0 / (view.screen_width * view.wppx);
+    ndc_map.scale_y = 2.0 / (view.screen_height * view.wppy);
 
-    // 索引计算
-    const size_t total_implicit = count_pairs + count_direct;
-    const size_t explicit_start_idx = total_implicit;
-    const size_t exp_parametric_start_idx = explicit_start_idx + count_explicit; // <--- 新增起始索引
-
-    // 普通模式总数
-    const size_t total_normal = exp_parametric_start_idx + count_exp_parametric;
-
-    const size_t total_industry_implicit = industry_rpn_list.size();
-    const size_t total_industry_parametric = industry_parametric_list.size();
-
-    // 总函数数量
-    const size_t total_functions = total_normal + total_industry_implicit + total_industry_parametric;
-
-    if (total_functions == 0) return;
-
-    // 2. 配置 TBB 并发控制
-    const auto thread_count = std::thread::hardware_concurrency();
-    oneapi::tbb::global_control control(oneapi::tbb::global_control::max_allowed_parallelism, thread_count);
-
-    // 3. 准备结果队列和任务组
+    // B. 初始化并发队列与收集器
     oneapi::tbb::concurrent_bounded_queue<FunctionResult> results_queue;
-    results_queue.set_capacity(total_functions * 2);
+    results_queue.set_capacity(2048); // 限制容量以控制背压
+    ResultCollector collector(out_points, node_pool, is_global_update);
 
-    oneapi::tbb::task_group task_group;
+    // C. 执行计算调度
+    if (is_global_update) {
+        // --- 全局模式：严格批次串行，批内并行 ---
 
-    // 4. 计算世界坐标系参数 (用于显函数和隐函数)
-    double aspect_ratio = screen_width / screen_height;
-    double centered_x_0 = (0.0 * 2.0 - 1.0) * aspect_ratio;
-    double centered_y_0 = -(0.0 * 2.0 - 1.0);
-
-    Vec2 world_origin = {
-        (centered_x_0 / zoom) + offset_x,
-        (centered_y_0 / zoom) + offset_y
-    };
-
-    double world_per_pixel_x = (2.0 * aspect_ratio) / (zoom * screen_width);
-    double world_per_pixel_y = -2.0 / (zoom * screen_height);
-
-    // 计算屏幕边界的世界坐标
-    double x_start_world = world_origin.x;
-    double x_end_world = world_origin.x + screen_width * world_per_pixel_x;
-    double y_top_world = world_origin.y;
-    double y_bottom_world = world_origin.y + screen_height * world_per_pixel_y;
-    double y_min_world = std::min(y_top_world, y_bottom_world);
-    double y_max_world = std::max(y_top_world, y_bottom_world);
-
-    // 5. 解析 RPN (预处理)
-
-    // 5.1 隐函数
-    std::vector<AlignedVector<RPNToken>> implicit_programs;
-    std::vector<AlignedVector<RPNToken>> implicit_programs_check;
-    implicit_programs.reserve(total_implicit);
-    implicit_programs_check.reserve(total_implicit);
-
-    for (const auto& pair : implicit_rpn_pairs) {
-        implicit_programs.emplace_back(parse_rpn(pair.first));
-        implicit_programs_check.emplace_back(parse_rpn(pair.second));
-    }
-    for (const auto& rpn_str : implicit_rpn_direct_list) {
-        auto tokens = parse_rpn(rpn_str);
-        implicit_programs.push_back(tokens);
-        implicit_programs_check.push_back(tokens);
-    }
-
-    // 5.2 显函数
-    std::vector<AlignedVector<RPNToken>> explicit_programs;
-    explicit_programs.reserve(count_explicit);
-    for (const auto& rpn_str : explicit_rpn_list) {
-        explicit_programs.emplace_back(parse_rpn(rpn_str));
-    }
-
-    // 5.3 普通参数方程 (需要解析配置字符串)
-    struct ParsedParametric {
-        AlignedVector<RPNToken> x_prog;
-        AlignedVector<RPNToken> y_prog;
-        double t_min;
-        double t_max;
-    };
-    std::vector<ParsedParametric> exp_parametric_data;
-    exp_parametric_data.reserve(count_exp_parametric);
-    for (const auto& config_str : explicit_parametric_list) {
-        auto conf = parse_explicit_param_config(config_str);
-        exp_parametric_data.push_back({
-            parse_rpn(conf.x_rpn),
-            parse_rpn(conf.y_rpn),
-            conf.t_min,
-            conf.t_max
-        });
-    }
-
-    // =========================================================
-    // 6. 派发任务
-    // =========================================================
-
-    // 6.1 普通隐函数
-    for (size_t i = 0; i < total_implicit; ++i) {
-        task_group.run([&, i] {
-            process_implicit_adaptive(
-                &results_queue,
-                world_origin, world_per_pixel_x, world_per_pixel_y,
-                screen_width, screen_height,
-                implicit_programs[i],
-                implicit_programs_check[i],
-                (unsigned int)i,
-                offset_x, offset_y
-            );
-        });
-    }
-
-    // 6.2 普通显函数
-    for (size_t i = 0; i < count_explicit; ++i) {
-        task_group.run([&, i] {
-            unsigned int func_idx = (unsigned int)(explicit_start_idx + i);
-            oneapi::tbb::concurrent_vector<PointData> points;
-
-            process_explicit_chunk(
-                y_min_world, y_max_world,
-                x_start_world, x_end_world,
-                explicit_programs[i],
-                points,
-                func_idx,
-                screen_width
-            );
-
-            // 坐标修正：转换为相对坐标
-            std::vector<PointData> res_vec;
-            res_vec.reserve(points.size());
-            for(const auto& p : points) {
-                PointData new_p = p;
-                new_p.position.x -= offset_x;
-                new_p.position.y -= offset_y;
-                res_vec.push_back(new_p);
-            }
-            results_queue.push({func_idx, std::move(res_vec)});
-        });
-    }
-
-    // 6.3 ★★★ 普通参数方程 ★★★
-    for (size_t i = 0; i < count_exp_parametric; ++i) {
-        task_group.run([&, i, exp_parametric_start_idx] {
-            unsigned int func_idx = (unsigned int)(exp_parametric_start_idx + i);
-            const auto& data = exp_parametric_data[i];
-
-            oneapi::tbb::concurrent_vector<PointData> points;
-
-            // 调用高性能参数方程处理模块
-            process_parametric_chunk(
-                data.x_prog,
-                data.y_prog,
-                data.t_min,
-                data.t_max,
-                points,
-                func_idx
-            );
-
-            // 坐标修正：转换为相对坐标
-            // process_parametric_chunk 生成的是纯数学坐标 (World)，需要减去 offset
-            std::vector<PointData> res_vec;
-            res_vec.reserve(points.size());
-            for(const auto& p : points) {
-                PointData new_p = p;
-                new_p.position.x -= offset_x;
-                new_p.position.y -= offset_y;
-                res_vec.push_back(new_p);
-            }
-            results_queue.push({func_idx, std::move(res_vec)});
-        });
-    }
-
-    // 索引偏移量更新
-    size_t industry_start_idx = total_normal;
-
-    // 6.4 工业级隐函数
-    for (size_t i = 0; i < total_industry_implicit; ++i) {
-        task_group.run([&, i, industry_start_idx] {
-            unsigned int func_idx = (unsigned int)(industry_start_idx + i);
-            process_single_industry_function(
-                &results_queue,
-                industry_rpn_list[i],
-                func_idx,
-                world_origin, world_per_pixel_x, world_per_pixel_y,
-                screen_width, screen_height,
-                offset_x, offset_y,
-                zoom
-            );
-        });
-    }
-
-    // 6.5 工业级参数方程
-    size_t industry_parametric_start_idx = industry_start_idx + total_industry_implicit;
-    for (size_t i = 0; i < total_industry_parametric; ++i) {
-        task_group.run([&, i, industry_parametric_start_idx] {
-            unsigned int func_idx = (unsigned int)(industry_parametric_start_idx + i);
-            process_industry_parametric(
-                &results_queue,
-                industry_parametric_list[i],
-                func_idx,
-                world_origin, world_per_pixel_x, world_per_pixel_y,
-                screen_width, screen_height,
-                offset_x, offset_y
-            );
-        });
-    }
-
-    // 7. 收集结果
-    std::map<unsigned int, std::vector<PointData>> sorted_results;
-    for (size_t i = 0; i < total_functions; ++i) {
-        FunctionResult res;
-        results_queue.pop(res);
-        sorted_results[res.function_index] = std::move(res.points);
-    }
-
-    // 8. 等待结束
-    task_group.wait();
-
-    // 9. 扁平化结果
-    out_ranges.resize(total_functions);
-    size_t total_points_count = 0;
-    for (const auto& kv : sorted_results) total_points_count += kv.second.size();
-    out_points.reserve(total_points_count);
-
-    uint32_t current_start_index = 0;
-    for (unsigned int idx = 0; idx < total_functions; ++idx) {
-        auto it = sorted_results.find(idx);
-        if (it != sorted_results.end()) {
-            const auto& points_vec = it->second;
-            uint32_t count = (uint32_t)points_vec.size();
-            out_ranges[idx] = { current_start_index, count };
-            if (count > 0) {
-                out_points.insert(out_points.end(), points_vec.begin(), points_vec.end());
-                current_start_index += count;
-            }
-        } else {
-            out_ranges[idx] = { current_start_index, 0 };
+        // 1. 分类整理 ID
+        std::vector<uint32_t> batch_geom, batch_explicit, batch_parametric, batch_implicit;
+        for (uint32_t id : draw_order) {
+            auto type = node_pool[id].render_type;
+            if (type == GeoNode::RenderType::Point || type == GeoNode::RenderType::Line)
+                batch_geom.push_back(id);
+            else if (type == GeoNode::RenderType::Explicit)
+                batch_explicit.push_back(id);
+            else if (type == GeoNode::RenderType::Parametric)
+                batch_parametric.push_back(id);
+            else if (type == GeoNode::RenderType::Implicit || type == GeoNode::RenderType::Circle)
+                batch_implicit.push_back(id);
         }
+
+        // 2. 依次运行批次（阻塞刷新）
+        auto ExecuteBatch = [&](const std::vector<uint32_t>& batch) {
+            if (batch.empty()) return;
+
+            // 阶段内全员并行
+            oneapi::tbb::parallel_for_each(batch.begin(), batch.end(), [&](uint32_t id) {
+                DispatchNodeTask(node_pool[id], node_pool, view, ndc_map, results_queue);
+            });
+
+            // ★★★ 关键阻塞点：该类函数必须全部写回显存，才开始下一类 ★★★
+            collector.Flush(results_queue);
+        };
+
+        ExecuteBatch(batch_geom);       // 1. 几何
+        ExecuteBatch(batch_explicit);   // 2. 显函数
+        ExecuteBatch(batch_parametric); // 3. 参数方程
+        ExecuteBatch(batch_implicit);   // 4. 隐函数 & 圆
+
+    } else {
+        // --- 局部模式：仅针对脏节点增量计算 ---
+        if (!dirty_node_ids.empty()) {
+            oneapi::tbb::parallel_for_each(dirty_node_ids.begin(), dirty_node_ids.end(), [&](uint32_t id) {
+                DispatchNodeTask(node_pool[id], node_pool, view, ndc_map, results_queue);
+            });
+            // 追加写入末尾
+            collector.Flush(results_queue);
+        }
+    }
+
+    // D. 组装 WebGPU 绘制范围 (FunctionRanges)
+    // 无论局部还是全局更新，Ranges 必须每一帧完整重建，以维持画家算法顺序
+    out_ranges.clear();
+    out_ranges.reserve(draw_order.size());
+    for (uint32_t id : draw_order) {
+        const GeoNode& node = node_pool[id];
+        // 这里的 node.buffer_offset 已经由 collector 刷新为最新物理地址
+        out_ranges.push_back({ node.buffer_offset, node.current_point_count });
     }
 }

@@ -39,8 +39,9 @@ template <typename T>
 using AlignedVector = std::vector<T, xsimd::aligned_allocator<T>>;
 
 struct Vec2 { double x; double y; };
-struct PointData { Vec2 position; unsigned int function_index; };
-static_assert(sizeof(PointData) == 24, "PointData size/padding mismatch! Expected 24 bytes.");
+struct Vec2f { float x; float y; };
+struct PointData { Vec2f position; unsigned int function_index; };
+static_assert(sizeof(PointData) == 12, "PointData size/padding mismatch! Expected 24 bytes.");
 
 struct FunctionRange {
     uint32_t start_index;

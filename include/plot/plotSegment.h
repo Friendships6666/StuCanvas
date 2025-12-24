@@ -1,10 +1,11 @@
-// --- 文件路径: include/plot/plotSegment.h ---
+
 
 #ifndef PLOTSEGMENT_H
 #define PLOTSEGMENT_H
 
 #include "../../pch.h"
 #include "plotCall.h"
+#include "../functions/lerp.h" // 引入 NDCMap 定义
 #include <oneapi/tbb/concurrent_queue.h>
 
 /**
@@ -24,7 +25,8 @@
  * @param world_origin 视口原点
  * @param wppx, wppy 世界/像素比例
  * @param screen_width, screen_height 屏幕尺寸
- * @param offset_x, offset_y 交互偏移 (用于计算中心点)
+ * @param offset_x, offset_y (已废弃，保留接口兼容)
+ * @param ndc_map NDC 映射参数 (用于将骨架点转为 Clip 坐标)
  */
 void process_two_point_line(
     oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
@@ -34,7 +36,8 @@ void process_two_point_line(
     const Vec2& world_origin,
     double wppx, double wppy,
     double screen_width, double screen_height,
-    double offset_x, double offset_y
+    double offset_x, double offset_y, // 必须有这两个 double
+    const NDCMap& ndc_map
 );
 
 #endif // PLOTSEGMENT_H

@@ -5,33 +5,37 @@
 
 #include "../../pch.h"
 #include "../CAS/RPN/RPN.h"
+#include "../functions/lerp.h" // 必须包含，因为需要 NDCMap 结构体定义
 #include <oneapi/tbb/concurrent_vector.h>
-
+#include "../../include/plot/plotCall.h"
 /**
- * @brief 高性能显函数绘制 (固定步长 + SIMD + 并行分块)
+ * @brief 高性能显函数绘制器 (Explicit Function Plotter)
  *
- * 逻辑特性:
- * 1. 严格保证 X 坐标从左到右的顺序。
- * 2. Y 值超出屏幕范围不剔除 (保留用于 GPU 连线)。
- * 3. 仅剔除非有限值 (NaN / Inf)。
- * 4. 使用分块局部缓存策略，避免全局串行过滤。
+ * 核心逻辑:
+ * 1. 采样: 根据屏幕宽度决定采样步长 (Step Size)。
+ * 2. 并行: 使用 TBB 将 X 轴范围切分为多个块 (Chunks) 并行计算。
+ * 3. 向量化: 内部使用 XSIMD (AVX/SSE/WASM) 批量计算 RPN。
+ * 4. 精度控制:
+ *    - 输入和中间计算全部使用 double 精度 (World Space)。
+ *    - 输出时通过 NDCMap 转换为 float 精度 (Clip Space / NDC)。
  *
- * @param y_min_world 屏幕下边界 (仅用于参考，不进行剔除)
- * @param y_max_world 屏幕上边界 (仅用于参考，不进行剔除)
- * @param x_start_world 屏幕左边界世界坐标
- * @param x_end_world 屏幕右边界世界坐标
- * @param rpn_program RPN 程序
- * @param all_points 输出点集 (并发向量)
- * @param func_idx 函数索引
- * @param screen_width 屏幕像素宽度 (用于计算步长)
+
+ * @param x_start_world 采样起始 X (世界坐标)
+ * @param x_end_world 采样结束 X (世界坐标)
+ * @param rpn_program 预编译的 RPN 指令流
+ * @param results_queue [输出] 线程安全的点收集容器
+ * @param func_idx 函数的唯一 ID (用于着色)
+ * @param screen_width 屏幕像素宽度 (用于计算采样密度)
+ * @param ndc_map NDC 映射参数包 (用于将结果从 World 转换到 Clip)
  */
 void process_explicit_chunk(
-    double y_min_world, double y_max_world,
+
     double x_start_world, double x_end_world,
     const AlignedVector<RPNToken>& rpn_program,
-    oneapi::tbb::concurrent_vector<PointData>& all_points,
+    oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
     unsigned int func_idx,
-    double screen_width
+    double screen_width,
+    const NDCMap& ndc_map // ★★★ 新增：用于坐标空间转换
 );
 
 #endif //PLOTEXPLICIT_H
