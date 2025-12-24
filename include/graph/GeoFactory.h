@@ -37,6 +37,8 @@ namespace GeoFactory {
         const std::vector<RPNBinding>& bindings,
         const std::vector<uint32_t>& parent_ids
     );
+    uint32_t CreatePerpendicular(GeometryGraph& graph, uint32_t segment_id, uint32_t point_id, bool is_infinite);
+    uint32_t CreateParallel(GeometryGraph& graph, uint32_t segment_id, uint32_t point_id);
 
 } // namespace GeoFactory
 

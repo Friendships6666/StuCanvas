@@ -99,3 +99,46 @@ void Solver_DynamicDualRPN(GeoNode& self, const std::vector<GeoNode>& pool) {
         }
     }
 }
+
+void Solver_PerpendicularFoot(GeoNode& self, const std::vector<GeoNode>& pool) {
+    if (self.parents.size() < 2) return;
+
+    // 1. 获取目标线段 (Parent 0) 和 外部点 (Parent 1)
+    const auto& segmentNode = pool[self.parents[0]];
+    const auto& sourcePointNode = pool[self.parents[1]];
+
+    // 提取线段的端点 ID
+    const auto& segData = std::get<Data_Line>(segmentNode.data);
+
+    // 获取三点坐标：端点 p1, p2 和 外部点 p0
+    const auto& p1 = std::get<Data_Point>(pool[segData.p1_id].data);
+    const auto& p2 = std::get<Data_Point>(pool[segData.p2_id].data);
+    const auto& p0 = std::get<Data_Point>(sourcePointNode.data);
+
+    // 2. 向量数学计算：投影法
+    // 向量 v = p2 - p1 (直线的方向向量)
+    double vx = p2.x - p1.x;
+    double vy = p2.y - p1.y;
+    double v_mag_sq = vx * vx + vy * vy;
+
+    // 防止线段长度为 0
+    if (v_mag_sq < 1e-12) {
+        self.data = Data_Point{ p1.x, p1.y };
+        return;
+    }
+
+    // 向量 w = p0 - p1
+    double wx = p0.x - p1.x;
+    double wy = p0.y - p1.y;
+
+    // 投影参数 t = (w · v) / |v|^2
+    // 如果 t=0, 垂足是 p1; 如果 t=1, 垂足是 p2
+    double t = (wx * vx + wy * vy) / v_mag_sq;
+
+    // 3. 计算垂足坐标并存入 self.data
+    Data_Point foot;
+    foot.x = p1.x + t * vx;
+    foot.y = p1.y + t * vy;
+
+    self.data = foot;
+}

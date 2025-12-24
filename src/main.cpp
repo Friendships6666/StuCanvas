@@ -36,7 +36,7 @@ int main() {
             offset_y - (screen_height * 0.5) * wppy
         };
 
-        ViewState view;
+        ViewState view{};
         view.screen_width = screen_width;
         view.screen_height = screen_height;
         view.offset_x = offset_x;
@@ -46,24 +46,44 @@ int main() {
         view.wppx = wppx;
         view.wppy = wppy;
 
+        // =========================================================
+        // 2. 几何依赖图测试：线段 + 垂线 + 平行线
+        // =========================================================
         GeometryGraph graph;
 
-        // 1. 利用工厂极简创建
-        // 自动处理了：内存申请、数据填入、Rank计算、父子依赖注册
-        uint32_t p1 = GeoFactory::CreateFreePoint(graph, 0.0, 0.0);
-        uint32_t p2 = GeoFactory::CreateFreePoint(graph, 2.0, 2.0);
+        // 1. 创建基础线段 AB
+        uint32_t p1 = GeoFactory::CreateFreePoint(graph, 3, 0.0);
+        uint32_t p2 = GeoFactory::CreateFreePoint(graph, 4, 1);
+        uint32_t seg = GeoFactory::CreateLine(graph, p1, p2, false); // 线段模式
 
-        // 创建线段
-        uint32_t line = GeoFactory::CreateLine(graph, p1, p2, false);
+        // 2. 创建垂线测试
+        // 外部点 p_ext 在上方
+        uint32_t p_ext = GeoFactory::CreateFreePoint(graph, -3, 2);
+        // 过 p_ext 作 seg 的垂线 (设置为无限长直线)
+        uint32_t perp_line = GeoFactory::CreatePerpendicular(graph, seg, p_ext, true);
 
-        // 创建中点
-        uint32_t mid = GeoFactory::CreateMidpoint(graph, p1, p2);
+        // 3. 创建平行线测试
+        // 另一个外部点 p_para_ref 在左侧
+        uint32_t p_para_ref = GeoFactory::CreateFreePoint(graph, -2, 2);
+        // 过 p_para_ref 作 seg 的平行线 (设置为无限长直线)
+        uint32_t para_line = GeoFactory::CreateParallel(graph, seg, p_para_ref);
+
+        // 4. 定义渲染顺序 (画家算法：从下往上堆叠)
+        // 顺序：两条动线 -> 原始线段 -> 所有点
+        std::vector<uint32_t> draw_order = {
+            perp_line,
+            para_line,
+            seg,
+            p1, p2, p_ext, p_para_ref
+        };
+
+
 
 
 
 
         // 3. 渲染顺序 (画家算法)
-        std::vector<uint32_t> draw_order = {  mid, p1, p2 , line };
+
 
 
 
@@ -74,6 +94,10 @@ int main() {
 
 
 
+        // 1. 记录开始时间点
+        auto start_time = std::chrono::high_resolution_clock::now();
+
+        // 2. 执行核心计算函数
         calculate_points_core(
             wasm_final_contiguous_buffer,
             wasm_function_ranges_buffer,
@@ -81,8 +105,20 @@ int main() {
             draw_order,
             {},    // 全局模式，dirty_nodes 为空
             view,
-            true   // is_global_update = true (重置内存指针)
+            true   // is_global_update = true
         );
+
+        // 3. 记录结束时间点
+        auto end_time = std::chrono::high_resolution_clock::now();
+
+        // 4. 计算差值并转换为毫秒 (double 类型可以保留小数位，如 1.2345 ms)
+        std::chrono::duration<double, std::milli> ms_double = end_time - start_time;
+
+        // 5. 输出结果
+
+        std::cout << "绘制核心计算总耗时: " << std::fixed << std::setprecision(4)
+                  << ms_double.count() << " ms" << std::endl;
+
 
         // =========================================================
         // 4. 将结果导出到 points.txt
@@ -100,8 +136,8 @@ int main() {
 
         // 遍历所有生成的点数据
         for (const auto& pt : wasm_final_contiguous_buffer) {
-            outfile << pt.position.x << " " 
-                    << pt.position.y << " " 
+            outfile << pt.position.x << " "
+                    << pt.position.y << " "
                     << pt.function_index << "\n";
         }
 
@@ -110,11 +146,11 @@ int main() {
         // 控制台输出摘要
         std::cout << "Render Success!" << std::endl;
         std::cout << "Points saved to points.txt: " << wasm_final_contiguous_buffer.size() << std::endl;
-        
+
         for(size_t i=0; i<wasm_function_ranges_buffer.size(); ++i) {
             auto& r = wasm_function_ranges_buffer[i];
-            std::cout << "Obj ID " << draw_order[i] 
-                      << ": Start=" << r.start_index 
+            std::cout << "Obj ID " << draw_order[i]
+                      << ": Start=" << r.start_index
                       << ", Count=" << r.point_count << std::endl;
         }
 

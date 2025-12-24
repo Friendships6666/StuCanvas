@@ -21,4 +21,6 @@ void Solver_Measure_Area(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_DynamicSingleRPN(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_DynamicDualRPN(GeoNode& self, const std::vector<GeoNode>& pool);
 
+void Solver_PerpendicularFoot(GeoNode& self, const std::vector<GeoNode>& pool);
+void Solver_ParallelPoint(GeoNode& self, const std::vector<GeoNode>& pool);
 #endif // GEOSOLVER_H
