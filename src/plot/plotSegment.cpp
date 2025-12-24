@@ -148,7 +148,7 @@ void process_two_point_line(
     // 算出该线段在屏幕上占据的像素长度
     float dx_pixel = (cx2 - cx1) * (float)screen_width * 0.5f;
     float dy_pixel = (cy2 - cy1) * (float)screen_height * 0.5f;
-    float pixel_dist = std::sqrt(dx_pixel * dx_pixel + dy_pixel * dy_pixel);
+    float pixel_dist = 0.5*std::sqrt(dx_pixel * dx_pixel + dy_pixel * dy_pixel);
 
     // 步长：0.4 像素 (确保满足 < 0.5 像素的要求)
     int num_samples = std::max(2, static_cast<int>(std::ceil(pixel_dist / 0.4f)) + 1);

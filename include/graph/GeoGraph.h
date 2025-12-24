@@ -63,6 +63,8 @@ struct Data_SingleRPN {
 struct Data_DualRPN {
     AlignedVector<RPNToken> tokens_x;
     AlignedVector<RPNToken> tokens_y;
+    std::vector<RPNBinding> bindings_x; // 处理 x(t) 的动态参数
+    std::vector<RPNBinding> bindings_y; // 处理 y(t) 的动态参数
     double t_min, t_max;
 };
 

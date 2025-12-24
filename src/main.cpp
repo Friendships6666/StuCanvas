@@ -1,5 +1,6 @@
 ﻿#include "../pch.h"
 #include "../include/graph/GeoGraph.h"
+#include "../include/graph/GeoFactory.h"
 #include "../include/plot/plotCall.h"
 #include "../include/functions/lerp.h"
 #include <iostream>
@@ -45,44 +46,33 @@ int main() {
         view.wppx = wppx;
         view.wppy = wppy;
 
-        // =========================================================
-        // 2. 构建几何依赖图 (两个自由点 + 一条线段)
-        // =========================================================
         GeometryGraph graph;
 
-        // --- A. 创建自由点 P1 (2, 3) ---
-        uint32_t idP1 = graph.allocate_node();
-        GeoNode& nodeP1 = graph.node_pool[idP1];
-        nodeP1.render_type = GeoNode::RenderType::Point;
-        nodeP1.data = Data_Point{ 0, 0 };
-        nodeP1.rank = 0;
+        // 1. 利用工厂极简创建
+        // 自动处理了：内存申请、数据填入、Rank计算、父子依赖注册
+        uint32_t p1 = GeoFactory::CreateFreePoint(graph, 0.0, 0.0);
+        uint32_t p2 = GeoFactory::CreateFreePoint(graph, 2.0, 2.0);
 
-        // --- B. 创建自由点 P2 (5, 6) ---
-        uint32_t idP2 = graph.allocate_node();
-        GeoNode& nodeP2 = graph.node_pool[idP2];
-        nodeP2.render_type = GeoNode::RenderType::Point;
-        nodeP2.data = Data_Point{ 2, 2 };
-        nodeP2.rank = 0;
+        // 创建线段
+        uint32_t line = GeoFactory::CreateLine(graph, p1, p2, false);
 
-        // --- C. 创建线段 L (依赖 P1, P2) ---
-        uint32_t idL = graph.allocate_node();
-        GeoNode& nodeL = graph.node_pool[idL];
-        nodeL.render_type = GeoNode::RenderType::Line;
-        nodeL.parents = { idP1, idP2 };
-        nodeL.data = Data_Line{ idP1, idP2, false }; // false = 线段
-        nodeL.rank = 1;
+        // 创建中点
+        uint32_t mid = GeoFactory::CreateMidpoint(graph, p1, p2);
 
-        // 注册反向依赖 (用于未来可能的局部更新测试)
-        graph.node_pool[idP1].children.push_back(idL);
-        graph.node_pool[idP2].children.push_back(idL);
+
+
+
+        // 3. 渲染顺序 (画家算法)
+        std::vector<uint32_t> draw_order = {  mid, p1, p2 , line };
+
+
 
         // =========================================================
         // 3. 执行全局渲染计算
         // =========================================================
         std::cout << "--- Starting Global Render ---" << std::endl;
 
-        // 绘制顺序：先画线，后画点 (画家算法)
-        std::vector<uint32_t> draw_order = { idL, idP1, idP2 };
+
 
         calculate_points_core(
             wasm_final_contiguous_buffer,

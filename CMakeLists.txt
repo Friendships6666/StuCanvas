@@ -48,7 +48,10 @@ add_executable(WasmTBBTest src/main.cpp
         src/plot/plotSegment.cpp
         include/graph/GeoGraph.h
         src/graph/GeoGraph.cpp
-
+        include/graph/GeoFactory.h
+        src/graph/GeoFactory.cpp
+        include/graph/GeoSolver.h
+        src/graph/GeoSolver.cpp
 
 
 )
