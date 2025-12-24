@@ -68,7 +68,7 @@ FORCE_INLINE void world_to_clip_store(
     // 2. 缩放并转换 (Cast to Float)
     // dx * scale 的结果通常在 [-1, 1] 之间，Float 精度足以表达
     out.position.x = static_cast<float>(dx * map.scale_x);
-    out.position.y = static_cast<float>(dy * map.scale_y);
+    out.position.y = -static_cast<float>(dy * map.scale_y);
     out.function_index = func_idx;
 }
 

@@ -54,14 +54,14 @@ int main() {
         uint32_t idP1 = graph.allocate_node();
         GeoNode& nodeP1 = graph.node_pool[idP1];
         nodeP1.render_type = GeoNode::RenderType::Point;
-        nodeP1.data = Data_Point{ 2.0, 3.0 };
+        nodeP1.data = Data_Point{ 0, 0 };
         nodeP1.rank = 0;
 
         // --- B. 创建自由点 P2 (5, 6) ---
         uint32_t idP2 = graph.allocate_node();
         GeoNode& nodeP2 = graph.node_pool[idP2];
         nodeP2.render_type = GeoNode::RenderType::Point;
-        nodeP2.data = Data_Point{ 15.0, 16.0 };
+        nodeP2.data = Data_Point{ 2, 2 };
         nodeP2.rank = 0;
 
         // --- C. 创建线段 L (依赖 P1, P2) ---
