@@ -74,11 +74,19 @@ namespace GeoFactory {
 
         node.render_type = GeoNode::RenderType::Circle;
         node.parents = { center_id };
-        node.data = Data_Circle{ center_id, radius };
+
+        // ★★★ 修正点：必须初始化中间的 cx, cy ★★★
+        // 假设结构体顺序是 center_id, cx, cy, radius
+        node.data = Data_Circle{ center_id, 0.0, 0.0, radius };
+
         node.solver = Solver_Circle;
 
         LinkAndRank(graph, id, node.parents);
+
+        // 这一步 Solver_Circle 会立即读取 center_id 的坐标
+        // 并把正确的 cx, cy 填入 node.data
         node.solver(node, graph.node_pool);
+
         return id;
     }
 

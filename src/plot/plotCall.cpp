@@ -6,7 +6,7 @@
 #include "../../include/plot/plotParametric.h"
 #include "../../include/plot/plotImplicit.h"
 #include "../../include/functions/lerp.h"
-
+#include "../../include/plot/plotCircle.h" // ★★★ 新增：包含特化圆绘制头文件
 #include <oneapi/tbb/concurrent_queue.h>
 #include <oneapi/tbb/parallel_for_each.h>
 #include <oneapi/tbb/global_control.h>
@@ -124,14 +124,17 @@ namespace {
             }
 
             case GeoNode::RenderType::Circle: {
-                // 绘制圆 (由 Solver_Circle 转换为隐式 RPN 后调用隐式引擎)
                 if (std::holds_alternative<Data_Circle>(node.data)) {
                     const auto& d = std::get<Data_Circle>(node.data);
-                    process_implicit_adaptive(
-                        &queue, view.world_origin, view.wppx, view.wppy,
+
+                    // ★★★ 核心修改：调用特化圆绘制函数 ★★★
+                    process_circle_specialized(
+                        &queue,
+                        d.cx, d.cy, d.radius, // 直接使用 Solver 更新后的缓存数据
+                        node.id,
+                        view.world_origin, view.wppx, view.wppy,
                         view.screen_width, view.screen_height,
-                        d.implicit_rpn, d.implicit_rpn,
-                        node.id, 0.0, 0.0, ndc_map
+                        ndc_map
                     );
                 }
                 break;

@@ -51,30 +51,18 @@ int main() {
         // =========================================================
         GeometryGraph graph;
 
-        // 1. 创建基础线段 AB
-        uint32_t p1 = GeoFactory::CreateFreePoint(graph, 3, 0.0);
-        uint32_t p2 = GeoFactory::CreateFreePoint(graph, 4, 1);
-        uint32_t seg = GeoFactory::CreateLine(graph, p1, p2, false); // 线段模式
+        // 1. 创建圆心 (自由点)
+        uint32_t p_center = GeoFactory::CreateFreePoint(graph, 0, 0);
 
-        // 2. 创建垂线测试
-        // 外部点 p_ext 在上方
-        uint32_t p_ext = GeoFactory::CreateFreePoint(graph, -3, 2);
-        // 过 p_ext 作 seg 的垂线 (设置为无限长直线)
-        uint32_t perp_line = GeoFactory::CreatePerpendicular(graph, seg, p_ext, true);
+        // 2. 创建圆
 
-        // 3. 创建平行线测试
-        // 另一个外部点 p_para_ref 在左侧
-        uint32_t p_para_ref = GeoFactory::CreateFreePoint(graph, -2, 2);
-        // 过 p_para_ref 作 seg 的平行线 (设置为无限长直线)
-        uint32_t para_line = GeoFactory::CreateParallel(graph, seg, p_para_ref);
+        uint32_t circle = GeoFactory::CreateCircle(graph, p_center, 3);
 
-        // 4. 定义渲染顺序 (画家算法：从下往上堆叠)
-        // 顺序：两条动线 -> 原始线段 -> 所有点
+        // 3. 定义渲染顺序 (画家算法)
+        // 通常先画几何形状(圆)，再画点，这样点会盖在线上
         std::vector<uint32_t> draw_order = {
-            perp_line,
-            para_line,
-            seg,
-            p1, p2, p_ext, p_para_ref
+            circle,
+            p_center
         };
 
 

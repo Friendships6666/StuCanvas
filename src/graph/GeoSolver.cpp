@@ -59,19 +59,32 @@ void Solver_Midpoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 }
 
 void Solver_Circle(GeoNode& self, const std::vector<GeoNode>& pool) {
+    // 1. 基础检查
     if (self.parents.empty()) return;
-    const auto& center = std::get<Data_Point>(pool[self.parents[0]].data);
-    auto& circle = std::get<Data_Circle>(self.data);
 
-    if (self.parents.size() > 1) {
-        circle.radius = ExtractValue(pool[self.parents[1]], RPNBinding::VALUE, pool);
+    // 2. 获取数据指针
+    auto& circle_data = std::get<Data_Circle>(self.data);
+
+    // 3. 获取圆心 (Parent 0 必须是 Point)
+    // 注意：这里假设 CreateCircle 时已经做了类型检查
+    if (self.parents[0] < pool.size()) {
+        const auto& center_node = pool[self.parents[0]];
+        if (std::holds_alternative<Data_Point>(center_node.data)) {
+            const auto& p = std::get<Data_Point>(center_node.data);
+            circle_data.cx = p.x;
+            circle_data.cy = p.y;
+        }
     }
 
-    circle.implicit_rpn = {
-        {RPNTokenType::PUSH_X}, {RPNTokenType::PUSH_CONST, center.x}, {RPNTokenType::SUB}, {RPNTokenType::PUSH_CONST, 2.0}, {RPNTokenType::POW},
-        {RPNTokenType::PUSH_Y}, {RPNTokenType::PUSH_CONST, center.y}, {RPNTokenType::SUB}, {RPNTokenType::PUSH_CONST, 2.0}, {RPNTokenType::POW},
-        {RPNTokenType::ADD}, {RPNTokenType::PUSH_CONST, circle.radius * circle.radius}, {RPNTokenType::SUB}
-    };
+    // 4. 获取半径 (Parent 1 可选，如果是标量依赖)
+    if (self.parents.size() > 1) {
+        // 使用通用的 ExtractValue 获取最新的半径值
+        // ExtractValue 需要在 GeoSolver.cpp 内部可见 (前面已定义)
+        circle_data.radius = ExtractValue(pool[self.parents[1]], RPNBinding::VALUE, pool);
+    }
+
+    // 逻辑结束：现在 circle_data 里的 cx, cy, radius 都是最新的
+    // 不需要生成 implicit_rpn
 }
 
 void Solver_DynamicSingleRPN(GeoNode& self, const std::vector<GeoNode>& pool) {

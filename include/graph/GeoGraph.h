@@ -77,10 +77,15 @@ struct Data_Line {
 
 // 圆: 依赖圆心点 ID 和半径 (固定值或标量 ID)
 struct Data_Circle {
+    // 依赖信息
     uint32_t center_id;
+
+
+    double cx;
+    double cy;
     double radius;
-    // 用于 plotImplicit 的 RPN 缓存，由 Solver 维护
-    AlignedVector<RPNToken> implicit_rpn; 
+
+
 };
 
 // =========================================================
