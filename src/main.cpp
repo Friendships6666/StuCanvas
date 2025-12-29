@@ -46,12 +46,7 @@ int main() {
         using namespace GeoFactory;
 
 
-        // =========================================================
-        // 2. 几何依赖图测试：线段 + 垂线 + 平行线
-        // =========================================================
-        // =========================================================
-        // 2. 构建几何依赖图
-        // =========================================================
+
         GeometryGraph graph;
         // 1. 创建圆心
         auto p_center = CreatePoint(graph, 0, 0);
@@ -75,10 +70,19 @@ int main() {
             RPNTokenType::MUL,
             RPNTokenType::SIN
         });
+        auto dynamic_implicit = CreateImplicitFunction(graph, {
+        RPNTokenType::PUSH_X, RPNTokenType::PUSH_X, RPNTokenType::MUL, // x*x
+        RPNTokenType::PUSH_Y, RPNTokenType::PUSH_Y, RPNTokenType::MUL, // y*y
+        RPNTokenType::ADD,                                           // x^2 + y^2
+        Ref(len_AB), Ref(len_AB), RPNTokenType::MUL,                 // Len^2
+        RPNTokenType::SUB                                            // (x^2+y^2) - Len^2
+    });
+
+
         std::vector<uint32_t> draw_order = {
             func,
             circle,
-            pA, pB, p_center
+            pA, pB, p_center,dynamic_implicit
         };
 
         std::cout << "Graph construction successful." << std::endl;

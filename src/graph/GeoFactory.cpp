@@ -8,6 +8,7 @@
 
 namespace GeoFactory {
 
+
     // 辅助：连接父子关系，并检查循环依赖
     static void LinkAndRank(GeometryGraph& graph, uint32_t child_id, const std::vector<uint32_t>& parent_ids) {
         uint32_t max_parent_rank = 0;
@@ -24,6 +25,97 @@ namespace GeoFactory {
             max_parent_rank = std::max(max_parent_rank, graph.node_pool[pid].rank);
         }
         graph.node_pool[child_id].rank = parent_ids.empty() ? 0 : max_parent_rank + 1;
+    }
+    // =========================================================
+    // [内部辅助] 将 MixedToken 编译为 RPN 和 Binding
+    // =========================================================
+    static void CompileMixedTokens(
+        const std::vector<MixedToken>& src,
+        AlignedVector<RPNToken>& out_tokens,
+        std::vector<RPNBinding>& out_bindings,
+        std::vector<uint32_t>& out_parents
+    ) {
+        for (const auto& item : src) {
+            if (std::holds_alternative<RPNTokenType>(item)) {
+                out_tokens.push_back({ std::get<RPNTokenType>(item), 0.0 });
+            }
+            else if (std::holds_alternative<double>(item)) {
+                out_tokens.push_back({ RPNTokenType::PUSH_CONST, std::get<double>(item) });
+            }
+            else if (std::holds_alternative<Ref>(item)) {
+                uint32_t ref_id = std::get<Ref>(item).id;
+                out_tokens.push_back({ RPNTokenType::PUSH_CONST, 0.0 }); // 占位
+
+                // 查找或添加父节点
+                uint32_t p_idx = 0;
+                bool found = false;
+                for(size_t i=0; i<out_parents.size(); ++i) {
+                    if(out_parents[i] == ref_id) { p_idx = (uint32_t)i; found = true; break; }
+                }
+                if(!found) {
+                    out_parents.push_back(ref_id);
+                    p_idx = (uint32_t)out_parents.size() - 1;
+                }
+
+                out_bindings.push_back({ (uint32_t)(out_tokens.size() - 1), p_idx, RPNBinding::VALUE });
+            }
+        }
+    }
+
+    // =========================================================
+    // 创建参数方程：x=f(t), y=g(t)
+    // =========================================================
+    uint32_t CreateParametricFunction(
+        GeometryGraph& graph,
+        const std::vector<MixedToken>& src_x,
+        const std::vector<MixedToken>& src_y,
+        double t_min, double t_max
+    ) {
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+        node.render_type = GeoNode::RenderType::Parametric;
+
+        Data_DualRPN d;
+        d.t_min = t_min;
+        d.t_max = t_max;
+        std::vector<uint32_t> parents;
+
+        // 分别编译 X 和 Y 的 RPN
+        CompileMixedTokens(src_x, d.tokens_x, d.bindings_x, parents);
+        CompileMixedTokens(src_y, d.tokens_y, d.bindings_y, parents);
+
+        node.data = std::move(d);
+        node.parents = parents;
+        node.solver = Solver_DynamicDualRPN; // 使用双 RPN 求解器
+
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
+        return id;
+    }
+
+    // =========================================================
+    // 创建隐函数：f(x, y) = 0
+    // =========================================================
+    uint32_t CreateImplicitFunction(
+        GeometryGraph& graph,
+        const std::vector<MixedToken>& tokens
+    ) {
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+        node.render_type = GeoNode::RenderType::Implicit;
+
+        Data_SingleRPN d;
+        std::vector<uint32_t> parents;
+
+        CompileMixedTokens(tokens, d.tokens, d.bindings, parents);
+
+        node.data = std::move(d);
+        node.parents = parents;
+        node.solver = Solver_DynamicSingleRPN; // 与显函数逻辑一致
+
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
+        return id;
     }
 
 

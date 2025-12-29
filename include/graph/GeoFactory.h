@@ -36,6 +36,27 @@ namespace GeoFactory {
     );
 
     /**
+    * @brief 创建动态参数方程 x = f(t), y = g(t)
+    * @param tokens_x x(t) 的混合 Token 序列
+    * @param tokens_y y(t) 的混合 Token 序列
+    */
+    uint32_t CreateParametricFunction(
+        GeometryGraph& graph,
+        const std::vector<MixedToken>& tokens_x,
+        const std::vector<MixedToken>& tokens_y,
+        double t_min, double t_max
+    );
+
+    /**
+     * @brief 创建动态隐函数 f(x, y) = 0
+     * @param tokens 混合 Token 序列
+     */
+    uint32_t CreateImplicitFunction(
+        GeometryGraph& graph,
+        const std::vector<MixedToken>& tokens
+    );
+
+    /**
      * @brief 创建一个自由移动的点
      */
     uint32_t CreateFreePoint(GeometryGraph& graph, double x, double y);
