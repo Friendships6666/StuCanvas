@@ -4,41 +4,154 @@
 
 #include <algorithm>
 #include <stdexcept>
-
-
+#include <vector> // 确保 vector 被包含
 
 namespace GeoFactory {
 
-    // 辅助函数：连接父子关系并计算 Rank
+    // 辅助：连接父子关系，并检查循环依赖
     static void LinkAndRank(GeometryGraph& graph, uint32_t child_id, const std::vector<uint32_t>& parent_ids) {
         uint32_t max_parent_rank = 0;
         for (uint32_t pid : parent_ids) {
-            // 建立反向索引：告诉父亲你有个孩子
+            // ★ 安全检查：ID 有效性
+            if (pid >= graph.node_pool.size()) throw std::runtime_error("Invalid parent ID");
+
+            // ★★★ 核心：循环依赖检测 ★★★
+            if (graph.DetectCycle(child_id, pid)) {
+                throw std::runtime_error("Circular dependency detected! Calculation graph is invalid.");
+            }
+
             graph.node_pool[pid].children.push_back(child_id);
-            // 计算辈分
             max_parent_rank = std::max(max_parent_rank, graph.node_pool[pid].rank);
         }
-        // 如果有爹，我的 Rank = 爹里最大的 Rank + 1
         graph.node_pool[child_id].rank = parent_ids.empty() ? 0 : max_parent_rank + 1;
     }
 
-    uint32_t CreateFreePoint(GeometryGraph& graph, double x, double y) {
+
+    uint32_t CreatePoint(GeometryGraph& graph, GVar x, GVar y) {
         uint32_t id = graph.allocate_node();
         GeoNode& node = graph.node_pool[id];
-
         node.render_type = GeoNode::RenderType::Point;
-        node.data = Data_Point{ x, y };
-        node.rank = 0; // 自由点永远是 Rank 0
-        node.solver = nullptr; // 自由点不需要计算
 
+        Data_Point d{ x.value, y.value }; // 默认值
+        std::vector<uint32_t> parents;
+
+        // 处理 X 绑定
+        if (x.is_ref) {
+            parents.push_back(x.ref_id);
+            d.bind_index_x = 0;
+        }
+        // 处理 Y 绑定 (复用 parent 或新增)
+        if (y.is_ref) {
+            // 简单处理：总是 push，不复用 parent 也没关系，GeoGraph 支持多 parent
+            // 如果追求极致可以用 map 查重，这里直接 push 逻辑最简单
+            parents.push_back(y.ref_id);
+            d.bind_index_y = parents.size() - 1;
+        }
+
+        // 只要有绑定，就使用通用点求解器
+        if (x.is_ref || y.is_ref) {
+            node.solver = Solver_StandardPoint; // ★ 需要在 GeoSolver 中实现
+        } else {
+            node.solver = nullptr; // 纯静态点无需 Solver
+        }
+
+        node.data = d;
+        node.parents = parents;
+
+        LinkAndRank(graph, id, node.parents);
+        if (node.solver) graph.TouchNode(id);
+        return id;
+    }
+
+    uint32_t CreateFreePoint(GeometryGraph& graph, double x, double y) {
+        return CreatePoint(graph, GVar(x), GVar(y));
+    }
+
+    // =========================================================
+    // 圆创建 (支持动态半径)
+    // =========================================================
+    uint32_t CreateCircle(GeometryGraph& graph, uint32_t center_id, GVar radius) {
+        if (center_id >= graph.node_pool.size()) throw std::runtime_error("Invalid center");
+
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+        node.render_type = GeoNode::RenderType::Circle;
+
+        Data_Circle d;
+        d.center_id = center_id;
+        d.cx = 0; d.cy = 0; // 稍后 Solver 会填
+        d.radius = radius.value;
+
+        std::vector<uint32_t> parents = { center_id };
+
+        if (radius.is_ref) {
+            parents.push_back(radius.ref_id);
+            d.bind_index_radius = 1; // parents[1] 是半径来源
+        }
+
+        node.data = d;
+        node.parents = parents;
+        node.solver = Solver_Circle;
+
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
+        return id;
+    }
+
+    // =========================================================
+    // 显式函数创建 (Token 编译)
+    // =========================================================
+    uint32_t CreateExplicitFunction(GeometryGraph& graph, const std::vector<MixedToken>& tokens) {
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+        node.render_type = GeoNode::RenderType::Explicit;
+
+        Data_SingleRPN d;
+        std::vector<uint32_t> parents;
+
+        for (const auto& item : tokens) {
+            // Case 1: 操作符 (RPNTokenType)
+            if (std::holds_alternative<RPNTokenType>(item)) {
+                d.tokens.push_back({ std::get<RPNTokenType>(item), 0.0 });
+            }
+            // Case 2: 常数 (double)
+            else if (std::holds_alternative<double>(item)) {
+                d.tokens.push_back({ RPNTokenType::PUSH_CONST, std::get<double>(item) });
+            }
+            // Case 3: 变量引用 (Ref) -> 编译为 PUSH_CONST + Binding
+            else if (std::holds_alternative<Ref>(item)) {
+                uint32_t ref_id = std::get<Ref>(item).id;
+
+                // 占位符
+                d.tokens.push_back({ RPNTokenType::PUSH_CONST, 0.0 });
+
+                // 添加到依赖列表
+                parents.push_back(ref_id);
+
+                // 记录绑定
+                d.bindings.push_back({
+                    (uint32_t)(d.tokens.size() - 1), // token index
+                    (uint32_t)(parents.size() - 1),  // parent index
+                    RPNBinding::VALUE
+                });
+            }
+        }
+
+        node.data = std::move(d);
+        node.parents = parents;
+        node.solver = Solver_DynamicSingleRPN;
+
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
         return id;
     }
 
     uint32_t CreateLine(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id, bool is_infinite) {
         // 类型检查
-        if (graph.node_pool[p1_id].render_type != GeoNode::RenderType::Point ||
+        if (p1_id >= graph.node_pool.size() || p2_id >= graph.node_pool.size() ||
+            graph.node_pool[p1_id].render_type != GeoNode::RenderType::Point ||
             graph.node_pool[p2_id].render_type != GeoNode::RenderType::Point) {
-            throw std::runtime_error("Line/Segment must depend on two points.");
+            throw std::runtime_error("Line/Segment must depend on two valid points.");
         }
 
         uint32_t id = graph.allocate_node();
@@ -50,10 +163,18 @@ namespace GeoFactory {
         node.solver = nullptr; // 直线在渲染阶段提取点坐标，不需要 Solver 逻辑
 
         LinkAndRank(graph, id, node.parents);
+        // 不需要 TouchNode，因为 Line 本身没有 Solver
         return id;
     }
 
     uint32_t CreateMidpoint(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id) {
+        // 类型检查
+        if (p1_id >= graph.node_pool.size() || p2_id >= graph.node_pool.size() ||
+            graph.node_pool[p1_id].render_type != GeoNode::RenderType::Point ||
+            graph.node_pool[p2_id].render_type != GeoNode::RenderType::Point) {
+            throw std::runtime_error("Midpoint must depend on two valid points.");
+        }
+
         uint32_t id = graph.allocate_node();
         GeoNode& node = graph.node_pool[id];
 
@@ -63,32 +184,12 @@ namespace GeoFactory {
         node.solver = Solver_Midpoint;
 
         LinkAndRank(graph, id, node.parents);
-        // 立即执行一次计算，让中点位置正确
-        node.solver(node, graph.node_pool);
+        // ★ 统一修改：不再抢跑，依赖 JIT
+        // node.solver(node, graph.node_pool);
+        graph.TouchNode(id); // 注册计算
         return id;
     }
 
-    uint32_t CreateCircle(GeometryGraph& graph, uint32_t center_id, double radius) {
-        uint32_t id = graph.allocate_node();
-        GeoNode& node = graph.node_pool[id];
-
-        node.render_type = GeoNode::RenderType::Circle;
-        node.parents = { center_id };
-
-        // ★★★ 修正点：必须初始化中间的 cx, cy ★★★
-        // 假设结构体顺序是 center_id, cx, cy, radius
-        node.data = Data_Circle{ center_id, 0.0, 0.0, radius };
-
-        node.solver = Solver_Circle;
-
-        LinkAndRank(graph, id, node.parents);
-
-        // 这一步 Solver_Circle 会立即读取 center_id 的坐标
-        // 并把正确的 cx, cy 填入 node.data
-        node.solver(node, graph.node_pool);
-
-        return id;
-    }
 
 
     uint32_t CreateFunction(
@@ -98,6 +199,15 @@ namespace GeoFactory {
         const std::vector<RPNBinding>& bindings,
         const std::vector<uint32_t>& parent_ids
     ) {
+        // 类型检查：确保父节点是 Point 或 Scalar
+        for(uint32_t pid : parent_ids) {
+            if (pid >= graph.node_pool.size()) throw std::runtime_error("Invalid parent ID for function.");
+            auto p_type = graph.node_pool[pid].render_type;
+            if (p_type != GeoNode::RenderType::Point && p_type != GeoNode::RenderType::Scalar) {
+                 throw std::runtime_error("Function can only depend on Points or Scalars.");
+            }
+        }
+
         uint32_t id = graph.allocate_node();
         GeoNode& node = graph.node_pool[id];
 
@@ -111,122 +221,172 @@ namespace GeoFactory {
         node.solver = Solver_DynamicSingleRPN;
 
         LinkAndRank(graph, id, node.parents);
-        node.solver(node, graph.node_pool);
+        // ★ 统一修改：不再抢跑
+        // node.solver(node, graph.node_pool);
+        graph.TouchNode(id); // 注册计算
         return id;
     }
+
     uint32_t CreatePerpendicular(GeometryGraph& graph, uint32_t segment_id, uint32_t point_id, bool is_infinite) {
         // 类型检查
-        if (graph.node_pool[segment_id].render_type != GeoNode::RenderType::Line) {
-            throw std::runtime_error("垂线的依赖对象必须是线段/直线");
+        if (segment_id >= graph.node_pool.size() || point_id >= graph.node_pool.size() ||
+            graph.node_pool[segment_id].render_type != GeoNode::RenderType::Line ||
+            graph.node_pool[point_id].render_type != GeoNode::RenderType::Point) {
+            throw std::runtime_error("Perpendicular requires a Line and a Point as dependencies.");
         }
 
-        // --- 步骤 1: 创建垂足点 (Foot Point) ---
         uint32_t foot_id = graph.allocate_node();
-        GeoNode& foot_node = graph.node_pool[foot_id];
+        {
+            GeoNode& foot_node = graph.node_pool[foot_id];
+            foot_node.render_type = GeoNode::RenderType::Point;
+            foot_node.parents = { segment_id, point_id };
+            foot_node.solver = Solver_PerpendicularFoot;
+            foot_node.data = Data_Point{ 0, 0 }; // 初始占位
 
-        foot_node.render_type = GeoNode::RenderType::Point;
-        foot_node.parents = { segment_id, point_id };
-        foot_node.solver = Solver_PerpendicularFoot;
-        foot_node.data = Data_Point{ 0, 0 }; // 初始占位
+            // 计算 Rank
+            uint32_t max_r = std::max(graph.node_pool[segment_id].rank, graph.node_pool[point_id].rank);
+            foot_node.rank = max_r + 1;
 
-        // 手动处理依赖绑定和 Rank
-        uint32_t max_r = std::max(graph.node_pool[segment_id].rank, graph.node_pool[point_id].rank);
-        foot_node.rank = max_r + 1;
-        graph.node_pool[segment_id].children.push_back(foot_id);
-        graph.node_pool[point_id].children.push_back(foot_id);
+            // 建立依赖关系
+            graph.node_pool[segment_id].children.push_back(foot_id);
+            graph.node_pool[point_id].children.push_back(foot_id);
 
-        // 执行初始计算，确定位置
-        foot_node.solver(foot_node, graph.node_pool);
+            // ★ 统一修改：不再抢跑，依赖 JIT
+            // foot_node.solver(foot_node, graph.node_pool);
+            graph.TouchNode(foot_id); // 注册计算
+        }
 
-        // --- 步骤 2: 创建最终的垂线对象 (Line) ---
-        // 这个对象连接原点和垂足
+        // 创建垂线 (本身不计算，只是定义关系)
         uint32_t line_id = graph.allocate_node();
         GeoNode& line_node = graph.node_pool[line_id];
 
-        line_node.render_type = GeoNode::RenderType::Line;
-        line_node.parents = { point_id, foot_id };
-        line_node.data = Data_Line{ point_id, foot_id, is_infinite };
-        line_node.solver = nullptr; // 直线本身不需要 solver，渲染时取点坐标即可
-        line_node.rank = foot_node.rank + 1;
+        // 安全获取 rank (垂足的 rank)
+        uint32_t foot_rank = graph.node_pool[foot_id].rank;
 
-        // 建立反向索引
+        line_node.render_type = GeoNode::RenderType::Line;
+        line_node.parents = { point_id, foot_id }; // 依赖外部点和垂足
+        line_node.data = Data_Line{ point_id, foot_id, is_infinite };
+        line_node.solver = nullptr; // Line 渲染时直接取端点坐标
+        line_node.rank = foot_rank + 1;
+
         graph.node_pool[point_id].children.push_back(line_id);
         graph.node_pool[foot_id].children.push_back(line_id);
 
         return line_id;
     }
 
-
-    void Solver_ParallelPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
-        if (self.parents.size() < 2) return;
-
-        // 1. 获取参考线段 (Parent 0) 和 通过点 (Parent 1)
-        const auto& segmentNode = pool[self.parents[0]];
-        const auto& throughPointNode = pool[self.parents[1]];
-
-        const auto& segData = std::get<Data_Line>(segmentNode.data);
-
-        // 获取线段的两个端点坐标 A, B
-        const auto& pA = std::get<Data_Point>(pool[segData.p1_id].data);
-        const auto& pB = std::get<Data_Point>(pool[segData.p2_id].data);
-        // 获取通过点 P 的坐标
-        const auto& pP = std::get<Data_Point>(throughPointNode.data);
-
-        // 2. 计算平行向量 v = B - A
-        double vx = pB.x - pA.x;
-        double vy = pB.y - pA.y;
-
-        // 3. 计算新参考点 P' = P + v
-        Data_Point p_prime;
-        p_prime.x = pP.x + vx;
-        p_prime.y = pP.y + vy;
-
-        self.data = p_prime;
-    }
-
-
     uint32_t CreateParallel(GeometryGraph& graph, uint32_t segment_id, uint32_t point_id) {
-        // 1. 类型检查
-        if (graph.node_pool[segment_id].render_type != GeoNode::RenderType::Line) {
-            throw std::runtime_error("平行线的参考对象必须是线段或直线");
+        // 类型检查
+        if (segment_id >= graph.node_pool.size() || point_id >= graph.node_pool.size() ||
+            graph.node_pool[segment_id].render_type != GeoNode::RenderType::Line ||
+            graph.node_pool[point_id].render_type != GeoNode::RenderType::Point) {
+             throw std::runtime_error("Parallel requires a Line and a Point.");
         }
 
-        // --- 步骤 1: 创建平移参考点 (Parallel Helper Point) ---
         uint32_t helper_id = graph.allocate_node();
-        GeoNode& helper_node = graph.node_pool[helper_id];
+        {
+            GeoNode& helper_node = graph.node_pool[helper_id];
+            helper_node.render_type = GeoNode::RenderType::Point;
+            helper_node.parents = { segment_id, point_id };
+            helper_node.solver = Solver_ParallelPoint;
+            helper_node.data = Data_Point{ 0, 0 }; // 初始占位
+            helper_node.is_visible = false; // 辅助点不渲染
 
-        helper_node.render_type = GeoNode::RenderType::Point;
-        helper_node.parents = { segment_id, point_id };
-        helper_node.solver = Solver_ParallelPoint;
-        helper_node.data = Data_Point{ 0, 0 };
-        helper_node.is_visible = false; // 辅助点通常不需要渲染
+            // 计算 Rank
+            uint32_t max_r = std::max(graph.node_pool[segment_id].rank, graph.node_pool[point_id].rank);
+            helper_node.rank = max_r + 1;
 
-        // 计算 Rank
-        uint32_t max_r = std::max(graph.node_pool[segment_id].rank, graph.node_pool[point_id].rank);
-        helper_node.rank = max_r + 1;
+            // 建立依赖
+            graph.node_pool[segment_id].children.push_back(helper_id);
+            graph.node_pool[point_id].children.push_back(helper_id);
 
-        // 绑定依赖
-        graph.node_pool[segment_id].children.push_back(helper_id);
-        graph.node_pool[point_id].children.push_back(helper_id);
+            // ★ 统一修改：不再抢跑
+            // helper_node.solver(helper_node, graph.node_pool);
+            graph.TouchNode(helper_id); // 注册计算
+        }
 
-        // 初始计算位置
-        helper_node.solver(helper_node, graph.node_pool);
-
-        // --- 步骤 2: 创建最终的平行直线 ---
+        // 创建平行线 (定义关系，不计算)
         uint32_t line_id = graph.allocate_node();
         GeoNode& line_node = graph.node_pool[line_id];
 
-        line_node.render_type = GeoNode::RenderType::Line;
-        line_node.parents = { point_id, helper_id };
-        line_node.data = Data_Line{ point_id, helper_id, true }; // 默认为无限直线
-        line_node.solver = nullptr; // 渲染层直接取两点坐标
-        line_node.rank = helper_node.rank + 1;
+        // 安全获取 rank
+        uint32_t helper_rank = graph.node_pool[helper_id].rank;
 
-        // 绑定依赖
+        line_node.render_type = GeoNode::RenderType::Line;
+        line_node.parents = { point_id, helper_id }; // 依赖通过点和辅助点
+        line_node.data = Data_Line{ point_id, helper_id, true }; // true=无限长
+        line_node.solver = nullptr; // Line 本身不计算
+        line_node.rank = helper_rank + 1;
+
         graph.node_pool[point_id].children.push_back(line_id);
         graph.node_pool[helper_id].children.push_back(line_id);
 
         return line_id;
     }
 
-} // namespace GeoFactory
+    uint32_t CreateConstrainedPoint(GeometryGraph& graph, uint32_t target_id, double initial_x, double initial_y) {
+        if (target_id >= graph.node_pool.size()) throw std::runtime_error("ConstrainedPoint requires a valid target object.");
+
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+
+        node.render_type = GeoNode::RenderType::Point;
+        node.parents = { target_id }; // 依赖目标对象
+        node.data = Data_Point{ initial_x, initial_y }; // 存储当前坐标
+        node.solver = Solver_ConstrainedPoint;
+
+        LinkAndRank(graph, id, node.parents);
+
+        // ★ 统一修改：不再抢跑，依赖 JIT
+        // node.solver(node, graph.node_pool); // 之前为了立刻看到效果加的，但要统一就删掉
+        graph.TouchNode(id); // 注册计算
+        return id;
+    }
+
+    uint32_t CreateTangent(GeometryGraph& graph, uint32_t constrained_point_id) {
+        if (constrained_point_id >= graph.node_pool.size() ||
+            graph.node_pool[constrained_point_id].render_type != GeoNode::RenderType::Point) {
+             throw std::runtime_error("Tangent requires a Point as dependency.");
+        }
+
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+
+        node.render_type = GeoNode::RenderType::Line; // 渲染类型是 Line
+        node.parents = { constrained_point_id };      // 依赖那个约束点
+
+        // 初始数据 (占位)
+        node.data = Data_CalculatedLine{0,0,0,0, true}; // 默认为无限长直线
+        node.solver = Solver_Tangent; // 绑定专用求解器
+
+        LinkAndRank(graph, id, node.parents);
+
+        // ★ 统一修改：不再抢跑
+        // node.solver(node, graph.node_pool);
+        graph.TouchNode(id); // 注册计算
+        return id;
+    }
+    uint32_t CreateMeasureLength(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id) {
+        // 类型检查
+        if (p1_id >= graph.node_pool.size() || p2_id >= graph.node_pool.size()) {
+            throw std::runtime_error("Invalid points for measurement.");
+        }
+
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+
+        node.render_type = GeoNode::RenderType::Scalar; // 类型是标量
+        node.parents = { p1_id, p2_id };
+
+        node.data = Data_Scalar{ 0.0, ScalarType::Length }; // 初始值为 0
+        node.solver = Solver_Measure_Length; // 绑定测量求解器
+
+        LinkAndRank(graph, id, node.parents);
+
+        // 注册到 JIT 队列
+        graph.TouchNode(id);
+
+        return id;
+    }
+
+}

@@ -42,6 +42,8 @@ void process_two_point_line(
     double offset_x, double offset_y, // 对应头文件签名
     const NDCMap& ndc_map
 ) {
+
+
     // 1. 计算视口边界 (World Space)
     double wx_end = world_origin.x + screen_width * wppx;
     double wy_end = world_origin.y + screen_height * wppy;

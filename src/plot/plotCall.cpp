@@ -6,9 +6,10 @@
 #include "../../include/plot/plotParametric.h"
 #include "../../include/plot/plotImplicit.h"
 #include "../../include/functions/lerp.h"
-#include "../../include/plot/plotCircle.h" // ★★★ 新增：包含特化圆绘制头文件
+#include "../../include/plot/plotCircle.h"
 #include <oneapi/tbb/concurrent_queue.h>
 #include <oneapi/tbb/parallel_for_each.h>
+#include "../../pch.h"
 #include <oneapi/tbb/global_control.h>
 #include <variant>
 #include <algorithm>
@@ -75,7 +76,7 @@ namespace {
     private:
         AlignedVector<PointData>& m_buffer;
         std::vector<GeoNode>& m_nodes;
-        size_t m_write_ptr;
+        size_t m_write_ptr{};
     };
 
     // =========================================================
@@ -89,13 +90,14 @@ namespace {
         const NDCMap& ndc_map,
         oneapi::tbb::concurrent_bounded_queue<FunctionResult>& queue
     ) {
+
         switch (node.render_type) {
 
             case GeoNode::RenderType::Point: {
                 // 绘制单一几何点 (自由点、中点、交点、约束点)
                 if (std::holds_alternative<Data_Point>(node.data)) {
                     const auto& p = std::get<Data_Point>(node.data);
-                    PointData pd;
+                    PointData pd{};
                     // 执行 Double -> Float Clip 转换
                     world_to_clip_store(pd, p.x, p.y, ndc_map, node.id);
                     queue.push({ node.id, {pd} });
@@ -104,16 +106,25 @@ namespace {
             }
 
             case GeoNode::RenderType::Line: {
-                // 绘制直线或线段
+                // 情况 A: 依赖两个点 ID 的普通线 (如连接两点)
                 if (std::holds_alternative<Data_Line>(node.data)) {
                     const auto& d = std::get<Data_Line>(node.data);
-                    // 动态提取父节点(端点)的最新数学坐标
                     const auto& p1 = std::get<Data_Point>(pool[d.p1_id].data);
                     const auto& p2 = std::get<Data_Point>(pool[d.p2_id].data);
-
-                    // 调用 Liang-Barsky 裁剪算法
                     process_two_point_line(
                         &queue, p1.x, p1.y, p2.x, p2.y,
+                        !d.is_infinite, node.id,
+                        view.world_origin, view.wppx, view.wppy,
+                        view.screen_width, view.screen_height,
+                        0.0, 0.0, ndc_map
+                    );
+                }
+                // ★★★ 情况 B: 求解器直接算出的线 (切线) ★★★
+                // 直接使用结构体里的坐标，不需要查 ID
+                else if (std::holds_alternative<Data_CalculatedLine>(node.data)) {
+                    const auto& d = std::get<Data_CalculatedLine>(node.data);
+                    process_two_point_line(
+                        &queue, d.x1, d.y1, d.x2, d.y2,
                         !d.is_infinite, node.id,
                         view.world_origin, view.wppx, view.wppy,
                         view.screen_width, view.screen_height,
@@ -126,11 +137,9 @@ namespace {
             case GeoNode::RenderType::Circle: {
                 if (std::holds_alternative<Data_Circle>(node.data)) {
                     const auto& d = std::get<Data_Circle>(node.data);
-
-                    // ★★★ 核心修改：调用特化圆绘制函数 ★★★
                     process_circle_specialized(
                         &queue,
-                        d.cx, d.cy, d.radius, // 直接使用 Solver 更新后的缓存数据
+                        d.cx, d.cy, d.radius,
                         node.id,
                         view.world_origin, view.wppx, view.wppy,
                         view.screen_width, view.screen_height,
@@ -145,7 +154,6 @@ namespace {
                 if (std::holds_alternative<Data_SingleRPN>(node.data)) {
                     const auto& d = std::get<Data_SingleRPN>(node.data);
                     process_explicit_chunk(
-
                         view.world_origin.x, view.world_origin.x + view.screen_width * view.wppx,
                         d.tokens, &queue, node.id, view.screen_width, ndc_map
                     );
@@ -195,13 +203,14 @@ void calculate_points_core(
     const ViewState& view,
     bool is_global_update
 ) {
+    g_global_view_state = view;
+
     // A. 准备坐标转换器 (NDCMap)
-    // 即使是局部更新，视图中心也可能微调，每一帧刷新一次 map 保证一致性
     double half_w = view.screen_width * 0.5;
     double half_h = view.screen_height * 0.5;
     Vec2 center_world = screen_to_world_inline({half_w, half_h}, view.world_origin, view.wppx, view.wppy);
 
-    NDCMap ndc_map;
+    NDCMap ndc_map{};
     ndc_map.center_x = center_world.x;
     ndc_map.center_y = center_world.y;
     ndc_map.scale_x = 2.0 / (view.screen_width * view.wppx);
@@ -209,63 +218,80 @@ void calculate_points_core(
 
     // B. 初始化并发队列与收集器
     oneapi::tbb::concurrent_bounded_queue<FunctionResult> results_queue;
-    results_queue.set_capacity(2048); // 限制容量以控制背压
+    results_queue.set_capacity(2048);
     ResultCollector collector(out_points, node_pool, is_global_update);
 
-    // C. 执行计算调度
+    /// C. 执行计算调度
     if (is_global_update) {
-        // --- 全局模式：严格批次串行，批内并行 ---
+        // --- 阶段 1: 依赖发现 (BFS) ---
+        // 目的：找出 draw_order 中所有节点依赖的祖先节点（包括不渲染的中间节点，如垂足）
+        std::unordered_set<uint32_t> nodes_to_solve;
+        std::vector<uint32_t> q;
+        q.reserve(draw_order.size());
 
-        // 1. 分类整理 ID
-        std::vector<uint32_t> batch_geom, batch_explicit, batch_parametric, batch_implicit;
+        // 种子：将所有渲染目标加入队列
         for (uint32_t id : draw_order) {
-            auto type = node_pool[id].render_type;
-            if (type == GeoNode::RenderType::Point || type == GeoNode::RenderType::Line)
-                batch_geom.push_back(id);
-            else if (type == GeoNode::RenderType::Explicit)
-                batch_explicit.push_back(id);
-            else if (type == GeoNode::RenderType::Parametric)
-                batch_parametric.push_back(id);
-            else if (type == GeoNode::RenderType::Implicit || type == GeoNode::RenderType::Circle)
-                batch_implicit.push_back(id);
+            if (nodes_to_solve.insert(id).second) {
+                q.push_back(id);
+            }
         }
 
-        // 2. 依次运行批次（阻塞刷新）
-        auto ExecuteBatch = [&](const std::vector<uint32_t>& batch) {
-            if (batch.empty()) return;
+        // 扩散：向上查找父节点
+        size_t head = 0;
+        while(head < q.size()){
+            uint32_t curr_id = q[head++];
+            const GeoNode& node = node_pool[curr_id];
+            for (uint32_t pid : node.parents) {
+                // 如果父节点还没被加入，则加入队列
+                if (nodes_to_solve.insert(pid).second) {
+                    q.push_back(pid);
+                }
+            }
+        }
 
-            // 阶段内全员并行
+        // --- 阶段 2: 拓扑分层 (Rank Bucketing) ---
+
+        // 1. 扫描最大 Rank (注意：必须遍历 nodes_to_solve 全集)
+        uint32_t max_rank = 0;
+        for (uint32_t id : nodes_to_solve) {
+            if (node_pool[id].rank > max_rank) max_rank = node_pool[id].rank;
+        }
+
+        // 2. 创建 Rank 桶 (注意：必须遍历 nodes_to_solve 全集)
+        std::vector<std::vector<uint32_t>> rank_batches(max_rank + 1);
+        for (uint32_t id : nodes_to_solve) {
+            rank_batches[node_pool[id].rank].push_back(id);
+        }
+
+        // 3. 标记绘制目标 (用于在执行时区分只算不画的节点)
+        std::vector<bool> is_draw_target(node_pool.size(), false);
+        for(uint32_t id : draw_order) is_draw_target[id] = true;
+
+        // --- 阶段 3: 逐层执行 (Layer-by-Layer Execution) ---
+        for (const auto& batch : rank_batches) {
+            if (batch.empty()) continue;
+
+            // 并行处理当前 Rank 层的所有节点
             oneapi::tbb::parallel_for_each(batch.begin(), batch.end(), [&](uint32_t id) {
-                DispatchNodeTask(node_pool[id], node_pool, view, ndc_map, results_queue);
+                GeoNode& node = node_pool[id];
+
+                // [Step A: JIT 求解]
+                // 无论是否需要绘制，只要有 Solver 就必须运行。
+                // 这确保了下一层节点能读取到正确的数据（例如：先算好垂足坐标，才能算垂线）。
+                if (node.solver) {
+                    node.solver(node, node_pool);
+                }
+
+                // [Step B: 绘制分发]
+                // 只有在 draw_order 里的节点才生成 PointData
+                if (is_draw_target[id]) {
+                    DispatchNodeTask(node, node_pool, view, ndc_map, results_queue);
+                }
             });
 
-            // ★★★ 关键阻塞点：该类函数必须全部写回显存，才开始下一类 ★★★
-            collector.Flush(results_queue);
-        };
-
-        ExecuteBatch(batch_geom);       // 1. 几何
-        ExecuteBatch(batch_explicit);   // 2. 显函数
-        ExecuteBatch(batch_parametric); // 3. 参数方程
-        ExecuteBatch(batch_implicit);   // 4. 隐函数 & 圆
-
-    } else {
-        // --- 局部模式：仅针对脏节点增量计算 ---
-        if (!dirty_node_ids.empty()) {
-            oneapi::tbb::parallel_for_each(dirty_node_ids.begin(), dirty_node_ids.end(), [&](uint32_t id) {
-                DispatchNodeTask(node_pool[id], node_pool, view, ndc_map, results_queue);
-            });
-            // 追加写入末尾
+            // [Barrier] 关键同步点：
+            // 必须等待当前层所有数据写回 Buffer，才能开始下一层计算。
             collector.Flush(results_queue);
         }
-    }
-
-    // D. 组装 WebGPU 绘制范围 (FunctionRanges)
-    // 无论局部还是全局更新，Ranges 必须每一帧完整重建，以维持画家算法顺序
-    out_ranges.clear();
-    out_ranges.reserve(draw_order.size());
-    for (uint32_t id : draw_order) {
-        const GeoNode& node = node_pool[id];
-        // 这里的 node.buffer_offset 已经由 collector 刷新为最新物理地址
-        out_ranges.push_back({ node.buffer_offset, node.current_point_count });
     }
 }

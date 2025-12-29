@@ -7,17 +7,7 @@
 #include <vector>
 #include <tuple>
 
-// 视图状态定义
-struct ViewState {
-    double screen_width;
-    double screen_height;
-    double offset_x;
-    double offset_y;
-    double zoom;
-    Vec2 world_origin;
-    double wppx;
-    double wppy;
-};
+
 
 // 并发计算结果载体
 struct FunctionResult {

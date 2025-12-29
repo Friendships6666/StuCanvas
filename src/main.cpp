@@ -8,9 +8,7 @@
 #include <vector>
 #include <iomanip>
 
-// 全局模拟 Buffer (对应 WASM 里的 SharedArrayBuffer)
-AlignedVector<PointData> wasm_final_contiguous_buffer;
-AlignedVector<FunctionRange> wasm_function_ranges_buffer;
+
 
 int main() {
     try {
@@ -45,25 +43,45 @@ int main() {
         view.world_origin = world_origin;
         view.wppx = wppx;
         view.wppy = wppy;
+        using namespace GeoFactory;
+
 
         // =========================================================
         // 2. 几何依赖图测试：线段 + 垂线 + 平行线
         // =========================================================
+        // =========================================================
+        // 2. 构建几何依赖图
+        // =========================================================
         GeometryGraph graph;
+        // 1. 创建圆心
+        auto p_center = CreatePoint(graph, 0, 0);
 
-        // 1. 创建圆心 (自由点)
-        uint32_t p_center = GeoFactory::CreateFreePoint(graph, 0, 0);
+        // 2. 创建两个自由点
+        auto pA = CreatePoint(graph, 3, 4);
+        auto pB = CreatePoint(graph, -2, 2);
 
-        // 2. 创建圆
+        // 3. 测量距离 (Scalar)
+        auto len_AB = CreateMeasureLength(graph, pA, pB);
 
-        uint32_t circle = GeoFactory::CreateCircle(graph, p_center, 3);
+        // 4. 创建圆：半径绑定到 Length(AB)
+        // 这里的半径是动态的！
+        auto circle = CreateCircle(graph, p_center, Ref(len_AB));
 
-        // 3. 定义渲染顺序 (画家算法)
-        // 通常先画几何形状(圆)，再画点，这样点会盖在线上
+        // 5. 创建显式函数 y = sin(Len * x)
+        // 使用混合 Token，无需字符串解析
+        auto func = CreateExplicitFunction(graph, {
+            RPNTokenType::PUSH_X,
+            10.0,
+            RPNTokenType::MUL,
+            RPNTokenType::SIN
+        });
         std::vector<uint32_t> draw_order = {
+            func,
             circle,
-            p_center
+            pA, pB, p_center
         };
+
+        std::cout << "Graph construction successful." << std::endl;
 
 
 
@@ -95,6 +113,7 @@ int main() {
             view,
             true   // is_global_update = true
         );
+
 
         // 3. 记录结束时间点
         auto end_time = std::chrono::high_resolution_clock::now();

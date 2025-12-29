@@ -22,7 +22,7 @@
 #include <fstream>
 #include <iomanip>
 #include <cstdint>
-
+#include <unordered_set>
 // 第三方库
 #include <xsimd/xsimd.hpp>
 #include "oneapi/tbb/concurrent_vector.h"
@@ -54,6 +54,23 @@ using batch_type = xs::batch<double>;
 
 // 定义一个可以在编译期获取 SIMD 宽度的常量。
 constexpr size_t BATCH_SIZE = batch_type::size;
+// 全局模拟 Buffer (对应 WASM 里的 SharedArrayBuffer)
+inline AlignedVector<PointData> wasm_final_contiguous_buffer;
+inline AlignedVector<FunctionRange> wasm_function_ranges_buffer;
+
+
+// 视图状态定义
+struct ViewState {
+    double screen_width;
+    double screen_height;
+    double offset_x;
+    double offset_y;
+    double zoom;
+    Vec2 world_origin;
+    double wppx;
+    double wppy;
+};
+inline ViewState g_global_view_state;
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

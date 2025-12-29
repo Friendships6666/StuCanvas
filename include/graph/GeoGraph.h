@@ -35,9 +35,11 @@ struct Data_Scalar {
     ScalarType type = ScalarType::Manual;
 };
 // 所有“点”的最终输出结果
-struct Data_Point { 
-    double x; 
-    double y; 
+struct Data_Point {
+    double x;
+    double y;
+    std::optional<uint32_t> bind_index_x;
+    std::optional<uint32_t> bind_index_y;
 };
 
 // 约束点额外信息: 依赖一个对象 ID (Line/Circle/Function)
@@ -84,10 +86,15 @@ struct Data_Circle {
     double cx;
     double cy;
     double radius;
+    std::optional<uint32_t> bind_index_radius;
 
 
 };
-
+struct Data_CalculatedLine {
+    double x1, y1;
+    double x2, y2;
+    bool is_infinite; // true=直线, false=线段
+};
 // =========================================================
 // 2. 节点定义与类型检查
 // =========================================================
@@ -121,6 +128,7 @@ struct GeoNode {
     uint32_t current_point_count = 0;
     uint32_t last_update_frame = 0;
 
+
     // 数据变体
     using GeoPayload = std::variant<
         std::monostate,
@@ -128,6 +136,7 @@ struct GeoNode {
         Data_ConstrainedPoint,  // 约束点逻辑
         Data_IntersectionPoint, // 交点逻辑
         Data_Line,              // 直线逻辑
+        Data_CalculatedLine,    // ★ 新增：直接存坐标的线 (新)
         Data_Circle,            // 圆逻辑
         Data_SingleRPN,         // 函数
         Data_DualRPN,           // 参数方程
@@ -149,8 +158,8 @@ struct GeoNode {
 
 class GeometryGraph {
 public:
-    std::vector<GeoNode> node_pool;
-    std::vector<std::vector<uint32_t>> buckets;
+    std::vector<GeoNode> node_pool{};
+    std::vector<std::vector<uint32_t>> buckets{};
     uint32_t current_frame_index = 1;
     int min_dirty_rank = 10000, max_dirty_rank = 0;
 
@@ -158,6 +167,7 @@ public:
     uint32_t allocate_node();
     void TouchNode(uint32_t id);
     std::vector<uint32_t> SolveFrame();
+    bool DetectCycle(uint32_t child_id, uint32_t parent_id) const;
 
 private:
     void Enqueue(GeoNode& node);
