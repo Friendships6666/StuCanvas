@@ -221,8 +221,7 @@ namespace GeoFactory {
         node.solver = Solver_DynamicSingleRPN;
 
         LinkAndRank(graph, id, node.parents);
-        // ★ 统一修改：不再抢跑
-        // node.solver(node, graph.node_pool);
+
         graph.TouchNode(id); // 注册计算
         return id;
     }
@@ -251,8 +250,7 @@ namespace GeoFactory {
             graph.node_pool[segment_id].children.push_back(foot_id);
             graph.node_pool[point_id].children.push_back(foot_id);
 
-            // ★ 统一修改：不再抢跑，依赖 JIT
-            // foot_node.solver(foot_node, graph.node_pool);
+
             graph.TouchNode(foot_id); // 注册计算
         }
 
