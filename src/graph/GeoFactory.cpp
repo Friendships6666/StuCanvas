@@ -9,6 +9,7 @@
 namespace GeoFactory {
 
 
+
     // 辅助：连接父子关系，并检查循环依赖
     static void LinkAndRank(GeometryGraph& graph, uint32_t child_id, const std::vector<uint32_t>& parent_ids) {
         uint32_t max_parent_rank = 0;
@@ -26,9 +27,47 @@ namespace GeoFactory {
         }
         graph.node_pool[child_id].rank = parent_ids.empty() ? 0 : max_parent_rank + 1;
     }
-    // =========================================================
-    // [内部辅助] 将 MixedToken 编译为 RPN 和 Binding
-    // =========================================================
+    uint32_t CreateScalar(GeometryGraph& graph, const RPNParam& expr) {
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+        node.render_type = GeoNode::RenderType::Scalar;
+        node.is_visible = false;
+
+        Data_Scalar d;
+        std::vector<uint32_t> parents;
+
+        for (const auto& item : expr) {
+            if (std::holds_alternative<RPNTokenType>(item)) {
+                RPNTokenType type = std::get<RPNTokenType>(item);
+                // 强制检查：标量 RPN 不允许包含坐标变量
+                if (type == RPNTokenType::PUSH_X || type == RPNTokenType::PUSH_Y || type == RPNTokenType::PUSH_T) {
+                    throw std::runtime_error("Scalar RPN cannot contain x, y, or t tokens.");
+                }
+                d.tokens.push_back({type, 0.0});
+            } else if (std::holds_alternative<double>(item)) {
+                d.tokens.push_back({RPNTokenType::PUSH_CONST, std::get<double>(item)});
+            } else if (std::holds_alternative<Ref>(item)) {
+                uint32_t ref_id = std::get<Ref>(item).id;
+                d.tokens.push_back({RPNTokenType::PUSH_CONST, 0.0}); // 占位
+
+                // 查找父节点索引
+                uint32_t p_idx = 0; bool found = false;
+                for(size_t i=0; i<parents.size(); ++i) if(parents[i]==ref_id){p_idx=(uint32_t)i;found=true;break;}
+                if(!found){parents.push_back(ref_id); p_idx=(uint32_t)parents.size()-1;}
+
+                d.bindings.push_back({(uint32_t)(d.tokens.size()-1), p_idx, RPNBinding::VALUE});
+            }
+        }
+
+        node.data = std::move(d);
+        node.parents = parents;
+        node.solver = Solver_ScalarRPN;
+
+        // 此处 LinkAndRank 内部会自动执行 DetectCycle
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
+        return id;
+    }
     static void CompileMixedTokens(
         const std::vector<MixedToken>& src,
         AlignedVector<RPNToken>& out_tokens,
@@ -119,76 +158,55 @@ namespace GeoFactory {
     }
 
 
-    uint32_t CreatePoint(GeometryGraph& graph, GVar x, GVar y) {
+    uint32_t CreatePoint(GeometryGraph& graph, const RPNParam& x_expr, const RPNParam& y_expr) {
+        // 先创建两个标量节点
+        uint32_t sx = CreateScalar(graph, x_expr);
+        uint32_t sy = CreateScalar(graph, y_expr);
+
         uint32_t id = graph.allocate_node();
         GeoNode& node = graph.node_pool[id];
         node.render_type = GeoNode::RenderType::Point;
-
-        Data_Point d{ x.value, y.value }; // 默认值
-        std::vector<uint32_t> parents;
-
-        // 处理 X 绑定
-        if (x.is_ref) {
-            parents.push_back(x.ref_id);
-            d.bind_index_x = 0;
-        }
-        // 处理 Y 绑定 (复用 parent 或新增)
-        if (y.is_ref) {
-            // 简单处理：总是 push，不复用 parent 也没关系，GeoGraph 支持多 parent
-            // 如果追求极致可以用 map 查重，这里直接 push 逻辑最简单
-            parents.push_back(y.ref_id);
-            d.bind_index_y = parents.size() - 1;
-        }
-
-        // 只要有绑定，就使用通用点求解器
-        if (x.is_ref || y.is_ref) {
-            node.solver = Solver_StandardPoint; // ★ 需要在 GeoSolver 中实现
-        } else {
-            node.solver = nullptr; // 纯静态点无需 Solver
-        }
-
-        node.data = d;
-        node.parents = parents;
-
-        LinkAndRank(graph, id, node.parents);
-        if (node.solver) graph.TouchNode(id);
-        return id;
-    }
-
-    uint32_t CreateFreePoint(GeometryGraph& graph, double x, double y) {
-        return CreatePoint(graph, GVar(x), GVar(y));
-    }
-
-    // =========================================================
-    // 圆创建 (支持动态半径)
-    // =========================================================
-    uint32_t CreateCircle(GeometryGraph& graph, uint32_t center_id, GVar radius) {
-        if (center_id >= graph.node_pool.size()) throw std::runtime_error("Invalid center");
-
-        uint32_t id = graph.allocate_node();
-        GeoNode& node = graph.node_pool[id];
-        node.render_type = GeoNode::RenderType::Circle;
-
-        Data_Circle d;
-        d.center_id = center_id;
-        d.cx = 0; d.cy = 0; // 稍后 Solver 会填
-        d.radius = radius.value;
-
-        std::vector<uint32_t> parents = { center_id };
-
-        if (radius.is_ref) {
-            parents.push_back(radius.ref_id);
-            d.bind_index_radius = 1; // parents[1] 是半径来源
-        }
-
-        node.data = d;
-        node.parents = parents;
-        node.solver = Solver_Circle;
+        node.parents = { sx, sy };
+        node.data = Data_Point{}; // 初始 0,0
+        node.solver = Solver_StandardPoint;
 
         LinkAndRank(graph, id, node.parents);
         graph.TouchNode(id);
         return id;
     }
+
+
+
+    // =========================================================
+    // 圆创建 (支持动态半径)
+    // =========================================================
+    // --- 文件路径: src/graph/GeoFactory.cpp ---
+
+    uint32_t CreateCircle(GeometryGraph& graph, uint32_t center_id, const RPNParam& radius_expr) {
+        // 1. 先为半径创建一个标量节点
+        uint32_t sr = CreateScalar(graph, radius_expr);
+
+        // 2. 分配圆节点
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+        node.render_type = GeoNode::RenderType::Circle;
+
+        // 3. 建立依赖：parents[0] 是圆心点，parents[1] 是半径标量
+        node.parents = { center_id, sr };
+
+        // 4. 初始化数据（仅保留计算缓存）
+        Data_Circle d{};
+        // ★ 修复：删除了 d.center_id = center_id; 这一行
+        node.data = d;
+        node.solver = Solver_Circle;
+
+        // 5. 建立拓扑链接并标记脏
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
+
+        return id;
+    }
+
 
     // =========================================================
     // 显式函数创建 (Token 编译)

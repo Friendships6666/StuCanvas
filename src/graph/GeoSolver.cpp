@@ -19,7 +19,15 @@ static double ExtractValue(const GeoNode& parent, RPNBinding::Property prop, con
     return 0.0;
 }
 struct LineCoords { double x1, y1, x2, y2; };
-
+void Solver_ScalarRPN(GeoNode& self, const std::vector<GeoNode>& pool) {
+    auto& d = std::get<Data_Scalar>(self.data);
+    for (const auto& bind : d.bindings) {
+        // 从依赖节点拉取最新的 value
+        d.tokens[bind.token_index].value = std::get<Data_Scalar>(pool[self.parents[bind.parent_index]].data).value;
+    }
+    // 计算并存入 value，供下游节点使用
+    self.data = Data_Scalar{ evaluate_rpn<double>(d.tokens), d.type, d.tokens, d.bindings };
+}
 static std::optional<LineCoords> ExtractLineCoords(const GeoNode& node, const std::vector<GeoNode>& pool) {
     // 情况 A: 普通线 (依赖两个端点 ID)
     if (std::holds_alternative<Data_Line>(node.data)) {
@@ -83,48 +91,26 @@ void Solver_Midpoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 }
 
 void Solver_StandardPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
-    if (!std::holds_alternative<Data_Point>(self.data)) return;
     auto& d = std::get<Data_Point>(self.data);
-
-    // 绑定 X
-    if (d.bind_index_x.has_value()) {
-        uint32_t p_idx = d.bind_index_x.value();
-        if (p_idx < self.parents.size()) {
-            d.x = ExtractValue(pool[self.parents[p_idx]], RPNBinding::VALUE, pool);
-        }
-    }
-
-    // 绑定 Y
-    if (d.bind_index_y.has_value()) {
-        uint32_t p_idx = d.bind_index_y.value();
-        if (p_idx < self.parents.size()) {
-            d.y = ExtractValue(pool[self.parents[p_idx]], RPNBinding::VALUE, pool);
-        }
-    }
+    // parents[0] 是 x 标量, parents[1] 是 y 标量
+    d.x = std::get<Data_Scalar>(pool[self.parents[0]].data).value;
+    d.y = std::get<Data_Scalar>(pool[self.parents[1]].data).value;
 }
 
-// =========================================================
-// Solver: 圆 (Circle)
-// =========================================================
+// --- 文件路径: src/graph/GeoSolver.cpp ---
+
 void Solver_Circle(GeoNode& self, const std::vector<GeoNode>& pool) {
-    if (self.parents.empty()) return;
     auto& d = std::get<Data_Circle>(self.data);
 
-    // 1. 获取圆心坐标 (parents[0])
-    uint32_t center_id = self.parents[0];
-    if (std::holds_alternative<Data_Point>(pool[center_id].data)) {
-        const auto& p = std::get<Data_Point>(pool[center_id].data);
-        d.cx = p.x;
-        d.cy = p.y;
-    }
+    // 1. 从 parents[0] 获取圆心点坐标
+    const GeoNode& center_node = pool[self.parents[0]];
+    const auto& cp = std::get<Data_Point>(center_node.data);
+    d.cx = cp.x;
+    d.cy = cp.y;
 
-    // 2. 获取半径 (如果有绑定)
-    if (d.bind_index_radius.has_value()) {
-        uint32_t p_idx = d.bind_index_radius.value();
-        if (p_idx < self.parents.size()) {
-            d.radius = ExtractValue(pool[self.parents[p_idx]], RPNBinding::VALUE, pool);
-        }
-    }
+    // 2. 从 parents[1] 获取标量节点计算出的半径
+    const GeoNode& radius_node = pool[self.parents[1]];
+    d.radius = std::get<Data_Scalar>(radius_node.data).value;
 }
 
 

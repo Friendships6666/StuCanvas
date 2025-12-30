@@ -31,15 +31,17 @@ enum class ScalarType {
 };
 
 struct Data_Scalar {
-    double value = 0.0;
-    ScalarType type = ScalarType::Manual;
+    double value = 0.0; // 最终计算结果，供其他节点读取
+    ScalarType type = ScalarType::Expression;
+
+    // RPN 核心指令与绑定
+    AlignedVector<RPNToken> tokens;
+    std::vector<RPNBinding> bindings;
 };
-// 所有“点”的最终输出结果
+
 struct Data_Point {
-    double x;
-    double y;
-    std::optional<uint32_t> bind_index_x;
-    std::optional<uint32_t> bind_index_y;
+    double x = 0.0, y = 0.0; // 缓存坐标
+    // 规定：parents[0] 为 X 标量节点，parents[1] 为 Y 标量节点
 };
 
 // 约束点额外信息: 依赖一个对象 ID (Line/Circle/Function)
@@ -79,16 +81,10 @@ struct Data_Line {
 
 // 圆: 依赖圆心点 ID 和半径 (固定值或标量 ID)
 struct Data_Circle {
-    // 依赖信息
-    uint32_t center_id;
 
-
-    double cx;
-    double cy;
-    double radius;
-    std::optional<uint32_t> bind_index_radius;
-
-
+    double cx = 0.0, cy = 0.0; // 缓存圆心
+    double radius = 0.0;       // 缓存半径
+    // 规定：parents[0] 为圆心点节点，parents[1] 为半径标量节点
 };
 struct Data_CalculatedLine {
     double x1, y1;

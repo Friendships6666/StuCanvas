@@ -48,42 +48,65 @@ int main() {
 
 
         GeometryGraph graph;
-        // 1. 创建圆心
-        auto p_center = CreatePoint(graph, 0, 0);
 
-        // 2. 创建两个自由点
-        auto pA = CreatePoint(graph, 3, 4);
-        auto pB = CreatePoint(graph, -2, 2);
+        // 1. 创建两个基础点 A(0,0) 和 B(3,4)
+        // 所有的标量现在都必须是 RPN 序列形式 {...}
+        uint32_t pA = CreatePoint(graph, {0.0}, {0.0});
+        uint32_t pB = CreatePoint(graph, {3.0}, {4.0});
 
-        // 3. 测量距离 (Scalar)
-        auto len_AB = CreateMeasureLength(graph, pA, pB);
-
-        // 4. 创建圆：半径绑定到 Length(AB)
-        // 这里的半径是动态的！
-        auto circle = CreateCircle(graph, p_center, Ref(len_AB));
-
-        // 5. 创建显式函数 y = sin(Len * x)
-        // 使用混合 Token，无需字符串解析
-        auto func = CreateExplicitFunction(graph, {
-            RPNTokenType::PUSH_X,
-            10.0,
-            RPNTokenType::MUL,
-            RPNTokenType::SIN
-        });
-        auto dynamic_implicit = CreateImplicitFunction(graph, {
-        RPNTokenType::PUSH_X, RPNTokenType::PUSH_X, RPNTokenType::MUL, // x*x
-        RPNTokenType::PUSH_Y, RPNTokenType::PUSH_Y, RPNTokenType::MUL, // y*y
-        RPNTokenType::ADD,                                           // x^2 + y^2
-        Ref(len_AB), Ref(len_AB), RPNTokenType::MUL,                 // Len^2
-        RPNTokenType::SUB                                            // (x^2+y^2) - Len^2
-    });
+        // 2. 测量 A 到 B 的距离 (预期结果 L = 5.0)
+        uint32_t len_AB = CreateMeasureLength(graph, pA, pB);
 
 
+
+        // 4. 创建一个动态点 C
+        // 坐标 X = len_AB (5.0), Y = len_AB / 2 (2.5)
+        uint32_t pC = CreatePoint(graph,
+            { Ref(len_AB) },
+            { Ref(len_AB), 2.0, RPNTokenType::DIV }
+        );
+
+        uint32_t archimedean_spiral = CreateParametricFunction(graph,
+                   // x(t) 的 RPN 序列
+                   {
+                       RPNTokenType::PUSH_T,
+                       Ref(len_AB), 10.0, RPNTokenType::DIV,
+                       RPNTokenType::MUL, // 此时栈顶是 r
+                       RPNTokenType::PUSH_T, RPNTokenType::COS,
+                       RPNTokenType::MUL  // r * cos(t)
+                   },
+                   // y(t) 的 RPN 序列
+                   {
+                       RPNTokenType::PUSH_T,
+                       Ref(len_AB), 10.0, RPNTokenType::DIV,
+                       RPNTokenType::MUL, // 此时栈顶是 r
+                       RPNTokenType::PUSH_T, RPNTokenType::SIN,
+                       RPNTokenType::MUL  // r * sin(t)
+                   },
+                   0.0, 16.0 * M_PI // 范围：0 到 4π (转两圈)
+               );
+
+        // 7. 定义渲染顺序
         std::vector<uint32_t> draw_order = {
-            func,
-            circle,
-            pA, pB, p_center,dynamic_implicit
+            archimedean_spiral, // 螺旋线
+
+            pA, pB, pC
         };
+
+
+
+        // 执行 JIT 更新与渲染
+        std::cout << "--- Pipeline Start ---" << std::endl;
+        calculate_points_core(
+            wasm_final_contiguous_buffer,
+            wasm_function_ranges_buffer,
+            graph.node_pool,
+            draw_order,
+            {},
+            view,
+            true
+        );
+
 
         std::cout << "Graph construction successful." << std::endl;
 

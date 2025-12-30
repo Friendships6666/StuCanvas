@@ -7,7 +7,7 @@
 // =========================================================
 // 求解器函数声明
 // =========================================================
-
+void Solver_ScalarRPN(GeoNode& self, const std::vector<GeoNode>& pool);
 // 基础几何求解器
 void Solver_Midpoint(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_Circle(GeoNode& self, const std::vector<GeoNode>& pool);

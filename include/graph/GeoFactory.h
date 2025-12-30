@@ -5,10 +5,13 @@
 #include "GeoGraph.h"
 
 namespace GeoFactory {
+
     struct Ref {
         uint32_t id;
         explicit Ref(uint32_t i) : id(i) {}
     };
+    using MixedToken = std::variant<RPNTokenType, double, Ref>;
+    using RPNParam = std::vector<MixedToken>; // 强制使用序列
 
     struct GVar {
         double value = 0.0;
@@ -19,15 +22,14 @@ namespace GeoFactory {
         GVar(Ref r) : value(0), is_ref(true), ref_id(r.id) {}
     };
 
-    // ★★★ 新增：混合 Token 类型 (用于构建 RPN) ★★★
-    // 用户可以传入: RPNTokenType::ADD, 3.14, Ref(id)
-    using MixedToken = std::variant<RPNTokenType, double, Ref>;
 
-    // 1. 创建统一的点 (支持静态或动态)
-    uint32_t CreatePoint(GeometryGraph& graph, GVar x, GVar y);
 
-    // 2. 创建圆 (支持动态半径)
-    uint32_t CreateCircle(GeometryGraph& graph, uint32_t center_id, GVar radius);
+    // 统一后的 API
+    uint32_t CreatePoint(GeometryGraph& graph, const RPNParam& x_expr, const RPNParam& y_expr);
+    uint32_t CreateCircle(GeometryGraph& graph, uint32_t center_id, const RPNParam& radius_expr);
+
+    // 内部提升函数
+    uint32_t CreateScalar(GeometryGraph& graph, const RPNParam& expr);
 
     // 3. 创建显式函数 (使用混合 Token)
     uint32_t CreateExplicitFunction(
@@ -56,10 +58,8 @@ namespace GeoFactory {
         const std::vector<MixedToken>& tokens
     );
 
-    /**
-     * @brief 创建一个自由移动的点
-     */
-    uint32_t CreateFreePoint(GeometryGraph& graph, double x, double y);
+
+
 
     /**
      * @brief 创建一条线段或直线 (依赖两点)
