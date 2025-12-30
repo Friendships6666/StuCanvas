@@ -1,7 +1,12 @@
 ﻿// --- 文件路径: src/graph/GeoFactory.cpp ---
 #include "../../include/graph/GeoSolver.h"
 #include "../../include/graph/GeoFactory.h"
-
+#include "../../include/plot/plotExplicit.h"
+#include "../../include/plot/plotSegment.h"
+#include "../../include/plot/plotExplicit.h"
+#include "../../include/plot/plotParametric.h"
+#include "../../include/plot/plotImplicit.h"
+#include "../../include/plot/plotCircle.h"
 #include <algorithm>
 #include <stdexcept>
 #include <vector> // 确保 vector 被包含
@@ -26,6 +31,46 @@ namespace GeoFactory {
             max_parent_rank = std::max(max_parent_rank, graph.node_pool[pid].rank);
         }
         graph.node_pool[child_id].rank = parent_ids.empty() ? 0 : max_parent_rank + 1;
+    }
+    static void Render_Point_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState&, const NDCMap& map, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
+    if (std::holds_alternative<Data_Point>(self.data)) {
+        const auto& p = std::get<Data_Point>(self.data);
+        PointData pd{};
+        world_to_clip_store(pd, p.x, p.y, map, self.id);
+        q.push({ self.id, {pd} });
+    }
+}
+
+    static void Render_Line_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState& v, const NDCMap& m, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
+        if (std::holds_alternative<Data_Line>(self.data)) {
+            const auto& d = std::get<Data_Line>(self.data);
+            const auto& p1 = std::get<Data_Point>(pool[d.p1_id].data);
+            const auto& p2 = std::get<Data_Point>(pool[d.p2_id].data);
+            process_two_point_line(&q, p1.x, p1.y, p2.x, p2.y, !d.is_infinite, self.id, v.world_origin, v.wppx, v.wppy, v.screen_width, v.screen_height, 0, 0, m);
+        } else if (std::holds_alternative<Data_CalculatedLine>(self.data)) {
+            const auto& d = std::get<Data_CalculatedLine>(self.data);
+            process_two_point_line(&q, d.x1, d.y1, d.x2, d.y2, !d.is_infinite, self.id, v.world_origin, v.wppx, v.wppy, v.screen_width, v.screen_height, 0, 0, m);
+        }
+    }
+
+    static void Render_Circle_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState& v, const NDCMap& m, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
+        const auto& d = std::get<Data_Circle>(self.data);
+        process_circle_specialized(&q, d.cx, d.cy, d.radius, self.id, v.world_origin, v.wppx, v.wppy, v.screen_width, v.screen_height, m);
+    }
+
+    static void Render_Explicit_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState& v, const NDCMap& m, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
+        const auto& d = std::get<Data_SingleRPN>(self.data);
+        process_explicit_chunk(v.world_origin.x, v.world_origin.x + v.screen_width * v.wppx, d.tokens, &q, self.id, v.screen_width, m);
+    }
+
+    static void Render_Parametric_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState& v, const NDCMap& m, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
+        const auto& d = std::get<Data_DualRPN>(self.data);
+        process_parametric_chunk(d.tokens_x, d.tokens_y, d.t_min, d.t_max, &q, self.id, m);
+    }
+
+    static void Render_Implicit_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState& v, const NDCMap& m, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
+        const auto& d = std::get<Data_SingleRPN>(self.data);
+        process_implicit_adaptive(&q, v.world_origin, v.wppx, v.wppy, v.screen_width, v.screen_height, d.tokens, d.tokens, self.id, 0, 0, m);
     }
     uint32_t CreateScalar(GeometryGraph& graph, const RPNParam& expr) {
         uint32_t id = graph.allocate_node();
@@ -129,6 +174,7 @@ namespace GeoFactory {
 
         LinkAndRank(graph, id, node.parents);
         graph.TouchNode(id);
+        node.render_task = Render_Parametric_Delegate; // 绑定参数方程
         return id;
     }
 
@@ -154,6 +200,8 @@ namespace GeoFactory {
 
         LinkAndRank(graph, id, node.parents);
         graph.TouchNode(id);
+        node.render_task = Render_Implicit_Delegate; // 绑定隐函数
+
         return id;
     }
 
@@ -172,6 +220,7 @@ namespace GeoFactory {
 
         LinkAndRank(graph, id, node.parents);
         graph.TouchNode(id);
+        node.render_task = Render_Point_Delegate; // 绑定点渲染
         return id;
     }
 
@@ -203,6 +252,7 @@ namespace GeoFactory {
         // 5. 建立拓扑链接并标记脏
         LinkAndRank(graph, id, node.parents);
         graph.TouchNode(id);
+        node.render_task = Render_Circle_Delegate; // 绑定圆渲染
 
         return id;
     }
@@ -245,6 +295,7 @@ namespace GeoFactory {
                     RPNBinding::VALUE
                 });
             }
+
         }
 
         node.data = std::move(d);
@@ -253,6 +304,7 @@ namespace GeoFactory {
 
         LinkAndRank(graph, id, node.parents);
         graph.TouchNode(id);
+        node.render_task = Render_Explicit_Delegate; // 绑定显函数
         return id;
     }
 
@@ -273,7 +325,8 @@ namespace GeoFactory {
         node.solver = nullptr; // 直线在渲染阶段提取点坐标，不需要 Solver 逻辑
 
         LinkAndRank(graph, id, node.parents);
-        // 不需要 TouchNode，因为 Line 本身没有 Solver
+
+        node.render_task = Render_Line_Delegate; // 绑定线渲染
         return id;
     }
 
@@ -297,6 +350,7 @@ namespace GeoFactory {
         // ★ 统一修改：不再抢跑，依赖 JIT
         // node.solver(node, graph.node_pool);
         graph.TouchNode(id); // 注册计算
+        node.render_task = Render_Point_Delegate; // 绑定点渲染
         return id;
     }
 
@@ -379,6 +433,7 @@ namespace GeoFactory {
 
         graph.node_pool[point_id].children.push_back(line_id);
         graph.node_pool[foot_id].children.push_back(line_id);
+        line_node.render_task = Render_Line_Delegate; // 垂线也是线
 
         return line_id;
     }
@@ -428,6 +483,8 @@ namespace GeoFactory {
 
         graph.node_pool[point_id].children.push_back(line_id);
         graph.node_pool[helper_id].children.push_back(line_id);
+        line_node.render_task = Render_Line_Delegate; // 平行线也是线
+
 
         return line_id;
     }
@@ -448,6 +505,7 @@ namespace GeoFactory {
         // ★ 统一修改：不再抢跑，依赖 JIT
         // node.solver(node, graph.node_pool); // 之前为了立刻看到效果加的，但要统一就删掉
         graph.TouchNode(id); // 注册计算
+        node.render_task = Render_Point_Delegate; // 绑定点渲染
         return id;
     }
 
@@ -472,6 +530,7 @@ namespace GeoFactory {
         // ★ 统一修改：不再抢跑
         // node.solver(node, graph.node_pool);
         graph.TouchNode(id); // 注册计算
+        node.render_task = Render_Line_Delegate; // 切线也是线，复用 Line 代理
         return id;
     }
     uint32_t CreateMeasureLength(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id) {

@@ -3,10 +3,13 @@
 #define GEOGRAPH_H
 
 #include "../../pch.h"
+#include "../functions/lerp.h"
+
 #include "../CAS/RPN/RPN.h"
 #include <variant>
 #include <vector>
-#include <string>
+
+
 struct RPNBinding {
     uint32_t token_index{};   // RPN 指令数组中的下标 (需要被填写的 PUSH_CONST 位置)
     uint32_t parent_index{};  // 在当前节点的 parents 列表中的下标 (注意是局部下标，不是全局ID)
@@ -150,6 +153,8 @@ struct GeoNode {
         if (parent_idx >= parents.size()) return false;
         return pool[parents[parent_idx]].render_type == expected;
     }
+    using RenderTaskFunc = void(*)(GeoNode&, const std::vector<GeoNode>&, const ViewState&, const NDCMap&, oneapi::tbb::concurrent_bounded_queue<FunctionResult>&);
+    RenderTaskFunc render_task = nullptr;
 };
 
 class GeometryGraph {
@@ -164,6 +169,7 @@ public:
     void TouchNode(uint32_t id);
     std::vector<uint32_t> SolveFrame();
     bool DetectCycle(uint32_t child_id, uint32_t parent_id) const;
+    std::vector<std::vector<uint32_t>> GetRequiredRankedBatches(const std::vector<uint32_t>& targets);
 
 private:
     void Enqueue(GeoNode& node);

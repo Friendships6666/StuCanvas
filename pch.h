@@ -81,7 +81,11 @@ inline ViewState g_global_view_state;
 #else
 #define FORCE_INLINE __attribute__((always_inline))
 #endif
-
+// 并发计算结果载体
+struct FunctionResult {
+    unsigned int function_index;
+    std::vector<PointData> points;
+};
 using batch_type = xs::batch<double>;
 
 #endif //PCH_H

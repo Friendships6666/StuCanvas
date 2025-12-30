@@ -91,3 +91,27 @@ bool GeometryGraph::DetectCycle(uint32_t child_id, uint32_t parent_id) const {
     }
     return false;
 }
+
+std::vector<std::vector<uint32_t>> GeometryGraph::GetRequiredRankedBatches(const std::vector<uint32_t>& targets) {
+    std::unordered_set<uint32_t> needed;
+    std::vector<uint32_t> q = targets;
+    for (uint32_t id : targets) needed.insert(id);
+
+    // BFS 补全依赖
+    size_t head = 0;
+    while (head < q.size()) {
+        uint32_t curr = q[head++];
+        for (uint32_t pid : node_pool[curr].parents) {
+            if (needed.insert(pid).second) q.push_back(pid);
+        }
+    }
+
+    // 分桶
+    uint32_t max_r = 0;
+    for (uint32_t id : needed) max_r = std::max(max_r, node_pool[id].rank);
+
+    std::vector<std::vector<uint32_t>> batches(max_r + 1);
+    for (uint32_t id : needed) batches[node_pool[id].rank].push_back(id);
+
+    return batches;
+}
