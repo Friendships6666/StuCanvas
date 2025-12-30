@@ -1,9 +1,12 @@
-# 忽略所有文件和文件夹
-/*
+﻿# 忽略所有文件和文件夹
+/.idea
+/AI.py
+/AI - 副本.py
+/*.txt
+/*.wasm
+/*.js
+/json.hpp
+/build.bat
 
-# 排除（即保留）特定的文件夹和文件
-!/src/
-!/include/
-!/CMakeLists.txt
 
-!/.gitignore
+/.gitignore
