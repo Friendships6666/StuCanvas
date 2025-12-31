@@ -3,7 +3,7 @@
 #define GEOSOLVER_H
 
 #include "GeoGraph.h"
-
+double ExtractValue(const GeoNode& parent, RPNBinding::Property prop, const std::vector<GeoNode>& pool);
 // =========================================================
 // 求解器函数声明
 // =========================================================
@@ -26,4 +26,5 @@ void Solver_ParallelPoint(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_ConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_Tangent(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool);
+void Solver_AnalyticalIntersection(GeoNode& self, const std::vector<GeoNode>& pool);
 #endif // GEOSOLVER_H

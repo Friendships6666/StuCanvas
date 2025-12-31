@@ -35,19 +35,23 @@ namespace GeoFactory {
 
 
 
-    static void Render_Point_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState&, const NDCMap& map, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
+    static void Render_Point_Delegate(
+        GeoNode& self,
+        const std::vector<GeoNode>& pool,
+        const ViewState&,
+        const NDCMap& map,
+        oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q
+    ) {
         PointData pd{};
-        if (std::holds_alternative<Data_Point>(self.data)) {
-            const auto& p = std::get<Data_Point>(self.data);
-            world_to_clip_store(pd, p.x, p.y, map, self.id);
-            q.push({ self.id, {pd} });
-        }
-        // ★ 新增：兼容交点渲染
-        else if (std::holds_alternative<Data_IntersectionPoint>(self.data)) {
-            const auto& p = std::get<Data_IntersectionPoint>(self.data);
-            world_to_clip_store(pd, p.x, p.y, map, self.id);
-            q.push({ self.id, {pd} });
-        }
+
+        // ★★★ 核心修复：不再使用 std::get<Data_Point> ★★★
+        // 而是使用 ExtractValue，它会自动判断 self 内部到底是 Data_Point、
+        // Data_IntersectionPoint 还是 Data_AnalyticalIntersection
+        pd.position.x = (float)ExtractValue(self, RPNBinding::POS_X, pool);
+        pd.position.y = (float)ExtractValue(self, RPNBinding::POS_Y, pool);
+
+        pd.function_index = self.id;
+        q.push({ self.id, {pd} });
     }
 
     static void Render_Line_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState& v, const NDCMap& m, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
@@ -60,6 +64,7 @@ namespace GeoFactory {
             const auto& d = std::get<Data_CalculatedLine>(self.data);
             process_two_point_line(&q, d.x1, d.y1, d.x2, d.y2, !d.is_infinite, self.id, v.world_origin, v.wppx, v.wppy, v.screen_width, v.screen_height, 0, 0, m);
         }
+
     }
 
     static void Render_Circle_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState& v, const NDCMap& m, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
@@ -621,6 +626,52 @@ namespace GeoFactory {
 
         LinkAndRank(graph, id, node.parents);
         graph.TouchNode(id);
+        return id;
+    }
+    uint32_t CreateAnalyticalIntersection(
+    GeometryGraph& graph,
+    uint32_t id1, uint32_t id2,
+    const RPNParam& x_guess,
+    const RPNParam& y_guess
+) {
+        // 1. 严格类型校验
+        auto t1 = graph.node_pool[id1].render_type;
+        auto t2 = graph.node_pool[id2].render_type;
+
+        bool is_line1 = (t1 == GeoNode::RenderType::Line);
+        bool is_circle1 = (t1 == GeoNode::RenderType::Circle);
+        bool is_line2 = (t2 == GeoNode::RenderType::Line);
+        bool is_circle2 = (t2 == GeoNode::RenderType::Circle);
+
+        if (!((is_line1 || is_circle1) && (is_line2 || is_circle2))) {
+            throw std::runtime_error("AnalyticalIntersection only supports Line-Line, Line-Circle, or Circle-Circle.");
+        }
+
+        // 2. 提升初始猜测位置为标量节点
+        // 只有在第一次 Solve 时用于确定分支符号
+        uint32_t sx = CreateScalar(graph, x_guess);
+        uint32_t sy = CreateScalar(graph, y_guess);
+
+        // 3. 分配节点
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+        node.render_type = GeoNode::RenderType::Point;
+
+        // parents 布局: [Obj1, Obj2, GuessX, GuessY]
+        node.parents = { id1, id2, sx, sy };
+        node.solver = Solver_AnalyticalIntersection;
+        node.render_task = Render_Point_Delegate;
+
+        // 4. 初始化 Payload
+        Data_AnalyticalIntersection d;
+        d.branch_sign = 0; // 0 表示尚未锁定分支
+        d.is_found = false;
+        node.data = d;
+
+        // 5. 建立链接并标记脏
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
+
         return id;
     }
 

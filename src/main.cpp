@@ -47,33 +47,49 @@ int main() {
         GeometryGraph graph;
 
         // =========================================================
-        // 1. 创建两条极近、极小夹角的线段
+        // 1. 创建两个相交的圆
         // =========================================================
-        // 线段 1: 水平线 y = 0
-        uint32_t pA1 = CreatePoint(graph, {-10.0}, {0.0});
-        uint32_t pA2 = CreatePoint(graph, {10.0}, {0.0});
-        uint32_t line_horizontal = CreateLine(graph, pA1, pA2, false);
+        // 圆 1: 中心 (-3, 0), 半径 5
+        uint32_t p_c1 = CreatePoint(graph, {-3.0}, {0.0});
+        uint32_t circle1 = CreateCircle(graph, p_c1, {5.0});
 
-        // 线段 2: 极浅斜率线 (夹角约 1.14度)
-        // 在原点附近，这两条线会在垂直方向上重叠很多个像素
-        uint32_t pB1 = CreatePoint(graph, {-10.0}, {-0.2});
-        uint32_t pB2 = CreatePoint(graph, {10.0}, {0.2});
-        uint32_t line_shallow = CreateLine(graph, pB1, pB2, false);
+        // 圆 2: 中心 (3, 0), 半径 5
+        // 理论交点位置：(0, 4) 和 (0, -4)
+        uint32_t p_c2 = CreatePoint(graph, {3.0}, {0.0});
+        uint32_t circle2 = CreateCircle(graph, p_c2, {5.0});
 
         // =========================================================
-        // 2. 创建交点 (图解法)
+        // 2. 创建解析交点 (锁定上方交点)
         // =========================================================
-        // 初始猜测在 (0.5, 0.1) 附近
-        uint32_t inter_pt = CreateIntersectionPoint(graph, {100.0}, {10.0}, {line_horizontal, line_shallow});
+        // 初始猜测点 (0, 4.5) 靠近 (0, 4)
+        // 求解器会计算分支：
+        // 分支 A (+h): (0, 4)  距离猜测点 0.5
+        // 分支 B (-h): (0, -4) 距离猜测点 8.5
+        // 结果：branch_sign 会锁定为 +1 (或 -1，取决于数学推导方向)
+        uint32_t inter_pt = CreateAnalyticalIntersection(
+            graph,
+            circle1,
+            circle2,
+            {0.0}, {4.5}
+        );
 
         // =========================================================
-        // 3. 定义渲染顺序
+        // 3. 创建以交点为圆心的第三个圆
+        // =========================================================
+        // 依赖：inter_pt (GeoNode) 作为圆心
+        // 半径：2.0
+        uint32_t circle_on_top = CreateCircle(graph, inter_pt, {2.0});
+
+        // =========================================================
+        // 4. 定义渲染顺序
         // =========================================================
         std::vector<uint32_t> draw_order = {
-            line_horizontal,
-            line_shallow,
-            pA1, pA2, pB1, pB2,
-            inter_pt
+            circle1,
+            circle2,
+            circle_on_top, // 以交点为中心的圆
+            p_c1,
+            p_c2,
+            inter_pt       // 交点放在最上面
         };
 
 

@@ -7,7 +7,7 @@
 // =========================================================
 // [内部辅助] 数值提取器
 // =========================================================
-static inline double ExtractValue(const GeoNode& parent, RPNBinding::Property prop, const std::vector<GeoNode>& pool) {
+double ExtractValue(const GeoNode& parent, RPNBinding::Property prop, const std::vector<GeoNode>& pool) {
     if (std::holds_alternative<Data_Scalar>(parent.data)) {
         return std::get<Data_Scalar>(parent.data).value;
     }
@@ -23,6 +23,11 @@ static inline double ExtractValue(const GeoNode& parent, RPNBinding::Property pr
         if (prop == RPNBinding::POS_X) return p.x;
         if (prop == RPNBinding::POS_Y) return p.y;
     }
+    if (std::holds_alternative<Data_AnalyticalIntersection>(parent.data)) {
+        const auto& p = std::get<Data_AnalyticalIntersection>(parent.data);
+        if (prop == RPNBinding::POS_X) return p.x;
+        if (prop == RPNBinding::POS_Y) return p.y;
+    }
     return 0.0;
 }
 struct LineCoords { double x1, y1, x2, y2; };
@@ -35,21 +40,18 @@ void Solver_ScalarRPN(GeoNode& self, const std::vector<GeoNode>& pool) {
     // 计算并存入 value，供下游节点使用
     self.data = Data_Scalar{ evaluate_rpn<double>(d.tokens), d.type, d.tokens, d.bindings };
 }
-static std::optional<LineCoords> ExtractLineCoords(const GeoNode& node, const std::vector<GeoNode>& pool) {
-    // 情况 A: 普通线 (依赖两个端点 ID)
+
+
+std::optional<LineCoords> ExtractLineCoords(const GeoNode& node, const std::vector<GeoNode>& pool) {
     if (std::holds_alternative<Data_Line>(node.data)) {
         const auto& d = std::get<Data_Line>(node.data);
-        if (d.p1_id >= pool.size() || d.p2_id >= pool.size()) return std::nullopt;
 
-        // 必须确保依赖的点已经计算出坐标
-        if (std::holds_alternative<Data_Point>(pool[d.p1_id].data) &&
-            std::holds_alternative<Data_Point>(pool[d.p2_id].data)) {
-            const auto& p1 = std::get<Data_Point>(pool[d.p1_id].data);
-            const auto& p2 = std::get<Data_Point>(pool[d.p2_id].data);
-            return LineCoords{p1.x, p1.y, p2.x, p2.y};
-            }
+        double x1 = ExtractValue(pool[d.p1_id], RPNBinding::POS_X, pool);
+        double y1 = ExtractValue(pool[d.p1_id], RPNBinding::POS_Y, pool);
+        double x2 = ExtractValue(pool[d.p2_id], RPNBinding::POS_X, pool);
+        double y2 = ExtractValue(pool[d.p2_id], RPNBinding::POS_Y, pool);
+        return LineCoords{x1, y1, x2, y2};
     }
-    // 情况 B: 计算线 (直接存储坐标，如切线)
     else if (std::holds_alternative<Data_CalculatedLine>(node.data)) {
         const auto& d = std::get<Data_CalculatedLine>(node.data);
         return LineCoords{d.x1, d.y1, d.x2, d.y2};
@@ -99,9 +101,10 @@ void Solver_Midpoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 
 void Solver_StandardPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
     auto& d = std::get<Data_Point>(self.data);
+
     // parents[0] 是 x 标量, parents[1] 是 y 标量
-    d.x = std::get<Data_Scalar>(pool[self.parents[0]].data).value;
-    d.y = std::get<Data_Scalar>(pool[self.parents[1]].data).value;
+    d.x = ExtractValue(pool[self.parents[0]], RPNBinding::VALUE, pool);
+    d.y = ExtractValue(pool[self.parents[1]], RPNBinding::VALUE, pool);
 }
 
 // --- 文件路径: src/graph/GeoSolver.cpp ---
@@ -109,15 +112,14 @@ void Solver_StandardPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 void Solver_Circle(GeoNode& self, const std::vector<GeoNode>& pool) {
     auto& d = std::get<Data_Circle>(self.data);
 
-    // 1. 从 parents[0] 获取圆心点坐标
+    // 1. 使用 ExtractValue 提取圆心坐标 (无论父节点是普通点还是交点)
     const GeoNode& center_node = pool[self.parents[0]];
-    const auto& cp = std::get<Data_Point>(center_node.data);
-    d.cx = cp.x;
-    d.cy = cp.y;
+    d.cx = ExtractValue(center_node, RPNBinding::POS_X, pool);
+    d.cy = ExtractValue(center_node, RPNBinding::POS_Y, pool);
 
-    // 2. 从 parents[1] 获取标量节点计算出的半径
+    // 2. 使用 ExtractValue 提取半径标量
     const GeoNode& radius_node = pool[self.parents[1]];
-    d.radius = std::get<Data_Scalar>(radius_node.data).value;
+    d.radius = ExtractValue(radius_node, RPNBinding::VALUE, pool);
 }
 
 
@@ -563,4 +565,115 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
     } else {
         data.is_found = false;
     }
+}
+
+void Solver_AnalyticalIntersection(GeoNode& self, const std::vector<GeoNode>& pool) {
+    auto& data = std::get<Data_AnalyticalIntersection>(self.data);
+    const GeoNode& n1 = pool[self.parents[0]];
+    const GeoNode& n2 = pool[self.parents[1]];
+
+    // 获取初始猜测点（用于首次锁定分支）
+    double gx = std::get<Data_Scalar>(pool[self.parents[2]].data).value;
+    double gy = std::get<Data_Scalar>(pool[self.parents[3]].data).value;
+
+    // 存储解析出的候选点
+    struct Cand { double x, y; int sign; };
+    std::vector<Cand> candidates;
+
+    // =========================================================
+    // 情况 A: 直线 - 直线 (解线性方程组)
+    // =========================================================
+    if (n1.render_type == GeoNode::RenderType::Line && n2.render_type == GeoNode::RenderType::Line) {
+        auto l1 = ExtractLineCoords(n1, pool);
+        auto l2 = ExtractLineCoords(n2, pool);
+        if (l1 && l2) {
+            double a1 = l1->y1 - l1->y2; double b1 = l1->x2 - l1->x1; double c1 = l1->x1 * l1->y2 - l1->x2 * l1->y1;
+            double a2 = l2->y1 - l2->y2; double b2 = l2->x2 - l2->x1; double c2 = l2->x1 * l2->y2 - l2->x2 * l2->y1;
+            double det = a1 * b2 - a2 * b1;
+            if (std::abs(det) > 1e-10) {
+                candidates.push_back({ (b1 * c2 - b2 * c1) / det, (a2 * c1 - a1 * c2) / det, 0 });
+            }
+        }
+    }
+    // =========================================================
+    // 情况 B: 直线 - 圆 (解二次方程)
+    // =========================================================
+    else if (n1.render_type == GeoNode::RenderType::Line || n2.render_type == GeoNode::RenderType::Line) {
+        const auto& ln = (n1.render_type == GeoNode::RenderType::Line) ? n1 : n2;
+        const auto& ci = (n1.render_type == GeoNode::RenderType::Circle) ? n1 : n2;
+        auto l = ExtractLineCoords(ln, pool);
+        const auto& c = std::get<Data_Circle>(ci.data);
+
+        if (l) {
+            double dx = l->x2 - l->x1; double dy = l->y2 - l->y1;
+            double fx = l->x1 - c.cx; double fy = l->y1 - c.cy;
+            double A = dx * dx + dy * dy;
+            double B = 2 * (fx * dx + fy * dy);
+            double C = fx * fx + fy * fy - c.radius * c.radius;
+            double delta = B * B - 4 * A * C;
+
+            if (delta >= 0) {
+                double sqD = std::sqrt(delta);
+                double t1 = (-B + sqD) / (2 * A);
+                double t2 = (-B - sqD) / (2 * A);
+                candidates.push_back({ l->x1 + t1 * dx, l->y1 + t1 * dy, 1 });
+                candidates.push_back({ l->x1 + t2 * dx, l->y1 + t2 * dy, -1 });
+            }
+        }
+    }
+    // =========================================================
+    // 情况 C: 圆 - 圆 (解相交弦方程)
+    // =========================================================
+    else if (n1.render_type == GeoNode::RenderType::Circle && n2.render_type == GeoNode::RenderType::Circle) {
+        const auto& c1 = std::get<Data_Circle>(n1.data);
+        const auto& c2 = std::get<Data_Circle>(n2.data);
+        double dx = c2.cx - c1.cx; double dy = c2.cy - c1.cy;
+        double d2 = dx * dx + dy * dy;
+        double d = std::sqrt(d2);
+
+        if (d <= c1.radius + c2.radius && d >= std::abs(c1.radius - c2.radius) && d > 1e-10) {
+            double a = (c1.radius * c1.radius - c2.radius * c2.radius + d2) / (2 * d);
+            double h = std::sqrt(std::max(0.0, c1.radius * c1.radius - a * a));
+            double x2 = c1.cx + a * dx / d;
+            double y2 = c1.cy + a * dy / d;
+            // 两个分支解
+            candidates.push_back({ x2 + h * dy / d, y2 - h * dx / d, 1 });
+            candidates.push_back({ x2 - h * dy / d, y2 + h * dx / d, -1 });
+        }
+    }
+
+    // =========================================================
+    // 分支锁定与结果输出
+    // =========================================================
+    if (candidates.empty()) {
+        data.is_found = false;
+        return;
+    }
+
+    // 1. 如果尚未锁定分支，根据距离初始猜测点最近的一个来锁定 sign
+    if (data.branch_sign == 0) {
+        double min_d2 = std::numeric_limits<double>::max();
+        for (const auto& cand : candidates) {
+            double d2 = std::pow(cand.x - gx, 2) + std::pow(cand.y - gy, 2);
+            if (d2 < min_d2) {
+                min_d2 = d2;
+                data.branch_sign = cand.sign;
+            }
+        }
+        // 如果是唯一解 (如线线交点)，sign 仍为 0
+    }
+
+    // 2. 根据锁定的 branch_sign 提取结果
+    bool branch_matched = false;
+    for (const auto& cand : candidates) {
+        if (cand.sign == data.branch_sign) {
+            data.x = cand.x;
+            data.y = cand.y;
+            data.is_found = true;
+            branch_matched = true;
+            break;
+        }
+    }
+
+    if (!branch_matched) data.is_found = false;
 }

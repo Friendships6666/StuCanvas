@@ -98,6 +98,12 @@ namespace GeoFactory {
         const RPNParam& y_init,
         const std::vector<uint32_t>& target_ids
     );
+    uint32_t CreateAnalyticalIntersection(
+    GeometryGraph& graph,
+    uint32_t id1, uint32_t id2,
+    const RPNParam& x_guess,
+    const RPNParam& y_guess
+    );
 
 } // namespace GeoFactory
 

@@ -52,6 +52,16 @@ struct Data_ConstrainedPoint {
     uint32_t target_obj_id;
 };
 
+struct Data_AnalyticalIntersection {
+    // 1 代表使用 +sqrt(delta)，-1 代表使用 -sqrt(delta)
+    // 0 用于只有唯一解的情况（如线线交点）
+    int branch_sign = 0;
+
+    double x = 0.0;
+    double y = 0.0;
+    bool is_found = false;
+};
+
 struct Data_IntersectionPoint {
     double x = 0.0; // ★ 新增：最终交点 X
     double y = 0.0; // ★ 新增：最终交点 Y
@@ -143,7 +153,8 @@ struct GeoNode {
         Data_Circle,            // 圆逻辑
         Data_SingleRPN,         // 函数
         Data_DualRPN,           // 参数方程
-        Data_Scalar             // 标量
+        Data_Scalar,             // 标量
+        Data_AnalyticalIntersection  // <-- 必须加上这一行
     >;
 
     GeoPayload data;
