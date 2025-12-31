@@ -55,7 +55,7 @@ int main() {
         // 创建圆心 (0, 0)
         uint32_t p_center = CreatePoint(graph, {0.0}, {3.0});
         // 创建圆，半径 5.0
-        uint32_t circle = CreateCircle(graph, p_center, {2.0});
+        uint32_t circle = CreateCircle(graph, p_center, {6.0});
 
         // =========================================================
         // 2. 创建线段及其依赖项
@@ -86,20 +86,8 @@ int main() {
             inter_pt     // 交点放在最上面，方便观察吸附效果
         };
 
-        // 执行单次全量渲染
-        calculate_points_core(wasm_final_contiguous_buffer, wasm_function_ranges_buffer, graph.node_pool, draw_order, {}, view, true);
-
 
         std::cout << "Graph construction successful." << std::endl;
-
-
-
-
-
-
-        // 3. 渲染顺序 (画家算法)
-
-
 
 
         // =========================================================

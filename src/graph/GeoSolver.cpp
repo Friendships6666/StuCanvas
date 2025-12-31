@@ -362,22 +362,39 @@ void Solver_ParallelPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 
     self.data = p_prime;
 }
-// --- 性能优化 & 跨平台版：src/graph/GeoSolver.cpp ---
 
-// 静态缓冲区（常驻内存，避免重复分配）
-static AlignedVector<uint64_t> g_bit_grid;       // 存储对象位掩码
-static AlignedVector<int32_t>  g_collision_id;  // 存储碰撞点的连续ID (替代 map)
-static AlignedVector<uint32_t> g_dirty_indices;  // 稀疏清理记录
+
+// =========================================================
+// 极致优化：紧凑型空间哈希表静态缓冲区 (Sparse Spatial Hash)
+// =========================================================
+constexpr uint32_t HASH_TABLE_SIZE = 131072;
+constexpr uint32_t HASH_MASK = HASH_TABLE_SIZE - 1;
+
+struct HashEntry {
+    uint32_t pixel_idx; // 原始像素索引 (py * sw + px)
+    int32_t  acc_id;    // 碰撞 ID
+    uint64_t bitmask;   // 对象位掩码
+};
+
+static AlignedVector<HashEntry> g_hash_table;
+static AlignedVector<uint32_t>  g_used_slots;
 
 struct CellAcc {
     float sum_x;
     float sum_y;
     uint32_t count;
 };
-static std::vector<CellAcc> g_acc_buffer; // 存储具体的碰撞累加数据
+static std::vector<CellAcc> g_acc_buffer;
+
+// MurmurHash3 扰动函数，确保稀疏几何特征下哈希分布均匀
+inline uint32_t hash_pixel(uint32_t x) {
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = (x >> 16) ^ x;
+    return x;
+}
 
 void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
-    std::cout << "1" << std::endl;
     if (!std::holds_alternative<Data_IntersectionPoint>(self.data)) return;
     auto& data = std::get<Data_IntersectionPoint>(self.data);
     size_t n = data.num_targets;
@@ -386,16 +403,14 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
     const ViewState& v = g_global_view_state;
     const int sw = (int)v.screen_width;
     const int sh = (int)v.screen_height;
-    const size_t total_pixels = (size_t)sw * sh;
 
-    // 1. 初始化缓冲区（仅在分辨率改变时执行）
-    if (g_bit_grid.size() < total_pixels) {
-        g_bit_grid.assign(total_pixels, 0);
-        g_collision_id.assign(total_pixels, -1);
-        g_dirty_indices.reserve(200000);
+    // 1. 初始化哈希表缓冲区 (仅运行一次)
+    if (g_hash_table.size() != HASH_TABLE_SIZE) {
+        g_hash_table.resize(HASH_TABLE_SIZE, {0xFFFFFFFF, -1, 0});
+        g_used_slots.reserve(HASH_TABLE_SIZE);
     }
 
-    // 2. 锚点与坐标转换准备
+    // 2. 准备投影参数与锚点
     NDCMap m = BuildNDCMap(v);
     if (!data.is_found) {
         data.anchor_x = std::get<Data_Scalar>(pool[self.parents[n]].data).value;
@@ -404,8 +419,11 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
     float a_cx = (float)((data.anchor_x - m.center_x) * m.scale_x);
     float a_cy = -(float)((data.anchor_y - m.center_y) * m.scale_y);
 
-    // 3. Pass 1: 填充位掩码 (O(Points))
-    g_dirty_indices.clear();
+    // 3. Pass 1: 填充哈希表 (建立像素到对象的映射)
+    g_used_slots.clear();
+    const float half_sw = (float)sw * 0.5f;
+    const float half_sh = (float)sh * 0.5f;
+
     for (size_t i = 0; i < n; ++i) {
         const GeoNode& t_node = pool[self.parents[i]];
         uint32_t start = t_node.buffer_offset;
@@ -413,32 +431,44 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 
         for (uint32_t j = 0; j < count; ++j) {
             const auto& pt = wasm_final_contiguous_buffer[start + j];
-            int px = (int)((pt.position.x + 1.0f) * 0.5f * (float)sw);
-            int py = (int)((pt.position.y + 1.0f) * 0.5f * (float)sh);
+            int px = (int)((pt.position.x + 1.0f) * half_sw);
+            int py = (int)((pt.position.y + 1.0f) * half_sh);
             if (px < 0 || px >= sw || py < 0 || py >= sh) continue;
 
-            size_t idx = (size_t)py * sw + px;
-            if (g_bit_grid[idx] == 0) g_dirty_indices.push_back((uint32_t)idx);
-            g_bit_grid[idx] |= (1ULL << i);
+            uint32_t pix_idx = (uint32_t)py * sw + px;
+            uint32_t h = hash_pixel(pix_idx) & HASH_MASK;
+
+            // 线性探测处理冲突
+            while (g_hash_table[h].pixel_idx != 0xFFFFFFFF && g_hash_table[h].pixel_idx != pix_idx) {
+                h = (h + 1) & HASH_MASK;
+            }
+
+            if (g_hash_table[h].pixel_idx == 0xFFFFFFFF) {
+                g_hash_table[h].pixel_idx = pix_idx;
+                g_used_slots.push_back(h);
+            }
+            g_hash_table[h].bitmask |= (1ULL << i);
         }
     }
 
-    // 4. Pass 2: 分配碰撞 ID (O(Dirty Pixels))
+    // 4. Pass 2: 过滤碰撞像素并分配累加槽位
     g_acc_buffer.clear();
-    for (uint32_t idx : g_dirty_indices) {
-        uint64_t mask = g_bit_grid[idx];
-        if (mask != 0 && (mask & (mask - 1)) != 0) { // 检查是否有 >1 个位被设置
-            g_collision_id[idx] = (int32_t)g_acc_buffer.size();
+    for (uint32_t slot : g_used_slots) {
+        uint64_t mask = g_hash_table[slot].bitmask;
+        if (mask != 0 && (mask & (mask - 1)) != 0) { // Bitmask 包含至少两个对象
+            g_hash_table[slot].acc_id = (int32_t)g_acc_buffer.size();
             g_acc_buffer.push_back({0.0f, 0.0f, 0});
         }
     }
 
+    // 如果没有碰撞，清理哈希表并退出
     if (g_acc_buffer.empty()) {
-        for (uint32_t idx : g_dirty_indices) g_bit_grid[idx] = 0;
+        for (uint32_t slot : g_used_slots) g_hash_table[slot] = {0xFFFFFFFF, -1, 0};
         data.is_found = false;
         return;
     }
 
+    // 5. Pass 3: 亚像素累加 (针对碰撞像素进行坐标聚合)
     for (size_t i = 0; i < n; ++i) {
         const GeoNode& t_node = pool[self.parents[i]];
         uint32_t start = t_node.buffer_offset;
@@ -446,26 +476,27 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 
         for (uint32_t j = 0; j < count; ++j) {
             const auto& pt = wasm_final_contiguous_buffer[start + j];
-            int px = (int)((pt.position.x + 1.0f) * 0.5f * (float)sw);
-            int py = (int)((pt.position.y + 1.0f) * 0.5f * (float)sh);
-
-            // ★★★ 必须加上这一行边界检查 ★★★
+            int px = (int)((pt.position.x + 1.0f) * half_sw);
+            int py = (int)((pt.position.y + 1.0f) * half_sh);
             if (px < 0 || px >= sw || py < 0 || py >= sh) continue;
 
-            size_t idx = (size_t)py * sw + px;
+            uint32_t pix_idx = (uint32_t)py * sw + px;
+            uint32_t h = hash_pixel(pix_idx) & HASH_MASK;
+            while (g_hash_table[h].pixel_idx != pix_idx) {
+                if (g_hash_table[h].pixel_idx == 0xFFFFFFFF) break;
+                h = (h + 1) & HASH_MASK;
+            }
 
-            // 现在访问 g_collision_id 才是安全的
-            int32_t cid = g_collision_id[idx];
-            if (cid != -1) {
-                CellAcc& acc = g_acc_buffer[cid];
-                acc.sum_x += pt.position.x;
-                acc.sum_y += pt.position.y;
-                acc.count++;
+            int32_t aid = g_hash_table[h].acc_id;
+            if (aid != -1) {
+                g_acc_buffer[aid].sum_x += pt.position.x;
+                g_acc_buffer[aid].sum_y += pt.position.y;
+                g_acc_buffer[aid].count++;
             }
         }
     }
 
-    // 6. 锚点匹配
+    // 6. 查找与锚点最近的有效候选点 (Clip 空间比较)
     float b_cx = 0, b_cy = 0;
     float min_d2 = std::numeric_limits<float>::max();
     bool found = false;
@@ -474,20 +505,25 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
         float cx = acc.sum_x / acc.count;
         float cy = acc.sum_y / acc.count;
         float d2 = (cx - a_cx)*(cx - a_cx) + (cy - a_cy)*(cy - a_cy);
-        if (d2 < min_d2) { min_d2 = d2; b_cx = cx; b_cy = cy; found = true; }
+        if (d2 < min_d2) {
+            min_d2 = d2;
+            b_cx = cx;
+            b_cy = cy;
+            found = true;
+        }
     }
 
-    // 7. 稀疏清理 (保证下一帧网格是干净的)
-    for (uint32_t idx : g_dirty_indices) {
-        g_bit_grid[idx] = 0;
-        g_collision_id[idx] = -1;
+    // 7. 稀疏清理：重置所有使用过的哈希桶，供下一次求解使用
+    for (uint32_t slot : g_used_slots) {
+        g_hash_table[slot] = {0xFFFFFFFF, -1, 0};
     }
 
-    // 8. 写回结果
+    // 8. 结果写回与坐标反转 (Clip -> World)
     if (found) {
         data.x = m.center_x + (double)b_cx / m.scale_x;
         data.y = m.center_y - (double)b_cy / m.scale_y;
-        data.anchor_x = data.x; data.anchor_y = data.y;
+        data.anchor_x = data.x;
+        data.anchor_y = data.y;
         data.is_found = true;
     } else {
         data.is_found = false;
