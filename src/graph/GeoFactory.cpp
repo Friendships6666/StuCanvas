@@ -32,14 +32,23 @@ namespace GeoFactory {
         }
         graph.node_pool[child_id].rank = parent_ids.empty() ? 0 : max_parent_rank + 1;
     }
+
+
+
     static void Render_Point_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState&, const NDCMap& map, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
-    if (std::holds_alternative<Data_Point>(self.data)) {
-        const auto& p = std::get<Data_Point>(self.data);
         PointData pd{};
-        world_to_clip_store(pd, p.x, p.y, map, self.id);
-        q.push({ self.id, {pd} });
+        if (std::holds_alternative<Data_Point>(self.data)) {
+            const auto& p = std::get<Data_Point>(self.data);
+            world_to_clip_store(pd, p.x, p.y, map, self.id);
+            q.push({ self.id, {pd} });
+        }
+        // ★ 新增：兼容交点渲染
+        else if (std::holds_alternative<Data_IntersectionPoint>(self.data)) {
+            const auto& p = std::get<Data_IntersectionPoint>(self.data);
+            world_to_clip_store(pd, p.x, p.y, map, self.id);
+            q.push({ self.id, {pd} });
+        }
     }
-}
 
     static void Render_Line_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState& v, const NDCMap& m, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
         if (std::holds_alternative<Data_Line>(self.data)) {
@@ -155,6 +164,7 @@ namespace GeoFactory {
         const std::vector<MixedToken>& src_y,
         double t_min, double t_max
     ) {
+
         uint32_t id = graph.allocate_node();
         GeoNode& node = graph.node_pool[id];
         node.render_type = GeoNode::RenderType::Parametric;
@@ -570,6 +580,47 @@ namespace GeoFactory {
         // 注册到 JIT 队列
         graph.TouchNode(id);
 
+        return id;
+    }
+
+    uint32_t CreateIntersectionPoint(
+    GeometryGraph& graph,
+    const RPNParam& x_init,
+    const RPNParam& y_init,
+    const std::vector<uint32_t>& target_ids
+) {
+        if (target_ids.size() < 2) throw std::runtime_error("Intersection requires at least 2 objects.");
+
+        // 1. 类型检查：禁止点和标量参与
+        for (uint32_t tid : target_ids) {
+            auto type = graph.node_pool[tid].render_type;
+            if (type == GeoNode::RenderType::Point || type == GeoNode::RenderType::Scalar || type == GeoNode::RenderType::None) {
+                throw std::runtime_error("Only shape objects (Lines, Circles, Functions) can produce intersections.");
+            }
+        }
+
+        // 2. 提升初始位置为标量节点
+        uint32_t sx = CreateScalar(graph, x_init);
+        uint32_t sy = CreateScalar(graph, y_init);
+
+        // 3. 分配节点
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+        node.render_type = GeoNode::RenderType::Point;
+        node.render_task = Render_Point_Delegate;
+        node.solver = Solver_IntersectionPoint; // ★ 绑定专用图解求解器
+
+        // 4. 组装 parents: [Target0, Target1, ..., TargetN, SX, SY]
+        node.parents = target_ids;
+        node.parents.push_back(sx);
+        node.parents.push_back(sy);
+
+        Data_IntersectionPoint d;
+        d.num_targets = (uint32_t)target_ids.size();
+        node.data = d;
+
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
         return id;
     }
 

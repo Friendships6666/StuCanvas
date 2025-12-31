@@ -52,10 +52,14 @@ struct Data_ConstrainedPoint {
     uint32_t target_obj_id;
 };
 
-// 交点额外信息: 依赖两个对象 ID
 struct Data_IntersectionPoint {
-    uint32_t obj1_id;
-    uint32_t obj2_id;
+    double x = 0.0; // ★ 新增：最终交点 X
+    double y = 0.0; // ★ 新增：最终交点 Y
+
+    double anchor_x = 0.0;
+    double anchor_y = 0.0;
+    bool is_found = false;
+    uint32_t num_targets = 0;
 };
 
 

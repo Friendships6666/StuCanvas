@@ -49,57 +49,45 @@ int main() {
 
         GeometryGraph graph;
 
-        // 1. 创建圆心 [Rank 0]
-        // 坐标 (0, 0)
-        uint32_t p_center = CreatePoint(graph, {0.0}, {0.0});
+        // =========================================================
+        // 1. 创建圆及其依赖项
+        // =========================================================
+        // 创建圆心 (0, 0)
+        uint32_t p_center = CreatePoint(graph, {0.0}, {3.0});
+        // 创建圆，半径 5.0
+        uint32_t circle = CreateCircle(graph, p_center, {2.0});
 
-        // 2. 创建圆 [Rank 1]
-        // 半径为 5.0
-        uint32_t circle = CreateCircle(graph, p_center, {5.0});
+        // =========================================================
+        // 2. 创建线段及其依赖项
+        // =========================================================
+        // 创建线段端点 A (-10, -5)
+        uint32_t pL1 = CreatePoint(graph, {-10.0}, {-5.0});
+        // 创建线段端点 B (10, 5)
+        uint32_t pL2 = CreatePoint(graph, {10.0}, {5.0});
+        // 创建线段 (is_infinite = false)
+        uint32_t segment = CreateLine(graph, pL1, pL2, false);
 
-        // 3. 创建约束点 [Rank 2]
-        // 目标对象：circle
-        // 初始猜测位置：(3.0, 4.0)
-        // 逻辑：在渲染阶段，Solver 会读取 circle 的 Buffer，
-        // 将此点吸附到距离 (3, 4) 最近的圆周采样点上。
-        uint32_t p_constrained = CreateConstrainedPoint(
-            graph,
-            circle,
-            {3.0},
-            {4.0}
-        );
+        // =========================================================
+        // 3. 创建交点 (图解法)
+        // =========================================================
+        // 初始猜测点设在 (4.5, 2.2) 附近，这接近圆与该直线的其中一个交点
+        // 目标列表：{circle, segment}
+        uint32_t inter_pt = CreateIntersectionPoint(graph, {6.0}, {2.2}, {circle, segment});
 
-        // 4. 创建切线 [Rank 3]
-        // 依赖对象：p_constrained
-        // 逻辑：Solver 会找到 p_constrained 依附的父对象(circle)，
-        // 获取吸附位置附近的两个采样点，利用“最近两点法”确定切线方向。
-        uint32_t tangent_line = CreateTangent(graph, p_constrained);
-
-        // 5. 定义渲染顺序 (画家算法)
-        // 注意：计算顺序由 Rank 自动决定，这里只决定视觉遮挡
+        // =========================================================
+        // 4. 定义渲染顺序 (画家算法)
+        // =========================================================
         std::vector<uint32_t> draw_order = {
-            circle,         // 底层：圆
-            tangent_line,   // 中层：切线
-            p_center,       // 顶层：点
-            p_constrained
+            circle,      // 底层：圆
+            segment,     // 中层：线段
+            p_center,    // 顶层：各个控制点
+            pL1,
+            pL2,
+            inter_pt     // 交点放在最上面，方便观察吸附效果
         };
 
-
-
-
-
-
-        // 执行 JIT 更新与渲染
-        std::cout << "--- Pipeline Start ---" << std::endl;
-        calculate_points_core(
-            wasm_final_contiguous_buffer,
-            wasm_function_ranges_buffer,
-            graph.node_pool,
-            draw_order,
-            {},
-            view,
-            true
-        );
+        // 执行单次全量渲染
+        calculate_points_core(wasm_final_contiguous_buffer, wasm_function_ranges_buffer, graph.node_pool, draw_order, {}, view, true);
 
 
         std::cout << "Graph construction successful." << std::endl;
@@ -171,15 +159,31 @@ int main() {
 
         outfile.close();
 
-        // 控制台输出摘要
         std::cout << "Render Success!" << std::endl;
         std::cout << "Points saved to points.txt: " << wasm_final_contiguous_buffer.size() << std::endl;
 
-        for(size_t i=0; i<wasm_function_ranges_buffer.size(); ++i) {
+        // 定义类型转换辅助 Lambda
+        auto GetTypeStr = [](GeoNode::RenderType type) {
+            switch (type) {
+                case GeoNode::RenderType::Point:      return "[Point]";
+                case GeoNode::RenderType::Line:       return "[Line]";
+                case GeoNode::RenderType::Circle:     return "[Circle]";
+                case GeoNode::RenderType::Explicit:   return "[Explicit Func]";
+                case GeoNode::RenderType::Parametric: return "[Parametric Func]";
+                case GeoNode::RenderType::Implicit:   return "[Implicit Func]";
+                default:                              return "[Unknown]";
+            }
+        };
+
+        for(size_t i = 0; i < wasm_function_ranges_buffer.size(); ++i) {
             auto& r = wasm_function_ranges_buffer[i];
-            std::cout << "Obj ID " << draw_order[i]
-                      << ": Start=" << r.start_index
-                      << ", Count=" << r.point_count << std::endl;
+            uint32_t node_id = draw_order[i]; // 获取对应的节点ID
+            auto& node = graph.node_pool[node_id]; // 访问节点池获取类型信息
+
+            std::cout << "Obj ID " << std::setw(2) << node_id
+                      << " " << std::setw(18) << std::left << GetTypeStr(node.render_type)
+                      << ": Start=" << std::setw(6) << r.start_index
+                      << ", Count=" << std::setw(6) << r.point_count << std::endl;
         }
 
     } catch (const std::exception& e) {

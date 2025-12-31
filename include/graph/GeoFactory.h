@@ -92,6 +92,12 @@ namespace GeoFactory {
     uint32_t CreateConstrainedPoint(GeometryGraph& graph, uint32_t target_id, const RPNParam& x_expr, const RPNParam& y_expr);
     uint32_t CreateTangent(GeometryGraph& graph, uint32_t constrained_point_id);
     uint32_t CreateMeasureLength(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id);
+    uint32_t CreateIntersectionPoint(
+        GeometryGraph& graph,
+        const RPNParam& x_init,
+        const RPNParam& y_init,
+        const std::vector<uint32_t>& target_ids
+    );
 
 } // namespace GeoFactory
 

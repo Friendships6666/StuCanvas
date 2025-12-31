@@ -32,7 +32,7 @@
 #include <oneapi/tbb/parallel_for_each.h>
 #include <oneapi/tbb/concurrent_queue.h>
 // --- 全局共享的核心数据结构与宏定义 ---
-
+#include <bitset>
 namespace xs = xsimd;
 
 template <typename T>

@@ -25,4 +25,5 @@ void Solver_PerpendicularFoot(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_ParallelPoint(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_ConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_Tangent(GeoNode& self, const std::vector<GeoNode>& pool);
+void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool);
 #endif // GEOSOLVER_H
