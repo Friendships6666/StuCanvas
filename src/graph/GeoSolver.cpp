@@ -180,91 +180,58 @@ void Solver_PerpendicularFoot(GeoNode& self, const std::vector<GeoNode>& pool) {
 }
 
 
+// --- 文件路径: src/graph/GeoSolver.cpp ---
+
 void Solver_ConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
-    // 1. 安全检查
+    if (self.parents.size() < 3) return;
 
-    if (self.parents.empty()) return;
-    if (!std::holds_alternative<Data_Point>(self.data)) return;
-
-
-    // 2. 获取目标对象 (父节点)
+    // 1. 获取依赖对象信息
     uint32_t target_id = self.parents[0];
     const GeoNode& target_node = pool[target_id];
 
-    // ★★★ 核心逻辑：直接检查 Buffer 是否有点 ★★★
-    // 如果上一帧没有生成点（count=0），或者还没开始渲染，则无法吸附，保持不动
+    // 如果父对象没生成点，则无法吸附，保持不动
     if (target_node.current_point_count == 0) return;
 
-    // 3. 准备坐标转换参数
-    // 直接读取 pch.h 中的全局变量 g_global_view_state
-    const auto& view = g_global_view_state;
+    // 2. 获取当前的“锚点”坐标（由 RPN 标量计算出）
+    // 即使是静态值 3.0，也会在上一层 Rank 被算好存入 Data_Scalar::value
+    double anchor_x = std::get<Data_Scalar>(pool[self.parents[1]].data).value;
+    double anchor_y = std::get<Data_Scalar>(pool[self.parents[2]].data).value;
 
-    // 根据全局 View 计算 NDCMap (用于 World <-> Clip 转换)
-    // 逻辑需与 plotCall.cpp 中保持一致
-    double half_w = view.screen_width * 0.5;
-    double half_h = view.screen_height * 0.5;
+    // 3. 获取视图与坐标转换参数 (读取 pch.h 中的全局变量)
+    const ViewState& view = g_global_view_state;
+    NDCMap ndc_map = BuildNDCMap(view); // 假设你在 GeoSolver 内可见此辅助函数
 
-    // 手动计算 Center World (参考 lerp.h 的 screen_to_world)
-    double center_world_x = view.world_origin.x + half_w * view.wppx;
-    double center_world_y = view.world_origin.y + half_h * view.wppy;
+    // 4. 将锚点转为 Clip Space 方便与 Buffer 数据对比
+    PointData anchor_clip{};
+    world_to_clip_store(anchor_clip, anchor_x, anchor_y, ndc_map, 0);
 
-    NDCMap ndc_map;
-    ndc_map.center_x = center_world_x;
-    ndc_map.center_y = center_world_y;
-    ndc_map.scale_x = 2.0 / (view.screen_width * view.wppx);
-    ndc_map.scale_y = 2.0 / (view.screen_height * view.wppy);
-
-    // 4. 将自己当前的世界坐标 (Double) 转换为 Clip Space (Float)
-    // 这样才能和 Buffer 里的 float 数据进行距离比较
-    Data_Point& self_pos = std::get<Data_Point>(self.data);
-    PointData self_clip;
-    world_to_clip_store(self_clip, self_pos.x, self_pos.y, ndc_map, self.id);
-
-    // 5. ★★★ 暴力搜索：主动拉取 Buffer 数据 ★★★
-    // 利用 target_node 记录的偏移量，直接在全局 wasm_final_contiguous_buffer 中遍历
-    size_t start_idx = target_node.buffer_offset;
-    size_t end_idx = start_idx + target_node.current_point_count;
-
-    // 越界保护
-    if (end_idx > wasm_final_contiguous_buffer.size()) {
-        end_idx = wasm_final_contiguous_buffer.size();
-    }
+    // 5. 暴力搜索最近点
+    size_t start = target_node.buffer_offset;
+    size_t end = start + target_node.current_point_count;
 
     float min_dist_sq = std::numeric_limits<float>::max();
-    PointData best_point = self_clip; // 如果没找到更好的，就保持不动（但这不可能，因为 count > 0）
-    bool found_valid = false;
+    PointData best_point = anchor_clip;
+    bool found = false;
 
-    // 遍历显存中的点
-    for (size_t i = start_idx; i < end_idx; ++i) {
-        const PointData& pt = wasm_final_contiguous_buffer[i];
-
-        // 计算 Clip Space 下的欧几里得距离平方
-        float dx = pt.position.x - self_clip.position.x;
-        float dy = pt.position.y - self_clip.position.y;
+    for (size_t i = start; i < end; ++i) {
+        const auto& pt = wasm_final_contiguous_buffer[i];
+        float dx = pt.position.x - anchor_clip.position.x;
+        float dy = pt.position.y - anchor_clip.position.y;
         float d2 = dx * dx + dy * dy;
 
         if (d2 < min_dist_sq) {
             min_dist_sq = d2;
             best_point = pt;
-            found_valid = true;
+            found = true;
         }
     }
 
-    // 6. 如果找到了最近点，逆变换回 World Space 更新自己
-    if (found_valid) {
-        // 逆变换公式: World = Center + NDC / Scale
-        // 注意 Y 轴：渲染时 Y 是翻转的 (screen y 向下)，所以逆变换要处理符号
-        // world_to_clip_store 中: out.y = -dy * scale_y
-        // 所以: dy = -out.y / scale_y => world_y = center_y + dy
+    // 6. 如果找到，反转回世界坐标并更新 Data_Point 缓存
+    if (found) {
+        double wx = ndc_map.center_x + static_cast<double>(best_point.position.x) / ndc_map.scale_x;
+        double wy = ndc_map.center_y - static_cast<double>(best_point.position.y) / ndc_map.scale_y;
 
-        double ndc_x = static_cast<double>(best_point.position.x);
-        double ndc_y = static_cast<double>(best_point.position.y);
-
-        double new_world_x = ndc_map.center_x + ndc_x / ndc_map.scale_x;
-        double new_world_y = ndc_map.center_y - ndc_y / ndc_map.scale_y;
-
-        self_pos.x = new_world_x;
-        self_pos.y = new_world_y;
+        self.data = Data_Point{ wx, wy };
     }
 }
 void Solver_Tangent(GeoNode& self, const std::vector<GeoNode>& pool) {

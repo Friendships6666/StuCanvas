@@ -49,49 +49,43 @@ int main() {
 
         GeometryGraph graph;
 
-        // 1. 创建两个基础点 A(0,0) 和 B(3,4)
-        // 所有的标量现在都必须是 RPN 序列形式 {...}
-        uint32_t pA = CreatePoint(graph, {0.0}, {0.0});
-        uint32_t pB = CreatePoint(graph, {3.0}, {4.0});
+        // 1. 创建圆心 [Rank 0]
+        // 坐标 (0, 0)
+        uint32_t p_center = CreatePoint(graph, {0.0}, {0.0});
 
-        // 2. 测量 A 到 B 的距离 (预期结果 L = 5.0)
-        uint32_t len_AB = CreateMeasureLength(graph, pA, pB);
+        // 2. 创建圆 [Rank 1]
+        // 半径为 5.0
+        uint32_t circle = CreateCircle(graph, p_center, {5.0});
 
-
-
-        // 4. 创建一个动态点 C
-        // 坐标 X = len_AB (5.0), Y = len_AB / 2 (2.5)
-        uint32_t pC = CreatePoint(graph,
-            { Ref(len_AB) },
-            { Ref(len_AB), 2.0, RPNTokenType::DIV }
+        // 3. 创建约束点 [Rank 2]
+        // 目标对象：circle
+        // 初始猜测位置：(3.0, 4.0)
+        // 逻辑：在渲染阶段，Solver 会读取 circle 的 Buffer，
+        // 将此点吸附到距离 (3, 4) 最近的圆周采样点上。
+        uint32_t p_constrained = CreateConstrainedPoint(
+            graph,
+            circle,
+            {3.0},
+            {4.0}
         );
 
-        uint32_t archimedean_spiral = CreateParametricFunction(graph,
-                   // x(t) 的 RPN 序列
-                   {
-                       RPNTokenType::PUSH_T,
-                       Ref(len_AB), 10.0, RPNTokenType::DIV,
-                       RPNTokenType::MUL, // 此时栈顶是 r
-                       RPNTokenType::PUSH_T, RPNTokenType::COS,
-                       RPNTokenType::MUL  // r * cos(t)
-                   },
-                   // y(t) 的 RPN 序列
-                   {
-                       RPNTokenType::PUSH_T,
-                       Ref(len_AB), 10.0, RPNTokenType::DIV,
-                       RPNTokenType::MUL, // 此时栈顶是 r
-                       RPNTokenType::PUSH_T, RPNTokenType::SIN,
-                       RPNTokenType::MUL  // r * sin(t)
-                   },
-                   0.0, 16.0 * M_PI // 范围：0 到 4π (转两圈)
-               );
+        // 4. 创建切线 [Rank 3]
+        // 依赖对象：p_constrained
+        // 逻辑：Solver 会找到 p_constrained 依附的父对象(circle)，
+        // 获取吸附位置附近的两个采样点，利用“最近两点法”确定切线方向。
+        uint32_t tangent_line = CreateTangent(graph, p_constrained);
 
-        // 7. 定义渲染顺序
+        // 5. 定义渲染顺序 (画家算法)
+        // 注意：计算顺序由 Rank 自动决定，这里只决定视觉遮挡
         std::vector<uint32_t> draw_order = {
-            archimedean_spiral, // 螺旋线
-
-            pA, pB, pC
+            circle,         // 底层：圆
+            tangent_line,   // 中层：切线
+            p_center,       // 顶层：点
+            p_constrained
         };
+
+
+
 
 
 

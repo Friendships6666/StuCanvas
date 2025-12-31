@@ -123,7 +123,19 @@ FORCE_INLINE void world_to_clip_store_batch(
 //          ↓↓↓ 3. 裁切/NDC -> 世界 (Clip -> World) ↓↓↓
 // ========================================================================
 // 场景：隐函数求根时，需要将 Clip Space 的四叉树区间映射回 World Space 代入方程。
+// NDCMap 构建辅助
+inline NDCMap BuildNDCMap(const ViewState& view) {
+    double half_w = view.screen_width * 0.5;
+    double half_h = view.screen_height * 0.5;
+    Vec2 center_world = screen_to_world_inline({half_w, half_h}, view.world_origin, view.wppx, view.wppy);
 
+    NDCMap map{};
+    map.center_x = center_world.x;
+    map.center_y = center_world.y;
+    map.scale_x = 2.0 / (view.screen_width * view.wppx);
+    map.scale_y = 2.0 / (view.screen_height * view.wppy);
+    return map;
+}
 FORCE_INLINE Vec2 clip_to_world_inline(const Vec2& clip, const NDCMap& map) {
     // World = Center + NDC / Scale
     return {

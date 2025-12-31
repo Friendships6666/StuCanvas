@@ -489,23 +489,40 @@ namespace GeoFactory {
         return line_id;
     }
 
-    uint32_t CreateConstrainedPoint(GeometryGraph& graph, uint32_t target_id, double initial_x, double initial_y) {
-        if (target_id >= graph.node_pool.size()) throw std::runtime_error("ConstrainedPoint requires a valid target object.");
+    // --- 文件路径: src/graph/GeoFactory.cpp ---
 
+    uint32_t CreateConstrainedPoint(GeometryGraph& graph, uint32_t target_id, const RPNParam& x_expr, const RPNParam& y_expr) {
+        // 1. 安全检查
+        if (target_id >= graph.node_pool.size()) {
+            throw std::runtime_error("ConstrainedPoint requires a valid target object.");
+        }
+
+        // 2. 像 CreatePoint 一样，先为初值坐标提升两个标量节点
+        // 这样初值也可以是动态的，例如：Ref(len_AB)
+        uint32_t sx = CreateScalar(graph, x_expr);
+        uint32_t sy = CreateScalar(graph, y_expr);
+
+        // 3. 分配节点
         uint32_t id = graph.allocate_node();
         GeoNode& node = graph.node_pool[id];
-
         node.render_type = GeoNode::RenderType::Point;
-        node.parents = { target_id }; // 依赖目标对象
-        node.data = Data_Point{ initial_x, initial_y }; // 存储当前坐标
+
+        // 4. 建立依赖链：
+        // parents[0] 是目标曲线/圆
+        // parents[1] 是初始位置 X (Scalar)
+        // parents[2] 是初始位置 Y (Scalar)
+        node.parents = { target_id, sx, sy };
+
+        // 5. 初始化数据缓存
+        node.data = Data_Point{};
         node.solver = Solver_ConstrainedPoint;
-
-        LinkAndRank(graph, id, node.parents);
-
-        // ★ 统一修改：不再抢跑，依赖 JIT
-        // node.solver(node, graph.node_pool); // 之前为了立刻看到效果加的，但要统一就删掉
-        graph.TouchNode(id); // 注册计算
         node.render_task = Render_Point_Delegate; // 绑定点渲染
+
+        // 6. 拓扑链接与 JIT 注册
+        // LinkAndRank 会自动执行针对这三个父节点的循环依赖检测
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
+
         return id;
     }
 

@@ -75,7 +75,7 @@ namespace GeoFactory {
     /**
      * @brief 创建一个圆 (依赖圆心和半径)
      */
-    uint32_t CreateCircle(GeometryGraph& graph, uint32_t center_id, double radius);
+    uint32_t CreateCircle(GeometryGraph& graph, uint32_t center_id, const RPNParam& radius_expr);
 
     /**
      * @brief 创建一个动态函数 (显式/隐式/参数方程)
@@ -89,7 +89,7 @@ namespace GeoFactory {
     );
     uint32_t CreatePerpendicular(GeometryGraph& graph, uint32_t segment_id, uint32_t point_id, bool is_infinite);
     uint32_t CreateParallel(GeometryGraph& graph, uint32_t segment_id, uint32_t point_id);
-    uint32_t CreateConstrainedPoint(GeometryGraph& graph, uint32_t target_id, double initial_x, double initial_y);
+    uint32_t CreateConstrainedPoint(GeometryGraph& graph, uint32_t target_id, const RPNParam& x_expr, const RPNParam& y_expr);
     uint32_t CreateTangent(GeometryGraph& graph, uint32_t constrained_point_id);
     uint32_t CreateMeasureLength(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id);
 

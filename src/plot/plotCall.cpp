@@ -64,19 +64,7 @@ namespace {
         size_t m_write_ptr;
     };
 
-    // NDCMap 构建辅助
-    NDCMap BuildNDCMap(const ViewState& view) {
-        double half_w = view.screen_width * 0.5;
-        double half_h = view.screen_height * 0.5;
-        Vec2 center_world = screen_to_world_inline({half_w, half_h}, view.world_origin, view.wppx, view.wppy);
 
-        NDCMap map{};
-        map.center_x = center_world.x;
-        map.center_y = center_world.y;
-        map.scale_x = 2.0 / (view.screen_width * view.wppx);
-        map.scale_y = 2.0 / (view.screen_height * view.wppy);
-        return map;
-    }
 }
 
 // =========================================================
