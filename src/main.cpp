@@ -44,47 +44,39 @@ int main() {
         view.wppx = wppx;
         view.wppy = wppy;
         using namespace GeoFactory;
-
-
-
         GeometryGraph graph;
 
         // =========================================================
-        // 1. 创建圆及其依赖项
+        // 1. 创建两条极近、极小夹角的线段
         // =========================================================
-        // 创建圆心 (0, 0)
-        uint32_t p_center = CreatePoint(graph, {0.0}, {3.0});
-        // 创建圆，半径 5.0
-        uint32_t circle = CreateCircle(graph, p_center, {6.0});
+        // 线段 1: 水平线 y = 0
+        uint32_t pA1 = CreatePoint(graph, {-10.0}, {0.0});
+        uint32_t pA2 = CreatePoint(graph, {10.0}, {0.0});
+        uint32_t line_horizontal = CreateLine(graph, pA1, pA2, false);
+
+        // 线段 2: 极浅斜率线 (夹角约 1.14度)
+        // 在原点附近，这两条线会在垂直方向上重叠很多个像素
+        uint32_t pB1 = CreatePoint(graph, {-10.0}, {-0.2});
+        uint32_t pB2 = CreatePoint(graph, {10.0}, {0.2});
+        uint32_t line_shallow = CreateLine(graph, pB1, pB2, false);
 
         // =========================================================
-        // 2. 创建线段及其依赖项
+        // 2. 创建交点 (图解法)
         // =========================================================
-        // 创建线段端点 A (-10, -5)
-        uint32_t pL1 = CreatePoint(graph, {-10.0}, {-5.0});
-        // 创建线段端点 B (10, 5)
-        uint32_t pL2 = CreatePoint(graph, {10.0}, {5.0});
-        // 创建线段 (is_infinite = false)
-        uint32_t segment = CreateLine(graph, pL1, pL2, false);
+        // 初始猜测在 (0.5, 0.1) 附近
+        uint32_t inter_pt = CreateIntersectionPoint(graph, {100.0}, {10.0}, {line_horizontal, line_shallow});
 
         // =========================================================
-        // 3. 创建交点 (图解法)
-        // =========================================================
-        // 初始猜测点设在 (4.5, 2.2) 附近，这接近圆与该直线的其中一个交点
-        // 目标列表：{circle, segment}
-        uint32_t inter_pt = CreateIntersectionPoint(graph, {6.0}, {2.2}, {circle, segment});
-
-        // =========================================================
-        // 4. 定义渲染顺序 (画家算法)
+        // 3. 定义渲染顺序
         // =========================================================
         std::vector<uint32_t> draw_order = {
-            circle,      // 底层：圆
-            segment,     // 中层：线段
-            p_center,    // 顶层：各个控制点
-            pL1,
-            pL2,
-            inter_pt     // 交点放在最上面，方便观察吸附效果
+            line_horizontal,
+            line_shallow,
+            pA1, pA2, pB1, pB2,
+            inter_pt
         };
+
+
 
 
         std::cout << "Graph construction successful." << std::endl;

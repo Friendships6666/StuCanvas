@@ -364,29 +364,41 @@ void Solver_ParallelPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 }
 
 
+// --- 文件路径: src/graph/GeoSolver.cpp ---
+
+#include <vector>
+#include <limits>
+#include <cstdint>
+#include <cmath>
+#include <algorithm>
+
 // =========================================================
-// 极致优化：紧凑型空间哈希表静态缓冲区 (Sparse Spatial Hash)
+// 极致优化：分对象高精度空间哈希
 // =========================================================
 constexpr uint32_t HASH_TABLE_SIZE = 131072;
 constexpr uint32_t HASH_MASK = HASH_TABLE_SIZE - 1;
 
+// 每个像素内支持最多 4 个对象的分开统计
+struct CellAcc {
+    float sum_x[4];
+    float sum_y[4];
+    uint32_t count[4];
+
+    void clear() {
+        for(int i=0; i<4; ++i) { sum_x[i] = 0; sum_y[i] = 0; count[i] = 0; }
+    }
+};
+
 struct HashEntry {
-    uint32_t pixel_idx; // 原始像素索引 (py * sw + px)
-    int32_t  acc_id;    // 碰撞 ID
-    uint64_t bitmask;   // 对象位掩码
+    uint32_t pixel_idx;
+    int32_t  acc_id;
+    uint64_t bitmask;
 };
 
 static AlignedVector<HashEntry> g_hash_table;
 static AlignedVector<uint32_t>  g_used_slots;
-
-struct CellAcc {
-    float sum_x;
-    float sum_y;
-    uint32_t count;
-};
 static std::vector<CellAcc> g_acc_buffer;
 
-// MurmurHash3 扰动函数，确保稀疏几何特征下哈希分布均匀
 inline uint32_t hash_pixel(uint32_t x) {
     x = ((x >> 16) ^ x) * 0x45d9f3b;
     x = ((x >> 16) ^ x) * 0x45d9f3b;
@@ -397,20 +409,19 @@ inline uint32_t hash_pixel(uint32_t x) {
 void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
     if (!std::holds_alternative<Data_IntersectionPoint>(self.data)) return;
     auto& data = std::get<Data_IntersectionPoint>(self.data);
-    size_t n = data.num_targets;
+    size_t n = data.num_targets; // 参与对象数
     if (self.parents.size() < n + 2) return;
 
     const ViewState& v = g_global_view_state;
     const int sw = (int)v.screen_width;
     const int sh = (int)v.screen_height;
 
-    // 1. 初始化哈希表缓冲区 (仅运行一次)
+    // 1. 初始化
     if (g_hash_table.size() != HASH_TABLE_SIZE) {
         g_hash_table.resize(HASH_TABLE_SIZE, {0xFFFFFFFF, -1, 0});
         g_used_slots.reserve(HASH_TABLE_SIZE);
     }
 
-    // 2. 准备投影参数与锚点
     NDCMap m = BuildNDCMap(v);
     if (!data.is_found) {
         data.anchor_x = std::get<Data_Scalar>(pool[self.parents[n]].data).value;
@@ -419,11 +430,14 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
     float a_cx = (float)((data.anchor_x - m.center_x) * m.scale_x);
     float a_cy = -(float)((data.anchor_y - m.center_y) * m.scale_y);
 
-    // 3. Pass 1: 填充哈希表 (建立像素到对象的映射)
-    g_used_slots.clear();
-    const float half_sw = (float)sw * 0.5f;
-    const float half_sh = (float)sh * 0.5f;
+    // 2. 参数设定：提升网格分辨率到 0.25 像素
+    const float GRID_SCALE = 4.0f;
+    const float half_sw_s = (float)sw * 0.5f * GRID_SCALE;
+    const float half_sh_s = (float)sh * 0.5f * GRID_SCALE;
+    const uint32_t scaled_width = (uint32_t)(sw * GRID_SCALE);
 
+    // 3. Pass 1: 填充哈希表 (建立 0.25 像素级的碰撞标记)
+    g_used_slots.clear();
     for (size_t i = 0; i < n; ++i) {
         const GeoNode& t_node = pool[self.parents[i]];
         uint32_t start = t_node.buffer_offset;
@@ -431,14 +445,13 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 
         for (uint32_t j = 0; j < count; ++j) {
             const auto& pt = wasm_final_contiguous_buffer[start + j];
-            int px = (int)((pt.position.x + 1.0f) * half_sw);
-            int py = (int)((pt.position.y + 1.0f) * half_sh);
-            if (px < 0 || px >= sw || py < 0 || py >= sh) continue;
+            int px = (int)((pt.position.x + 1.0f) * half_sw_s);
+            int py = (int)((pt.position.y + 1.0f) * half_sh_s);
+            if (px < 0 || px >= (int)scaled_width || py < 0 || py >= (int)(sh * GRID_SCALE)) continue;
 
-            uint32_t pix_idx = (uint32_t)py * sw + px;
+            uint32_t pix_idx = (uint32_t)py * scaled_width + px;
             uint32_t h = hash_pixel(pix_idx) & HASH_MASK;
 
-            // 线性探测处理冲突
             while (g_hash_table[h].pixel_idx != 0xFFFFFFFF && g_hash_table[h].pixel_idx != pix_idx) {
                 h = (h + 1) & HASH_MASK;
             }
@@ -451,24 +464,26 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
         }
     }
 
-    // 4. Pass 2: 过滤碰撞像素并分配累加槽位
+    // 4. Pass 2: 识别碰撞并分配独立对象累加器
     g_acc_buffer.clear();
     for (uint32_t slot : g_used_slots) {
         uint64_t mask = g_hash_table[slot].bitmask;
-        if (mask != 0 && (mask & (mask - 1)) != 0) { // Bitmask 包含至少两个对象
+        // 判定：是否有至少两个对象重叠
+        if (mask != 0 && (mask & (mask - 1)) != 0) {
             g_hash_table[slot].acc_id = (int32_t)g_acc_buffer.size();
-            g_acc_buffer.push_back({0.0f, 0.0f, 0});
+            CellAcc new_acc;
+            new_acc.clear();
+            g_acc_buffer.push_back(new_acc);
         }
     }
 
-    // 如果没有碰撞，清理哈希表并退出
     if (g_acc_buffer.empty()) {
         for (uint32_t slot : g_used_slots) g_hash_table[slot] = {0xFFFFFFFF, -1, 0};
         data.is_found = false;
         return;
     }
 
-    // 5. Pass 3: 亚像素累加 (针对碰撞像素进行坐标聚合)
+    // 5. Pass 3: 亚像素累加 (按对象分开累加)
     for (size_t i = 0; i < n; ++i) {
         const GeoNode& t_node = pool[self.parents[i]];
         uint32_t start = t_node.buffer_offset;
@@ -476,11 +491,11 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 
         for (uint32_t j = 0; j < count; ++j) {
             const auto& pt = wasm_final_contiguous_buffer[start + j];
-            int px = (int)((pt.position.x + 1.0f) * half_sw);
-            int py = (int)((pt.position.y + 1.0f) * half_sh);
-            if (px < 0 || px >= sw || py < 0 || py >= sh) continue;
+            int px = (int)((pt.position.x + 1.0f) * half_sw_s);
+            int py = (int)((pt.position.y + 1.0f) * half_sh_s);
+            if (px < 0 || px >= (int)scaled_width || py < 0 || py >= (int)(sh * GRID_SCALE)) continue;
 
-            uint32_t pix_idx = (uint32_t)py * sw + px;
+            uint32_t pix_idx = (uint32_t)py * scaled_width + px;
             uint32_t h = hash_pixel(pix_idx) & HASH_MASK;
             while (g_hash_table[h].pixel_idx != pix_idx) {
                 if (g_hash_table[h].pixel_idx == 0xFFFFFFFF) break;
@@ -488,42 +503,62 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
             }
 
             int32_t aid = g_hash_table[h].acc_id;
-            if (aid != -1) {
-                g_acc_buffer[aid].sum_x += pt.position.x;
-                g_acc_buffer[aid].sum_y += pt.position.y;
-                g_acc_buffer[aid].count++;
+            if (aid != -1 && i < 4) { // 仅处理前 4 个求交对象
+                g_acc_buffer[aid].sum_x[i] += pt.position.x;
+                g_acc_buffer[aid].sum_y[i] += pt.position.y;
+                g_acc_buffer[aid].count[i]++;
             }
         }
     }
 
-    // 6. 查找与锚点最近的有效候选点 (Clip 空间比较)
+    // 6. Pass 4: 寻找重叠质量最高的候选点
     float b_cx = 0, b_cy = 0;
-    float min_d2 = std::numeric_limits<float>::max();
+    float min_internal_d2 = std::numeric_limits<float>::max();
+    float min_anchor_d2 = std::numeric_limits<float>::max();
     bool found = false;
+
     for (const auto& acc : g_acc_buffer) {
-        if (acc.count == 0) continue;
-        float cx = acc.sum_x / acc.count;
-        float cy = acc.sum_y / acc.count;
-        float d2 = (cx - a_cx)*(cx - a_cx) + (cy - a_cy)*(cy - a_cy);
-        if (d2 < min_d2) {
-            min_d2 = d2;
-            b_cx = cx;
-            b_cy = cy;
-            found = true;
+        // 只检查对象 0 和 1 的交叠质量（支持多对象时可扩展）
+        if (acc.count[0] == 0 || acc.count[1] == 0) continue;
+
+        // 计算两个对象在该像素内的各自质心
+        float ax = acc.sum_x[0] / acc.count[0];
+        float ay = acc.sum_y[0] / acc.count[0];
+        float bx = acc.sum_x[1] / acc.count[1];
+        float by = acc.sum_y[1] / acc.count[1];
+
+        // 质量评估：两个质心贴得越近，说明交点越真实
+        float idx = ax - bx; float idy = ay - by;
+        float internal_d2 = idx*idx + idy*idy;
+
+        // 像素候选坐标（取两对象均值的中心）
+        float cand_x = (ax + bx) * 0.5f;
+        float cand_y = (ay + by) * 0.5f;
+
+        // 与锚点的距离
+        float adx = cand_x - a_cx; float ady = cand_y - a_cy;
+        float anchor_d2 = adx*adx + ady*ady;
+
+        // 择优策略：优先匹配内部距离更小的（即相交得更准的），其次匹配离锚点近的
+        // 允许 1.2 倍的紧密度容差，在此范围内优先看锚点距离
+        if (internal_d2 < min_internal_d2 * 1.2f) {
+            if (internal_d2 < min_internal_d2 * 0.8f || anchor_d2 < min_anchor_d2) {
+                min_internal_d2 = internal_d2;
+                min_anchor_d2 = anchor_d2;
+                b_cx = cand_x; b_cy = cand_y;
+                found = true;
+            }
         }
     }
 
-    // 7. 稀疏清理：重置所有使用过的哈希桶，供下一次求解使用
-    for (uint32_t slot : g_used_slots) {
-        g_hash_table[slot] = {0xFFFFFFFF, -1, 0};
-    }
+    // 7. 现场清理
+    for (uint32_t slot : g_used_slots) g_hash_table[slot] = {0xFFFFFFFF, -1, 0};
 
-    // 8. 结果写回与坐标反转 (Clip -> World)
+    // 8. 写回结果
     if (found) {
         data.x = m.center_x + (double)b_cx / m.scale_x;
         data.y = m.center_y - (double)b_cy / m.scale_y;
-        data.anchor_x = data.x;
-        data.anchor_y = data.y;
+        data.anchor_x = data.x; data.anchor_y = data.y;
         data.is_found = true;
     } else {
         data.is_found = false;
