@@ -113,9 +113,10 @@ struct Data_AnalyticalConstrainedPoint {
     bool is_initialized = false; // 是否已锁定 t
     double x = 0.0, y = 0.0;     // 计算出的世界坐标缓存
 };
-// =========================================================
-// 2. 节点定义与类型检查
-// =========================================================
+struct Data_RatioPoint {
+    double x = 0.0;
+    double y = 0.0;
+};
 
 struct GeoNode;
 using SolverFunc = void(*)(GeoNode& self, const std::vector<GeoNode>& pool);
@@ -160,7 +161,8 @@ struct GeoNode {
         Data_DualRPN,           // 参数方程
         Data_Scalar,             // 标量
         Data_AnalyticalIntersection,
-        Data_AnalyticalConstrainedPoint
+        Data_AnalyticalConstrainedPoint,
+        Data_RatioPoint
     >;
 
     GeoPayload data;

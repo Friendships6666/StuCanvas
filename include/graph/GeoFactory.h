@@ -112,6 +112,13 @@ namespace GeoFactory {
         const RPNParam &y_guess
     );
 
+    uint32_t CreateRatioPoint(
+        GeometryGraph &graph,
+        uint32_t p1_id,
+        uint32_t p2_id,
+        const RPNParam &ratio_expr
+    );
+
 } // namespace GeoFactory
 
 #endif

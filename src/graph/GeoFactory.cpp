@@ -743,5 +743,31 @@ namespace GeoFactory {
 
         return id;
     }
+    uint32_t CreateRatioPoint(
+    GeometryGraph& graph,
+    uint32_t p1_id,
+    uint32_t p2_id,
+    const RPNParam& ratio_expr
+) {
+        // 1. 提升比例表达式为标量节点
+        uint32_t s_ratio = CreateScalar(graph, ratio_expr);
+
+        // 2. 分配节点
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+        node.render_type = GeoNode::RenderType::Point;
+
+        // 3. 建立依赖：[P1, P2, Ratio]
+        node.parents = { p1_id, p2_id, s_ratio };
+
+        node.data = Data_RatioPoint{};
+        node.solver = Solver_RatioPoint;
+        node.render_task = Render_Point_Delegate; // 使用修正后的通用点渲染
+
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
+
+        return id;
+    }
 
 }

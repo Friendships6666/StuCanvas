@@ -46,18 +46,25 @@ int main() {
         using namespace GeoFactory;
         GeometryGraph graph;
 
-        // 1. 创建线段 (0,0) -> (10,10)
-        uint32_t p1 = CreatePoint(graph, {0.0}, {0.0});
-        uint32_t p2 = CreatePoint(graph, {10.0}, {10.0});
-        uint32_t my_line = CreateLine(graph, p1, p2, false); // false = 线段
+        uint32_t A = CreatePoint(graph, {0.0}, {0.0});
+        uint32_t B = CreatePoint(graph, {10.0}, {0.0});
 
-        // 2. 创建解析约束点
-        // 猜测位置设为 (0, 10)。
-        // 线段方程为 y = x，(0, 10) 投影到 y = x 上的点是 (5, 5)。
-        uint32_t constrained_pt = CreateAnalyticalConstrainedPoint(graph, my_line, {0.0}, {10.0});
+        // 1. 创建中点 (比例 = 0.5)
+        uint32_t Mid = CreateRatioPoint(graph, A, B, {0.5});
+
+        // 2. 创建黄金分割点 (比例 = 0.618)
+        uint32_t Gold = CreateRatioPoint(graph, A, B, {0.618});
+
+        // 3. 创建动态比例点 (比例依赖于另一个标量，例如一条线段的长度)
+        uint32_t L_id = CreateMeasureLength(graph, A, B);
+        // 比例 = 1.0 / Length(AB)
+        uint32_t DynamicPt = CreateRatioPoint(graph, A, B, {1.0, Ref(L_id), RPNTokenType::DIV});
+
+        // 4. 创建外分点 (比例 = 1.5，在 AB 延长线上)
+        uint32_t ExtPt = CreateRatioPoint(graph, A, B, {1.5});
 
         // 3. 定义渲染顺序
-        std::vector<uint32_t> draw_order = { my_line, p1, p2, constrained_pt };
+        std::vector<uint32_t> draw_order = { A,B,Mid,Gold,L_id,DynamicPt,ExtPt };
 
 
 

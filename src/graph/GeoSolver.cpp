@@ -31,6 +31,9 @@ double ExtractValue(const GeoNode& parent, RPNBinding::Property prop, const std:
     if (auto d = std::get_if<Data_AnalyticalConstrainedPoint>(&parent.data)) {
         return (prop == RPNBinding::POS_X) ? d->x : d->y;
     }
+    if (auto d = std::get_if<Data_RatioPoint>(&parent.data)) {
+        return (prop == RPNBinding::POS_X) ? d->x : d->y;
+    }
     return 0.0;
 }
 struct LineCoords { double x1, y1, x2, y2; };
@@ -777,4 +780,26 @@ void Solver_AnalyticalConstrainedPoint(GeoNode& self, const std::vector<GeoNode>
             data->y = circle.cy + circle.radius * std::sin(data->t);
         }
     }
+}
+
+void Solver_RatioPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
+    if (self.parents.size() < 3) return;
+
+    // 提取 P1 坐标
+    double x1 = ExtractValue(pool[self.parents[0]], RPNBinding::POS_X, pool);
+    double y1 = ExtractValue(pool[self.parents[0]], RPNBinding::POS_Y, pool);
+
+    // 提取 P2 坐标
+    double x2 = ExtractValue(pool[self.parents[1]], RPNBinding::POS_X, pool);
+    double y2 = ExtractValue(pool[self.parents[1]], RPNBinding::POS_Y, pool);
+
+    // 提取比例 k (来自标量节点)
+    double k = ExtractValue(pool[self.parents[2]], RPNBinding::VALUE, pool);
+
+    // 计算线性插值公式: P = P1 + k * (P2 - P1)
+    Data_RatioPoint res;
+    res.x = x1 + k * (x2 - x1);
+    res.y = y1 + k * (y2 - y1);
+
+    self.data = res;
 }
