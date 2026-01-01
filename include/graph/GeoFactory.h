@@ -119,6 +119,13 @@ namespace GeoFactory {
         const RPNParam &ratio_expr
     );
 
+    uint32_t CreateCircleThreePoints(
+        GeometryGraph &graph,
+        uint32_t p1_id,
+        uint32_t p2_id,
+        uint32_t p3_id
+    );
+
 } // namespace GeoFactory
 
 #endif

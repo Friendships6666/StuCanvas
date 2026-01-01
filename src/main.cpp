@@ -46,25 +46,15 @@ int main() {
         using namespace GeoFactory;
         GeometryGraph graph;
 
-        uint32_t A = CreatePoint(graph, {0.0}, {0.0});
-        uint32_t B = CreatePoint(graph, {10.0}, {0.0});
+        uint32_t A = CreatePoint(graph, {-5.0}, {0.0});
+        uint32_t B = CreatePoint(graph, {5.0}, {0.0});
+        uint32_t C = CreatePoint(graph, {0.0}, {5.0});
 
-        // 1. 创建中点 (比例 = 0.5)
-        uint32_t Mid = CreateRatioPoint(graph, A, B, {0.5});
-
-        // 2. 创建黄金分割点 (比例 = 0.618)
-        uint32_t Gold = CreateRatioPoint(graph, A, B, {0.618});
-
-        // 3. 创建动态比例点 (比例依赖于另一个标量，例如一条线段的长度)
-        uint32_t L_id = CreateMeasureLength(graph, A, B);
-        // 比例 = 1.0 / Length(AB)
-        uint32_t DynamicPt = CreateRatioPoint(graph, A, B, {1.0, Ref(L_id), RPNTokenType::DIV});
-
-        // 4. 创建外分点 (比例 = 1.5，在 AB 延长线上)
-        uint32_t ExtPt = CreateRatioPoint(graph, A, B, {1.5});
+        // 2. 创建三点圆 (这应该是一个圆心在 (0,0) 半径为 5 的圆)
+        uint32_t circumCircle = CreateCircleThreePoints(graph, A, B, C);
 
         // 3. 定义渲染顺序
-        std::vector<uint32_t> draw_order = { A,B,Mid,Gold,L_id,DynamicPt,ExtPt };
+        std::vector<uint32_t> draw_order = { A,B,C,circumCircle };
 
 
 

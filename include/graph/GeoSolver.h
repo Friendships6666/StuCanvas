@@ -29,4 +29,5 @@ void Solver_IntersectionPoint(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_AnalyticalIntersection(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_AnalyticalConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_RatioPoint(GeoNode& self, const std::vector<GeoNode>& pool);
+void Solver_CircleThreePoints(GeoNode& self, const std::vector<GeoNode>& pool);
 #endif // GEOSOLVER_H

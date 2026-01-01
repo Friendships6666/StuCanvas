@@ -415,13 +415,7 @@ void Solver_ParallelPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 }
 
 
-// --- 文件路径: src/graph/GeoSolver.cpp ---
 
-#include <vector>
-#include <limits>
-#include <cstdint>
-#include <cmath>
-#include <algorithm>
 
 // =========================================================
 // 极致优化：分对象高精度空间哈希
@@ -802,4 +796,39 @@ void Solver_RatioPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
     res.y = y1 + k * (y2 - y1);
 
     self.data = res;
+}
+
+void Solver_CircleThreePoints(GeoNode& self, const std::vector<GeoNode>& pool) {
+    if (self.parents.size() < 3) return;
+
+    // 1. 提取三个点的世界坐标
+    double x1 = ExtractValue(pool[self.parents[0]], RPNBinding::POS_X, pool);
+    double y1 = ExtractValue(pool[self.parents[0]], RPNBinding::POS_Y, pool);
+    double x2 = ExtractValue(pool[self.parents[1]], RPNBinding::POS_X, pool);
+    double y2 = ExtractValue(pool[self.parents[1]], RPNBinding::POS_Y, pool);
+    double x3 = ExtractValue(pool[self.parents[2]], RPNBinding::POS_X, pool);
+    double y3 = ExtractValue(pool[self.parents[2]], RPNBinding::POS_Y, pool);
+
+    // 2. 计算分母 D (2 * 行列式)
+    // D = 2 * (x1(y2 - y3) + x2(y3 - y1) + x3(y1 - y2))
+    double D = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
+
+    auto& d = std::get<Data_Circle>(self.data);
+
+    // 3. 检查三点是否共线 (D 为 0 表示共线，无法成圆)
+    if (std::abs(D) < 1e-10) {
+        d.radius = 0.0; // 或者设置为一个代表无效的值
+        return;
+    }
+
+    // 4. 计算圆心世界坐标 (cx, cy)
+    double a = x1 * x1 + y1 * y1;
+    double b = x2 * x2 + y2 * y2;
+    double c = x3 * x3 + y3 * y3;
+
+    d.cx = (a * (y2 - y3) + b * (y3 - y1) + c * (y1 - y2)) / D;
+    d.cy = (a * (x3 - x2) + b * (x1 - x3) + c * (x2 - x1)) / D;
+
+    // 5. 计算半径 R
+    d.radius = std::sqrt(std::pow(d.cx - x1, 2) + std::pow(d.cy - y1, 2));
 }

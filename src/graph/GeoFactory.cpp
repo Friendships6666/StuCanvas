@@ -769,5 +769,34 @@ namespace GeoFactory {
 
         return id;
     }
+    uint32_t CreateCircleThreePoints(
+    GeometryGraph& graph,
+    uint32_t p1_id,
+    uint32_t p2_id,
+    uint32_t p3_id
+) {
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+
+        // 归类为圆
+        node.render_type = GeoNode::RenderType::Circle;
+
+        // 建立三元依赖
+        node.parents = { p1_id, p2_id, p3_id };
+
+        // 初始化圆数据载体 (用于存储计算出的 cx, cy, radius)
+        node.data = Data_Circle{};
+
+        // 绑定专用求解器
+        node.solver = Solver_CircleThreePoints;
+
+        // 绑定圆的渲染代理（它内部会调用 process_circle_specialized 即 plotCircle）
+        node.render_task = Render_Circle_Delegate;
+
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
+
+        return id;
+    }
 
 }
