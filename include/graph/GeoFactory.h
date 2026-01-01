@@ -125,6 +125,10 @@ namespace GeoFactory {
         uint32_t p2_id,
         uint32_t p3_id
     );
+    void UpdateFreePoint(GeometryGraph& graph, uint32_t id, const RPNParam& x_expr, const RPNParam& y_expr);
+    void UpdateAnalyticalConstrainedPoint(GeometryGraph& graph, uint32_t id, const RPNParam& x_expr, const RPNParam& y_expr);
+    void UpdateConstrainedPoint(GeometryGraph& graph, uint32_t id, const RPNParam& x_expr, const RPNParam& y_expr);
+    void UpdateFunctionRPN(GeometryGraph& graph, uint32_t id, const std::vector<MixedToken>& new_tokens_x, const std::vector<MixedToken>& new_tokens_y);
 
 } // namespace GeoFactory
 

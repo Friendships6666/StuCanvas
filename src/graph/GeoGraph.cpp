@@ -30,35 +30,39 @@ void GeometryGraph::TouchNode(uint32_t id) {
 }
 
 std::vector<uint32_t> GeometryGraph::SolveFrame() {
-    current_frame_index++;
-    std::vector<uint32_t> dirty_nodes;
-    dirty_nodes.reserve(64);
-    std::cout << "SolveFrame: min_rank=" << min_dirty_rank << " max_rank=" << max_dirty_rank << std::endl;
+    current_frame_index++; // 确保新的一帧
 
-    if (min_dirty_rank > max_dirty_rank) {
-        min_dirty_rank = 10000; max_dirty_rank = 0;
-        return dirty_nodes;
-    }
+    std::unordered_set<uint32_t> render_nodes_set;
 
     for (int r = min_dirty_rank; r <= max_dirty_rank; ++r) {
         auto& bucket = buckets[r];
         if (bucket.empty()) continue;
 
+        // 遍历当前 Rank 的所有脏节点
         for (uint32_t id : bucket) {
             GeoNode& node = node_pool[id];
-            // 只有 Rank > 0 且绑定了 solver 的节点才需要执行计算
-            if (node.rank > 0 && node.solver) {
+
+            // 只有当 node 的更新帧等于当前帧，才说明它是真的需要算
+            // Enqueue 内部已经设置过 node.last_update_frame = current_frame_index
+
+            if (node.solver) {
                 node.solver(node, node_pool);
             }
-            dirty_nodes.push_back(id);
+
+            if (node.render_type != GeoNode::RenderType::None && node.render_type != GeoNode::RenderType::Scalar) {
+                render_nodes_set.insert(id);
+            }
+
+            // 传播
             for (uint32_t child_id : node.children) {
                 Enqueue(node_pool[child_id]);
             }
         }
-        bucket.clear();
+        bucket.clear(); // 处理完必须清理
     }
+
     min_dirty_rank = 10000; max_dirty_rank = 0;
-    return dirty_nodes;
+    return std::vector<uint32_t>(render_nodes_set.begin(), render_nodes_set.end());
 }
 
 bool GeometryGraph::DetectCycle(uint32_t child_id, uint32_t parent_id) const {

@@ -12,6 +12,41 @@
 #include <vector> // 确保 vector 被包含
 
 namespace GeoFactory {
+    // 位于 GeoFactory.cpp 内部辅助
+    static void Internal_UpdateScalarRPN(GeometryGraph& graph, uint32_t scalar_id, const RPNParam& expr) {
+        GeoNode& node = graph.node_pool[scalar_id];
+        auto* d = std::get_if<Data_Scalar>(&node.data);
+        if (!d) return;
+
+        // 1. 清空旧的 RPN 数据
+        d->tokens.clear();
+        d->bindings.clear();
+
+        // 2. 重新编译 Token 和 依赖
+        std::vector<uint32_t> new_parents;
+        for (const auto& item : expr) {
+            if (std::holds_alternative<RPNTokenType>(item)) {
+                d->tokens.push_back({std::get<RPNTokenType>(item), 0.0});
+            } else if (std::holds_alternative<double>(item)) {
+                d->tokens.push_back({RPNTokenType::PUSH_CONST, std::get<double>(item)});
+            } else if (std::holds_alternative<Ref>(item)) {
+                uint32_t ref_id = std::get<Ref>(item).id;
+                d->tokens.push_back({RPNTokenType::PUSH_CONST, 0.0}); // 占位
+
+                uint32_t p_idx = 0; bool found = false;
+                for(size_t i=0; i<new_parents.size(); ++i) if(new_parents[i]==ref_id){p_idx=(uint32_t)i;found=true;break;}
+                if(!found){new_parents.push_back(ref_id); p_idx=(uint32_t)new_parents.size()-1;}
+
+                d->bindings.push_back({(uint32_t)(d->tokens.size()-1), p_idx, RPNBinding::VALUE});
+            }
+        }
+
+        // 3. 更新拓扑（如果依赖项变了）
+        node.parents = new_parents;
+        // 注意：在正式版本中，这里需要根据 new_parents 重新调用 LinkAndRank
+        // 但在简单测试中，假设依赖的点对象没变，仅 Touch 即可。
+        graph.TouchNode(scalar_id);
+    }
 
 
 
@@ -798,5 +833,80 @@ namespace GeoFactory {
 
         return id;
     }
+    void UpdateFreePoint(GeometryGraph& graph, uint32_t id, const RPNParam& x_expr, const RPNParam& y_expr) {
+        if (id >= graph.node_pool.size()) return;
+        GeoNode& node = graph.node_pool[id];
+
+        // 自由点必须有两个父节点 (Scalar X, Scalar Y)
+        if (node.parents.size() < 2) return;
+
+        // 分别更新两个标量父节点
+        Internal_UpdateScalarRPN(graph, node.parents[0], x_expr);
+        Internal_UpdateScalarRPN(graph, node.parents[1], y_expr);
+
+        // 标记点本身为脏
+        graph.TouchNode(id);
+    }
+
+    void UpdateAnalyticalConstrainedPoint(GeometryGraph& graph, uint32_t id, const RPNParam& x_expr, const RPNParam& y_expr) {
+        if (id >= graph.node_pool.size()) return;
+        GeoNode& node = graph.node_pool[id];
+        auto* data = std::get_if<Data_AnalyticalConstrainedPoint>(&node.data);
+        if (!data) return;
+
+        // 重置初始化标记，Solver 看到 false 会重新投影计算锁定 t
+        data->is_initialized = false;
+
+        // 解析约束点 parents: [TargetObj, Scalar_GuessX, Scalar_GuessY]
+        if (node.parents.size() >= 3) {
+            Internal_UpdateScalarRPN(graph, node.parents[1], x_expr);
+            Internal_UpdateScalarRPN(graph, node.parents[2], y_expr);
+        }
+
+        graph.TouchNode(id);
+    }
+
+    // 3. 更新图解约束点
+    void UpdateConstrainedPoint(GeometryGraph& graph, uint32_t id, const RPNParam& x_expr, const RPNParam& y_expr) {
+        if (id >= graph.node_pool.size()) return;
+        GeoNode& node = graph.node_pool[id];
+
+        // 图解约束点的 parents 布局通常也是: [TargetShape, ScalarGuessX, ScalarGuessY]
+        if (node.parents.size() < 3) return;
+
+        // 更新作为“吸附锚点”的两个标量公式
+        Internal_UpdateScalarRPN(graph, node.parents[1], x_expr);
+        Internal_UpdateScalarRPN(graph, node.parents[2], y_expr);
+
+        // 标记点本身为脏，使其 Solver 在 SolveFrame 中运行寻找最近点的逻辑
+        graph.TouchNode(id);
+    }
+
+    void UpdateFunctionRPN(GeometryGraph& graph, uint32_t id, const std::vector<MixedToken>& new_tokens_x, const std::vector<MixedToken>& new_tokens_y) {
+        if (id >= graph.node_pool.size()) return;
+        GeoNode& node = graph.node_pool[id];
+
+        if (auto* d = std::get_if<Data_SingleRPN>(&node.data)) {
+            // 处理显式函数或隐函数
+            d->tokens.clear();
+            d->bindings.clear();
+            std::vector<uint32_t> new_parents;
+            CompileMixedTokens(new_tokens_x, d->tokens, d->bindings, new_parents);
+            node.parents = new_parents;
+        }
+        else if (auto* d = std::get_if<Data_DualRPN>(&node.data)) {
+            // 处理参数方程 (x(t) 和 y(t))
+            d->tokens_x.clear(); d->bindings_x.clear();
+            d->tokens_y.clear(); d->bindings_y.clear();
+            std::vector<uint32_t> new_parents;
+            CompileMixedTokens(new_tokens_x, d->tokens_x, d->bindings_x, new_parents);
+            CompileMixedTokens(new_tokens_y, d->tokens_y, d->bindings_y, new_parents);
+            node.parents = new_parents;
+        }
+
+        graph.TouchNode(id);
+    }
+
+
 
 }

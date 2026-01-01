@@ -38,8 +38,8 @@ struct Data_Scalar {
     ScalarType type = ScalarType::Expression;
 
     // RPN 核心指令与绑定
-    AlignedVector<RPNToken> tokens;
-    std::vector<RPNBinding> bindings;
+    AlignedVector<RPNToken> tokens{};
+    std::vector<RPNBinding> bindings{};
 };
 
 struct Data_Point {
@@ -76,17 +76,17 @@ struct Data_IntersectionPoint {
 
 // 显函数/隐函数
 struct Data_SingleRPN {
-    AlignedVector<RPNToken> tokens;
-    std::vector<RPNBinding> bindings;
+    AlignedVector<RPNToken> tokens{};
+    std::vector<RPNBinding> bindings{};
 };
 
 // 参数方程
 struct Data_DualRPN {
-    AlignedVector<RPNToken> tokens_x;
-    AlignedVector<RPNToken> tokens_y;
-    std::vector<RPNBinding> bindings_x; // 处理 x(t) 的动态参数
-    std::vector<RPNBinding> bindings_y; // 处理 y(t) 的动态参数
-    double t_min, t_max;
+    AlignedVector<RPNToken> tokens_x{};
+    AlignedVector<RPNToken> tokens_y{};
+    std::vector<RPNBinding> bindings_x{}; // 处理 x(t) 的动态参数
+    std::vector<RPNBinding> bindings_y{}; // 处理 y(t) 的动态参数
+    double t_min{}, t_max{};
 };
 
 // 直线/线段: 依赖两个点 ID
@@ -122,14 +122,14 @@ struct GeoNode;
 using SolverFunc = void(*)(GeoNode& self, const std::vector<GeoNode>& pool);
 
 struct GeoNode {
-    uint32_t id;
+    uint32_t id{};
     uint32_t rank = 0;
     bool active = true;
     bool is_visible = true;
 
     // 拓扑
-    std::vector<uint32_t> parents;
-    std::vector<uint32_t> children;
+    std::vector<uint32_t> parents{};
+    std::vector<uint32_t> children{};
 
     enum class RenderType {
         None,
@@ -187,11 +187,12 @@ public:
     uint32_t current_frame_index = 1;
     int min_dirty_rank = 10000, max_dirty_rank = 0;
 
+
     GeometryGraph();
     uint32_t allocate_node();
     void TouchNode(uint32_t id);
     std::vector<uint32_t> SolveFrame();
-    bool DetectCycle(uint32_t child_id, uint32_t parent_id) const;
+    [[nodiscard("必须检查循环依赖，否则 SolveFrame 会崩溃！")]] bool DetectCycle(uint32_t child_id, uint32_t parent_id) const;
     std::vector<std::vector<uint32_t>> GetRequiredRankedBatches(const std::vector<uint32_t>& targets);
 
 private:

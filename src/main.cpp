@@ -8,7 +8,18 @@
 #include <vector>
 #include <iomanip>
 
-
+// 辅助导出函数
+void ExportPoints(const std::string& filename, const AlignedVector<PointData>& buffer, const AlignedVector<FunctionRange>& ranges, const std::vector<uint32_t>& draw_order) {
+    std::ofstream outfile(filename);
+    outfile << "# WebGPU Plotter Export: " << filename << "\n";
+    outfile << "# Total Buffer Size: " << buffer.size() << "\n";
+    outfile << "# [X_Clip] [Y_Clip] [Func_ID]\n";
+    outfile << std::fixed << std::setprecision(6);
+    for (const auto& pt : buffer) {
+        outfile << pt.position.x << " " << pt.position.y << " " << pt.function_index << "\n";
+    }
+    outfile.close();
+}
 
 int main() {
     try {
@@ -43,113 +54,98 @@ int main() {
         view.world_origin = world_origin;
         view.wppx = wppx;
         view.wppy = wppy;
+
+
         using namespace GeoFactory;
         GeometryGraph graph;
 
+        // 创建 P1(-5,0), P2(5,0), P3(0,5)
         uint32_t A = CreatePoint(graph, {-5.0}, {0.0});
         uint32_t B = CreatePoint(graph, {5.0}, {0.0});
         uint32_t C = CreatePoint(graph, {0.0}, {5.0});
-
-        // 2. 创建三点圆 (这应该是一个圆心在 (0,0) 半径为 5 的圆)
         uint32_t circumCircle = CreateCircleThreePoints(graph, A, B, C);
 
-        // 3. 定义渲染顺序
-        std::vector<uint32_t> draw_order = { A,B,C,circumCircle };
-
-
-
-
-        std::cout << "Graph construction successful." << std::endl;
-
+        std::vector<uint32_t> draw_order = { A, B, C, circumCircle };
 
         // =========================================================
-        // 3. 执行全局渲染计算
+        // 2. 第一轮：全局渲染 (Global Update)
         // =========================================================
-        std::cout << "--- Starting Global Render ---" << std::endl;
+        std::cout << "[Step 1] Initializing Global Render..." << std::endl;
 
-
-
-        // 1. 记录开始时间点
-        auto start_time = std::chrono::high_resolution_clock::now();
-
-        // 2. 执行核心计算函数
         calculate_points_core(
             wasm_final_contiguous_buffer,
             wasm_function_ranges_buffer,
             graph.node_pool,
             draw_order,
-            {},    // 全局模式，dirty_nodes 为空
+            {},    // global模式下传空
             view,
             true   // is_global_update = true
         );
 
-
-        // 3. 记录结束时间点
-        auto end_time = std::chrono::high_resolution_clock::now();
-
-        // 4. 计算差值并转换为毫秒 (double 类型可以保留小数位，如 1.2345 ms)
-        std::chrono::duration<double, std::milli> ms_double = end_time - start_time;
-
-        // 5. 输出结果
-
-        std::cout << "绘制核心计算总耗时: " << std::fixed << std::setprecision(4)
-                  << ms_double.count() << " ms" << std::endl;
-
+        std::cout << "Initial Buffer Size: " << wasm_final_contiguous_buffer.size() << std::endl;
+        ExportPoints("points1.txt", wasm_final_contiguous_buffer, wasm_function_ranges_buffer, draw_order);
 
         // =========================================================
-        // 4. 将结果导出到 points.txt
+        // 3. 第二轮：局部更新 (Local Incremental Update)
         // =========================================================
-        std::ofstream outfile("points.txt");
-        if (!outfile.is_open()) {
-            throw std::runtime_error("Could not open points.txt for writing.");
-        }
+        std::cout << "\n[Step 2] Moving Point A to (-10.0, 0.0)..." << std::endl;
 
-        outfile << "# WebGPU Plotter Debug Result\n";
-        outfile << "# View: Offset(" << offset_x << "," << offset_y << ") Zoom=" << zoom << "\n";
-        outfile << "# Total points: " << wasm_final_contiguous_buffer.size() << "\n";
-        outfile << "# [X_Clip] [Y_Clip] [Func_ID]\n";
-        outfile << std::fixed << std::setprecision(6);
+        std::vector<uint32_t> dirty_nodes_0 = graph.SolveFrame();
 
-        // 遍历所有生成的点数据
-        for (const auto& pt : wasm_final_contiguous_buffer) {
-            outfile << pt.position.x << " "
-                    << pt.position.y << " "
-                    << pt.function_index << "\n";
-        }
+        std::cout << "Dirty nodes detected by SolveFrame00000: ";
+        for(uint32_t id : dirty_nodes_0) std::cout << id << " ";
+        std::cout << std::endl;
 
-        outfile.close();
+        // 修改 A 点坐标并标记脏
+        UpdateFreePoint(graph, A, {-10.0}, {0.0});
 
-        std::cout << "Render Success!" << std::endl;
-        std::cout << "Points saved to points.txt: " << wasm_final_contiguous_buffer.size() << std::endl;
+        // 核心步骤：运行计算图求解器
+        // 它会发现 A 脏了，进而发现依赖 A 的 circumCircle 也脏了
+        std::vector<uint32_t> dirty_nodes = graph.SolveFrame();
+        auto& posA = std::get<Data_Point>(graph.node_pool[A].data);
+        auto& circle = std::get<Data_Circle>(graph.node_pool[circumCircle].data);
+        std::cout << "[Check] Point A is now: (" << posA.x << ", " << posA.y << ")" << std::endl;
+        std::cout << "[Check] Circle Center: (" << circle.cx << ", " << circle.cy << ") R=" << circle.radius << std::endl;
 
-        // 定义类型转换辅助 Lambda
-        auto GetTypeStr = [](GeoNode::RenderType type) {
-            switch (type) {
-                case GeoNode::RenderType::Point:      return "[Point]";
-                case GeoNode::RenderType::Line:       return "[Line]";
-                case GeoNode::RenderType::Circle:     return "[Circle]";
-                case GeoNode::RenderType::Explicit:   return "[Explicit Func]";
-                case GeoNode::RenderType::Parametric: return "[Parametric Func]";
-                case GeoNode::RenderType::Implicit:   return "[Implicit Func]";
-                default:                              return "[Unknown]";
-            }
-        };
+        std::cout << "Dirty nodes detected by SolveFrame: ";
+        for(uint32_t id : dirty_nodes) std::cout << id << " ";
+        std::cout << std::endl;
 
+        // 执行局部渲染：只重新计算 dirty_nodes 并在 Buffer 末尾追加
+        calculate_points_core(
+            wasm_final_contiguous_buffer,
+            wasm_function_ranges_buffer,
+            graph.node_pool,
+            draw_order,
+            dirty_nodes,
+            view,
+            false  // is_global_update = false (局部模式)
+        );
+
+        std::cout << "Final Buffer Size (after append): " << wasm_final_contiguous_buffer.size() << std::endl;
+        ExportPoints("points2.txt", wasm_final_contiguous_buffer, wasm_function_ranges_buffer, draw_order);
+
+        // =========================================================
+        // 4. 详细日志分析
+        // =========================================================
+        std::cout << "\n--- Ring Buffer Analysis ---" << std::endl;
         for(size_t i = 0; i < wasm_function_ranges_buffer.size(); ++i) {
+            uint32_t node_id = draw_order[i];
             auto& r = wasm_function_ranges_buffer[i];
-            uint32_t node_id = draw_order[i]; // 获取对应的节点ID
-            auto& node = graph.node_pool[node_id]; // 访问节点池获取类型信息
+            bool is_dirty = false;
+            for(uint32_t d : dirty_nodes) if(d == node_id) is_dirty = true;
 
-            std::cout << "Obj ID " << std::setw(2) << node_id
-                      << " " << std::setw(18) << std::left << GetTypeStr(node.render_type)
-                      << ": Start=" << std::setw(6) << r.start_index
-                      << ", Count=" << std::setw(6) << r.point_count << std::endl;
+            std::cout << "Node ID " << node_id
+                      << (is_dirty ? " [UPDATED] " : " [STAYED]  ")
+                      << " Offset=" << std::setw(6) << r.start_index
+                      << " Count=" << std::setw(6) << r.point_count << std::endl;
         }
+
+        std::cout << "\nResults saved. Verify points1.txt (Old) and points2.txt (Combined)." << std::endl;
 
     } catch (const std::exception& e) {
         std::cerr << "Critical Error: " << e.what() << std::endl;
         return -1;
     }
-
     return 0;
 }
