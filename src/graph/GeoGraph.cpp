@@ -8,7 +8,7 @@ GeometryGraph::GeometryGraph() {
 }
 
 uint32_t GeometryGraph::allocate_node() {
-    auto id = (uint32_t)node_pool.size();
+    auto id = static_cast<uint32_t>(node_pool.size());
     node_pool.emplace_back(id);
     return id;
 }
@@ -18,10 +18,10 @@ void GeometryGraph::Enqueue(GeoNode& node) {
     node.last_update_frame = current_frame_index;
 
     if (node.rank >= buckets.size()) buckets.resize(node.rank + 32);
-    buckets[node.rank].push_back(node.id);
+    buckets[node.rank].emplace_back(node.id);
 
-    if ((int)node.rank < min_dirty_rank) min_dirty_rank = (int)node.rank;
-    if ((int)node.rank > max_dirty_rank) max_dirty_rank = (int)node.rank;
+    if (node.rank < min_dirty_rank) min_dirty_rank = node.rank;
+    if (node.rank > max_dirty_rank) max_dirty_rank = node.rank;
 }
 
 void GeometryGraph::TouchNode(uint32_t id) {
@@ -34,7 +34,7 @@ std::vector<uint32_t> GeometryGraph::SolveFrame() {
 
     std::unordered_set<uint32_t> render_nodes_set;
 
-    for (int r = min_dirty_rank; r <= max_dirty_rank; ++r) {
+    for (auto r = min_dirty_rank; r <= max_dirty_rank; ++r) {
         auto& bucket = buckets[r];
         if (bucket.empty()) continue;
 

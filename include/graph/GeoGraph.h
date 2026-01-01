@@ -185,7 +185,7 @@ public:
     std::vector<GeoNode> node_pool{};
     std::vector<std::vector<uint32_t>> buckets{};
     uint32_t current_frame_index = 1;
-    int min_dirty_rank = 10000, max_dirty_rank = 0;
+    uint32_t min_dirty_rank = 10000, max_dirty_rank = 0;
 
 
     GeometryGraph();
