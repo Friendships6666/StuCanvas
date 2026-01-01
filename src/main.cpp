@@ -46,51 +46,18 @@ int main() {
         using namespace GeoFactory;
         GeometryGraph graph;
 
-        // =========================================================
-        // 1. 创建两个相交的圆
-        // =========================================================
-        // 圆 1: 中心 (-3, 0), 半径 5
-        uint32_t p_c1 = CreatePoint(graph, {-3.0}, {0.0});
-        uint32_t circle1 = CreateCircle(graph, p_c1, {5.0});
+        // 1. 创建线段 (0,0) -> (10,10)
+        uint32_t p1 = CreatePoint(graph, {0.0}, {0.0});
+        uint32_t p2 = CreatePoint(graph, {10.0}, {10.0});
+        uint32_t my_line = CreateLine(graph, p1, p2, false); // false = 线段
 
-        // 圆 2: 中心 (3, 0), 半径 5
-        // 理论交点位置：(0, 4) 和 (0, -4)
-        uint32_t p_c2 = CreatePoint(graph, {3.0}, {0.0});
-        uint32_t circle2 = CreateCircle(graph, p_c2, {5.0});
+        // 2. 创建解析约束点
+        // 猜测位置设为 (0, 10)。
+        // 线段方程为 y = x，(0, 10) 投影到 y = x 上的点是 (5, 5)。
+        uint32_t constrained_pt = CreateAnalyticalConstrainedPoint(graph, my_line, {0.0}, {10.0});
 
-        // =========================================================
-        // 2. 创建解析交点 (锁定上方交点)
-        // =========================================================
-        // 初始猜测点 (0, 4.5) 靠近 (0, 4)
-        // 求解器会计算分支：
-        // 分支 A (+h): (0, 4)  距离猜测点 0.5
-        // 分支 B (-h): (0, -4) 距离猜测点 8.5
-        // 结果：branch_sign 会锁定为 +1 (或 -1，取决于数学推导方向)
-        uint32_t inter_pt = CreateAnalyticalIntersection(
-            graph,
-            circle1,
-            circle2,
-            {0.0}, {4.5}
-        );
-
-        // =========================================================
-        // 3. 创建以交点为圆心的第三个圆
-        // =========================================================
-        // 依赖：inter_pt (GeoNode) 作为圆心
-        // 半径：2.0
-        uint32_t circle_on_top = CreateCircle(graph, inter_pt, {2.0});
-
-        // =========================================================
-        // 4. 定义渲染顺序
-        // =========================================================
-        std::vector<uint32_t> draw_order = {
-            circle1,
-            circle2,
-            circle_on_top, // 以交点为中心的圆
-            p_c1,
-            p_c2,
-            inter_pt       // 交点放在最上面
-        };
+        // 3. 定义渲染顺序
+        std::vector<uint32_t> draw_order = { my_line, p1, p2, constrained_pt };
 
 
 

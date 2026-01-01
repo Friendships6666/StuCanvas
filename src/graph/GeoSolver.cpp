@@ -28,6 +28,9 @@ double ExtractValue(const GeoNode& parent, RPNBinding::Property prop, const std:
         if (prop == RPNBinding::POS_X) return p.x;
         if (prop == RPNBinding::POS_Y) return p.y;
     }
+    if (auto d = std::get_if<Data_AnalyticalConstrainedPoint>(&parent.data)) {
+        return (prop == RPNBinding::POS_X) ? d->x : d->y;
+    }
     return 0.0;
 }
 struct LineCoords { double x1, y1, x2, y2; };
@@ -59,44 +62,83 @@ std::optional<LineCoords> ExtractLineCoords(const GeoNode& node, const std::vect
     return std::nullopt;
 }
 
-// =========================================================
-// 求解器具体实现
-// =========================================================
-
 void Solver_Measure_Length(GeoNode& self, const std::vector<GeoNode>& pool) {
     if (self.parents.size() < 2) return;
-    const auto& p1 = std::get<Data_Point>(pool[self.parents[0]].data);
-    const auto& p2 = std::get<Data_Point>(pool[self.parents[1]].data);
-    std::get<Data_Scalar>(self.data).value = std::sqrt(std::pow(p1.x - p2.x, 2) + std::pow(p1.y - p2.y, 2));
+
+    // 使用 ExtractValue 安全提取坐标，无论父节点是什么类型的点
+    double x1 = ExtractValue(pool[self.parents[0]], RPNBinding::POS_X, pool);
+    double y1 = ExtractValue(pool[self.parents[0]], RPNBinding::POS_Y, pool);
+    double x2 = ExtractValue(pool[self.parents[1]], RPNBinding::POS_X, pool);
+    double y2 = ExtractValue(pool[self.parents[1]], RPNBinding::POS_Y, pool);
+
+    double dist = std::sqrt(std::pow(x1 - x2, 2) + std::pow(y1 - y2, 2));
+
+    // 更新结果
+    if (auto d = std::get_if<Data_Scalar>(&self.data)) {
+        d->value = dist;
+    }
 }
 
+// =========================================================
+// 2. 角度测量求解器 (ABC 三点夹角，B为顶点)
+// =========================================================
 void Solver_Measure_Angle(GeoNode& self, const std::vector<GeoNode>& pool) {
     if (self.parents.size() < 3) return;
-    const auto& pA = std::get<Data_Point>(pool[self.parents[0]].data);
-    const auto& pB = std::get<Data_Point>(pool[self.parents[1]].data); // 顶点
-    const auto& pC = std::get<Data_Point>(pool[self.parents[2]].data);
-    double a = std::atan2(pC.y - pB.y, pC.x - pB.x) - std::atan2(pA.y - pB.y, pA.x - pB.x);
-    while (a < 0) a += 2.0 * M_PI;
-    std::get<Data_Scalar>(self.data).value = a;
+
+    // 提取 A, B(顶点), C 三点坐标
+    double xa = ExtractValue(pool[self.parents[0]], RPNBinding::POS_X, pool);
+    double ya = ExtractValue(pool[self.parents[0]], RPNBinding::POS_Y, pool);
+    double xb = ExtractValue(pool[self.parents[1]], RPNBinding::POS_X, pool);
+    double yb = ExtractValue(pool[self.parents[1]], RPNBinding::POS_Y, pool);
+    double xc = ExtractValue(pool[self.parents[2]], RPNBinding::POS_X, pool);
+    double yc = ExtractValue(pool[self.parents[2]], RPNBinding::POS_Y, pool);
+
+    double angle = std::atan2(yc - yb, xc - xb) - std::atan2(ya - yb, xa - xb);
+
+    // 标准化到 [0, 2PI)
+    while (angle < 0) angle += 2.0 * M_PI;
+
+    if (auto d = std::get_if<Data_Scalar>(&self.data)) {
+        d->value = angle;
+    }
 }
 
+// =========================================================
+// 3. 面积测量求解器 (多边形面积)
+// =========================================================
 void Solver_Measure_Area(GeoNode& self, const std::vector<GeoNode>& pool) {
     double area = 0.0;
     size_t n = self.parents.size();
     if (n < 3) return;
+
     for (size_t i = 0; i < n; ++i) {
-        const auto& p1 = std::get<Data_Point>(pool[self.parents[i]].data);
-        const auto& p2 = std::get<Data_Point>(pool[self.parents[(i + 1) % n]].data);
-        area += (p1.x * p2.y - p2.x * p1.y);
+        // 提取当前点 p1 和下一个点 p2
+        double x1 = ExtractValue(pool[self.parents[i]], RPNBinding::POS_X, pool);
+        double y1 = ExtractValue(pool[self.parents[i]], RPNBinding::POS_Y, pool);
+        double x2 = ExtractValue(pool[self.parents[(i + 1) % n]], RPNBinding::POS_X, pool);
+        double y2 = ExtractValue(pool[self.parents[(i + 1) % n]], RPNBinding::POS_Y, pool);
+
+        area += (x1 * y2 - x2 * y1);
     }
-    std::get<Data_Scalar>(self.data).value = std::abs(area) * 0.5;
+
+    if (auto d = std::get_if<Data_Scalar>(&self.data)) {
+        d->value = std::abs(area) * 0.5;
+    }
 }
 
+// =========================================================
+// 4. 中点求解器
+// =========================================================
 void Solver_Midpoint(GeoNode& self, const std::vector<GeoNode>& pool) {
     if (self.parents.size() < 2) return;
-    const auto& p1 = std::get<Data_Point>(pool[self.parents[0]].data);
-    const auto& p2 = std::get<Data_Point>(pool[self.parents[1]].data);
-    self.data = Data_Point{ (p1.x + p2.x) * 0.5, (p1.y + p2.y) * 0.5 };
+
+    double x1 = ExtractValue(pool[self.parents[0]], RPNBinding::POS_X, pool);
+    double y1 = ExtractValue(pool[self.parents[0]], RPNBinding::POS_Y, pool);
+    double x2 = ExtractValue(pool[self.parents[1]], RPNBinding::POS_X, pool);
+    double y2 = ExtractValue(pool[self.parents[1]], RPNBinding::POS_Y, pool);
+
+    // 中点是一个点节点，其 Data 持有 Data_Point 变体
+    self.data = Data_Point{ (x1 + x2) * 0.5, (y1 + y2) * 0.5 };
 }
 
 void Solver_StandardPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
@@ -189,7 +231,7 @@ void Solver_PerpendicularFoot(GeoNode& self, const std::vector<GeoNode>& pool) {
 }
 
 
-// --- 文件路径: src/graph/GeoSolver.cpp ---
+
 
 void Solver_ConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
     if (self.parents.size() < 3) return;
@@ -243,6 +285,10 @@ void Solver_ConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
         self.data = Data_Point{ wx, wy };
     }
 }
+
+
+
+
 void Solver_Tangent(GeoNode& self, const std::vector<GeoNode>& pool) {
     if (self.parents.empty()) return;
 
@@ -676,4 +722,59 @@ void Solver_AnalyticalIntersection(GeoNode& self, const std::vector<GeoNode>& po
     }
 
     if (!branch_matched) data.is_found = false;
+}
+
+void Solver_AnalyticalConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
+    auto* data = std::get_if<Data_AnalyticalConstrainedPoint>(&self.data);
+    if (!data) return;
+
+    // parents 布局规定: [0]=目标对象ID, [1]=猜测点X标量ID, [2]=猜测点Y标量ID
+    const GeoNode& target = pool[self.parents[0]];
+
+    // 1. 如果没初始化，先提取猜测点坐标并投影锁定 t
+    if (!data->is_initialized) {
+        double gx = ExtractValue(pool[self.parents[1]], RPNBinding::VALUE, pool);
+        double gy = ExtractValue(pool[self.parents[2]], RPNBinding::VALUE, pool);
+
+        if (target.render_type == GeoNode::RenderType::Line) {
+            auto line = ExtractLineCoords(target, pool);
+            if (line) {
+                double vx = line->x2 - line->x1;
+                double vy = line->y2 - line->y1;
+                double v_mag_sq = vx * vx + vy * vy;
+                if (v_mag_sq > 1e-12) {
+                    // 锁定投影比例 t
+                    data->t = ((gx - line->x1) * vx + (gy - line->y1) * vy) / v_mag_sq;
+
+                    // 如果父对象是线段(Segment)而非直线，则钳制 t 到 [0, 1]
+                    if (auto ld = std::get_if<Data_Line>(&target.data)) {
+                        if (!ld->is_infinite) data->t = std::clamp(data->t, 0.0, 1.0);
+                    }
+                    data->is_initialized = true;
+                }
+            }
+        }
+        else if (target.render_type == GeoNode::RenderType::Circle) {
+            const auto& circle = std::get<Data_Circle>(target.data);
+            // 锁定极角 t (弧度)
+            data->t = std::atan2(gy - circle.cy, gx - circle.cx);
+            data->is_initialized = true;
+        }
+    }
+
+    // 2. 正常运行阶段：根据锁定的 t 随父对象变形
+    if (data->is_initialized) {
+        if (target.render_type == GeoNode::RenderType::Line) {
+            auto line = ExtractLineCoords(target, pool);
+            if (line) {
+                data->x = line->x1 + data->t * (line->x2 - line->x1);
+                data->y = line->y1 + data->t * (line->y2 - line->y1);
+            }
+        }
+        else if (target.render_type == GeoNode::RenderType::Circle) {
+            const auto& circle = std::get<Data_Circle>(target.data);
+            data->x = circle.cx + circle.radius * std::cos(data->t);
+            data->y = circle.cy + circle.radius * std::sin(data->t);
+        }
+    }
 }

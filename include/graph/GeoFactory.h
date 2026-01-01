@@ -105,6 +105,13 @@ namespace GeoFactory {
     const RPNParam& y_guess
     );
 
+    uint32_t CreateAnalyticalConstrainedPoint(
+        GeometryGraph &graph,
+        uint32_t target_id,
+        const RPNParam &x_guess,
+        const RPNParam &y_guess
+    );
+
 } // namespace GeoFactory
 
 #endif

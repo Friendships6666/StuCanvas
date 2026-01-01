@@ -108,6 +108,11 @@ struct Data_CalculatedLine {
     double x2, y2;
     bool is_infinite; // true=直线, false=线段
 };
+struct Data_AnalyticalConstrainedPoint {
+    double t = 0.0;              // 锁定的参数 (线段比例或圆弧角度)
+    bool is_initialized = false; // 是否已锁定 t
+    double x = 0.0, y = 0.0;     // 计算出的世界坐标缓存
+};
 // =========================================================
 // 2. 节点定义与类型检查
 // =========================================================
@@ -154,7 +159,8 @@ struct GeoNode {
         Data_SingleRPN,         // 函数
         Data_DualRPN,           // 参数方程
         Data_Scalar,             // 标量
-        Data_AnalyticalIntersection  // <-- 必须加上这一行
+        Data_AnalyticalIntersection,
+        Data_AnalyticalConstrainedPoint
     >;
 
     GeoPayload data;

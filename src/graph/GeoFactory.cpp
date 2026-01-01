@@ -38,33 +38,73 @@ namespace GeoFactory {
     static void Render_Point_Delegate(
         GeoNode& self,
         const std::vector<GeoNode>& pool,
-        const ViewState&,
+        const ViewState&, // 已经通过全局变量或 map 传入
         const NDCMap& map,
         oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q
     ) {
+        // 1. 从节点中提取世界坐标 (double)
+        // 此时 ExtractValue 会根据变体类型（Data_Point, Data_IntersectionPoint 等）自动提取
+        double wx = ExtractValue(self, RPNBinding::POS_X, pool);
+        double wy = ExtractValue(self, RPNBinding::POS_Y, pool);
+
+        // 2. 构造显存点数据结构
         PointData pd{};
 
-        // ★★★ 核心修复：不再使用 std::get<Data_Point> ★★★
-        // 而是使用 ExtractValue，它会自动判断 self 内部到底是 Data_Point、
-        // Data_IntersectionPoint 还是 Data_AnalyticalIntersection
-        pd.position.x = (float)ExtractValue(self, RPNBinding::POS_X, pool);
-        pd.position.y = (float)ExtractValue(self, RPNBinding::POS_Y, pool);
+        // ★★★ 核心修复：使用 world_to_clip_store 进行投影 ★★★
+        // 这个函数会处理：(World - Center) * Scale，并转为 float
+        // 这样才能处理“大数吃小数”问题，并适配当前缩放等级
+        world_to_clip_store(pd, wx, wy, map, self.id);
 
-        pd.function_index = self.id;
+        // 3. 推送到渲染队列
         q.push({ self.id, {pd} });
     }
 
-    static void Render_Line_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState& v, const NDCMap& m, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
+    static void Render_Line_Delegate(
+        GeoNode& self,
+        const std::vector<GeoNode>& pool,
+        const ViewState& v,
+        const NDCMap& m,
+        oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q
+    ) {
+        // 情况 A：基于拓扑关系的线（依赖两个点 ID）
         if (std::holds_alternative<Data_Line>(self.data)) {
             const auto& d = std::get<Data_Line>(self.data);
-            const auto& p1 = std::get<Data_Point>(pool[d.p1_id].data);
-            const auto& p2 = std::get<Data_Point>(pool[d.p2_id].data);
-            process_two_point_line(&q, p1.x, p1.y, p2.x, p2.y, !d.is_infinite, self.id, v.world_origin, v.wppx, v.wppy, v.screen_width, v.screen_height, 0, 0, m);
-        } else if (std::holds_alternative<Data_CalculatedLine>(self.data)) {
-            const auto& d = std::get<Data_CalculatedLine>(self.data);
-            process_two_point_line(&q, d.x1, d.y1, d.x2, d.y2, !d.is_infinite, self.id, v.world_origin, v.wppx, v.wppy, v.screen_width, v.screen_height, 0, 0, m);
-        }
 
+            // ★★★ 核心修复：使用 ExtractValue 替代 std::get<Data_Point> ★★★
+            // 这样无论 d.p1_id 指向的是普通点、交点还是解析交点，都能安全获取坐标
+            double x1 = ExtractValue(pool[d.p1_id], RPNBinding::POS_X, pool);
+            double y1 = ExtractValue(pool[d.p1_id], RPNBinding::POS_Y, pool);
+            double x2 = ExtractValue(pool[d.p2_id], RPNBinding::POS_X, pool);
+            double y2 = ExtractValue(pool[d.p2_id], RPNBinding::POS_Y, pool);
+
+            process_two_point_line(
+                &q,
+                x1, y1, x2, y2,
+                !d.is_infinite, // is_segment: 如果是无限直线则为 false
+                self.id,
+                v.world_origin,
+                v.wppx, v.wppy,
+                v.screen_width, v.screen_height,
+                0, 0, // offset_x, offset_y (目前接口保留，内部已由 NDCMap 处理)
+                m
+            );
+        }
+        // 情况 B：基于计算结果的线（例如切线，直接存储了 double 坐标）
+        else if (std::holds_alternative<Data_CalculatedLine>(self.data)) {
+            const auto& d = std::get<Data_CalculatedLine>(self.data);
+
+            process_two_point_line(
+                &q,
+                d.x1, d.y1, d.x2, d.y2,
+                !d.is_infinite,
+                self.id,
+                v.world_origin,
+                v.wppx, v.wppy,
+                v.screen_width, v.screen_height,
+                0, 0,
+                m
+            );
+        }
     }
 
     static void Render_Circle_Delegate(GeoNode& self, const std::vector<GeoNode>& pool, const ViewState& v, const NDCMap& m, oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q) {
@@ -669,6 +709,35 @@ namespace GeoFactory {
         node.data = d;
 
         // 5. 建立链接并标记脏
+        LinkAndRank(graph, id, node.parents);
+        graph.TouchNode(id);
+
+        return id;
+    }
+    uint32_t CreateAnalyticalConstrainedPoint(
+    GeometryGraph& graph,
+    uint32_t target_id,
+    const RPNParam& x_guess,
+    const RPNParam& y_guess
+) {
+        // 1. 将猜测坐标 RPN 提升为标量节点
+        uint32_t sx = CreateScalar(graph, x_guess);
+        uint32_t sy = CreateScalar(graph, y_guess);
+
+        uint32_t id = graph.allocate_node();
+        GeoNode& node = graph.node_pool[id];
+        node.render_type = GeoNode::RenderType::Point;
+
+        // 2. 建立依赖关系
+        node.parents = { target_id, sx, sy };
+
+        Data_AnalyticalConstrainedPoint d;
+        d.is_initialized = false; // 等待 Solver 第一次执行时锁定 t
+        node.data = d;
+
+        node.solver = Solver_AnalyticalConstrainedPoint;
+        node.render_task = Render_Point_Delegate; // 复用通用点渲染
+
         LinkAndRank(graph, id, node.parents);
         graph.TouchNode(id);
 
