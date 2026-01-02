@@ -53,8 +53,11 @@ namespace GeoFactory {
     // 辅助：连接父子关系，并检查循环依赖
     static void LinkAndRank(GeometryGraph& graph, uint32_t child_id, const std::vector<uint32_t>& parent_ids) {
         uint32_t max_parent_rank = 0;
+        auto& child = graph.node_pool[child_id];
+        child.is_heuristic = is_heuristic_solver(child.solver);
+
         for (uint32_t pid : parent_ids) {
-            // ★ 安全检查：ID 有效性
+            auto& parent = graph.node_pool[pid];
             if (pid >= graph.node_pool.size()) throw std::runtime_error("Invalid parent ID");
 
             // ★★★ 核心：循环依赖检测 ★★★
@@ -62,10 +65,16 @@ namespace GeoFactory {
                 throw std::runtime_error("Circular dependency detected! Calculation graph is invalid.");
             }
 
-            graph.node_pool[pid].children.push_back(child_id);
-            max_parent_rank = std::max(max_parent_rank, graph.node_pool[pid].rank);
+            // ★ 核心：传播标记。只要父亲依赖 Buffer，儿子就一定依赖 Buffer
+            if (parent.is_heuristic || parent.is_buffer_dependent) {
+                child.is_buffer_dependent = true;
+            }
+
+            parent.children.push_back(child_id);
+            max_parent_rank = std::max(max_parent_rank, parent.rank);
         }
         graph.node_pool[child_id].rank = parent_ids.empty() ? 0 : max_parent_rank + 1;
+
     }
 
 
@@ -316,10 +325,7 @@ namespace GeoFactory {
 
 
 
-    // =========================================================
-    // 圆创建 (支持动态半径)
-    // =========================================================
-    // --- 文件路径: src/graph/GeoFactory.cpp ---
+
 
     uint32_t CreateCircle(GeometryGraph& graph, uint32_t center_id, const RPNParam& radius_expr) {
         // 1. 先为半径创建一个标量节点
@@ -335,7 +341,7 @@ namespace GeoFactory {
 
         // 4. 初始化数据（仅保留计算缓存）
         Data_Circle d{};
-        // ★ 修复：删除了 d.center_id = center_id; 这一行
+
         node.data = d;
         node.solver = Solver_Circle;
 

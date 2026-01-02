@@ -1,4 +1,4 @@
-// --- 文件路径: src/plot/plotCircle.cpp ---
+﻿// --- 文件路径: src/plot/plotCircle.cpp ---
 
 #include "../../include/plot/plotCircle.h"
 #include "../../include/functions/lerp.h" // 包含 world_to_clip_store
@@ -32,6 +32,7 @@ void process_circle_specialized(
     double screen_width, double screen_height,
     const NDCMap& ndc_map
 ) {
+
     // 1. 确定世界坐标视口边界
     double wx_start = world_origin.x;
     double wx_end = world_origin.x + screen_width * wppx;
@@ -51,13 +52,16 @@ void process_circle_specialized(
         return;
     }
 
+
     // 3. 计算 LOD (采样密度)
     // 屏幕像素半径 R_px
     double r_pixel = std::abs(r / wppx);
     if (r_pixel < 0.5) {
         results_queue->push({func_idx, {}});
+        std::cout << "r:"<<r << std::endl;
         return;
     }
+
 
 
     double base_dt = 1 / pow(r_pixel,1.005);
@@ -135,6 +139,7 @@ void process_circle_specialized(
             // 按照要求：不插入 NaN，多段之间会自动连线
         }
     }
+
 
 
     results_queue->push({func_idx, std::move(final_points)});

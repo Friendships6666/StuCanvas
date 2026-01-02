@@ -45,7 +45,7 @@ std::vector<uint32_t> GeometryGraph::SolveFrame() {
             // 只有当 node 的更新帧等于当前帧，才说明它是真的需要算
             // Enqueue 内部已经设置过 node.last_update_frame = current_frame_index
 
-            if (node.solver) {
+            if (node.solver && !node.is_heuristic && !node.is_buffer_dependent) {
                 node.solver(node, node_pool);
             }
 

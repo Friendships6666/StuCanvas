@@ -4,11 +4,22 @@
 
 #include "../../pch.h"
 #include "../graph/GeoGraph.h"
+#include "../graph/GeoSolver.h"
 #include <vector>
 #include <tuple>
 
 
+enum class RenderUpdateMode {
+    Incremental, // 局部增量（拖拽、创建）
+    Viewport     // 视图变化（缩放、平移）
+};
 
+/**
+ * @brief 判断一个求解器是否为“图解型”（依赖屏幕采样 Buffer）
+ */
+inline bool is_heuristic_solver(SolverFunc solver) {
+    return (solver == Solver_IntersectionPoint || solver == Solver_ConstrainedPoint);
+}
 
 
 /**
@@ -21,7 +32,9 @@ void calculate_points_core(
     const std::vector<uint32_t>& draw_order,
     const std::vector<uint32_t>& dirty_node_ids,
     const ViewState& view,
-    bool is_global_update
-) ;
+    RenderUpdateMode mode
+);
+void commit_incremental_updates(GeometryGraph& graph, const ViewState& view, const std::vector<uint32_t>& draw_order);
+void commit_viewport_update(GeometryGraph& graph, const ViewState& view, const std::vector<uint32_t>& draw_order);
 
 #endif //PLOTCALL_H

@@ -178,6 +178,8 @@ struct GeoNode {
     }
     using RenderTaskFunc = void(*)(GeoNode&, const std::vector<GeoNode>&, const ViewState&, const NDCMap&, oneapi::tbb::concurrent_bounded_queue<FunctionResult>&);
     RenderTaskFunc render_task = nullptr;
+    bool is_heuristic = false;       // 是否是图解点（直接读 Buffer）
+    bool is_buffer_dependent = false; // 是否依赖于任何图解点（间接依赖 Buffer）
 };
 
 class GeometryGraph {

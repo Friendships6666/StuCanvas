@@ -9,12 +9,9 @@
 #include <iomanip>
 
 // 辅助导出函数
-void ExportPoints(const std::string& filename, const AlignedVector<PointData>& buffer, const AlignedVector<FunctionRange>& ranges, const std::vector<uint32_t>& draw_order) {
+void ExportPoints(const std::string& filename, const AlignedVector<PointData>& buffer) {
     std::ofstream outfile(filename);
-    outfile << "# WebGPU Plotter Export: " << filename << "\n";
-    outfile << "# Total Buffer Size: " << buffer.size() << "\n";
-    outfile << "# [X_Clip] [Y_Clip] [Func_ID]\n";
-    outfile << std::fixed << std::setprecision(6);
+    outfile << "# [X_Clip] [Y_Clip] [Func_ID]\n" << std::fixed << std::setprecision(6);
     for (const auto& pt : buffer) {
         outfile << pt.position.x << " " << pt.position.y << " " << pt.function_index << "\n";
     }
@@ -24,7 +21,7 @@ void ExportPoints(const std::string& filename, const AlignedVector<PointData>& b
 int main() {
     try {
         // =========================================================
-        // 1. 初始化视图参数 (依照题目要求)
+        // 1. 【严格执行】用户指定的初始视图参数
         // =========================================================
         double screen_width = 2560.0;
         double screen_height = 1600.0;
@@ -33,13 +30,9 @@ int main() {
         double zoom = 0.1;
 
         double aspect_ratio = screen_width / screen_height;
-
-        // 计算渲染核心需要的世界坐标系常数
-        // 逻辑：屏幕中心映射为 (offset_x, offset_y)
         double wppx = (2.0 * aspect_ratio) / (zoom * screen_width);
-        double wppy = -2.0 / (zoom * screen_height); // Y轴向上为正，屏幕坐标向下，所以为负
+        double wppy = -2.0 / (zoom * screen_height);
 
-        // 计算屏幕左上角的世界坐标原点
         Vec2 world_origin = {
             offset_x - (screen_width * 0.5) * wppx,
             offset_y - (screen_height * 0.5) * wppy
@@ -55,97 +48,66 @@ int main() {
         view.wppx = wppx;
         view.wppy = wppy;
 
-
         using namespace GeoFactory;
         GeometryGraph graph;
 
-        // 创建 P1(-5,0), P2(5,0), P3(0,5)
+        // 2. 构建“套娃”依赖场景
+        // A. 基础圆 circumCircle (Rank 2)
         uint32_t A = CreatePoint(graph, {-5.0}, {0.0});
         uint32_t B = CreatePoint(graph, {5.0}, {0.0});
         uint32_t C = CreatePoint(graph, {0.0}, {5.0});
         uint32_t circumCircle = CreateCircleThreePoints(graph, A, B, C);
 
-        std::vector<uint32_t> draw_order = { A, B, C, circumCircle };
+        // B. 图解附着点 P_cp (Rank 3)
+        // 初始猜测在 (0, 5) 附近，即 C 点位置
+        uint32_t P_cp = CreateConstrainedPoint(graph, circumCircle, {0.0}, {5.1});
+
+        // C. 附着点上的圆 circle_on_cp (Rank 4)
+        // 圆心是 P_cp，半径为 2.0
+        uint32_t circle_on_cp = CreateCircle(graph, P_cp, {2.0});
+
+        std::vector<uint32_t> draw_order = { circumCircle, P_cp, circle_on_cp };
 
         // =========================================================
-        // 2. 第一轮：全局渲染 (Global Update)
+        // Step 1: 初始化
         // =========================================================
-        std::cout << "[Step 1] Initializing Global Render..." << std::endl;
+        std::cout << "[Step 1] Initial Full Render..." << std::endl;
 
-        calculate_points_core(
-            wasm_final_contiguous_buffer,
-            wasm_function_ranges_buffer,
-            graph.node_pool,
-            draw_order,
-            {},    // global模式下传空
-            view,
-            true   // is_global_update = true
-        );
+        commit_incremental_updates(graph, view, draw_order);
 
-        std::cout << "Initial Buffer Size: " << wasm_final_contiguous_buffer.size() << std::endl;
-        ExportPoints("points1.txt", wasm_final_contiguous_buffer, wasm_function_ranges_buffer, draw_order);
+        auto& data_cp = std::get<Data_Point>(graph.node_pool[P_cp].data);
+        std::cout << "Initial P_cp World Pos: (" << data_cp.x << ", " << data_cp.y << ")" << std::endl;
+        ExportPoints("step1.txt", wasm_final_contiguous_buffer);
 
         // =========================================================
-        // 3. 第二轮：局部更新 (Local Incremental Update)
+        // Step 2: 移动 A 点（触发连锁反应）
         // =========================================================
         std::cout << "\n[Step 2] Moving Point A to (-10.0, 0.0)..." << std::endl;
-
-        std::vector<uint32_t> dirty_nodes_0 = graph.SolveFrame();
-
-        std::cout << "Dirty nodes detected by SolveFrame00000: ";
-        for(uint32_t id : dirty_nodes_0) std::cout << id << " ";
-        std::cout << std::endl;
-
-        // 修改 A 点坐标并标记脏
         UpdateFreePoint(graph, A, {-10.0}, {0.0});
 
-        // 核心步骤：运行计算图求解器
-        // 它会发现 A 脏了，进而发现依赖 A 的 circumCircle 也脏了
-        std::vector<uint32_t> dirty_nodes = graph.SolveFrame();
-        auto& posA = std::get<Data_Point>(graph.node_pool[A].data);
-        auto& circle = std::get<Data_Circle>(graph.node_pool[circumCircle].data);
-        std::cout << "[Check] Point A is now: (" << posA.x << ", " << posA.y << ")" << std::endl;
-        std::cout << "[Check] Circle Center: (" << circle.cx << ", " << circle.cy << ") R=" << circle.radius << std::endl;
+        // 这次调用会完成：A 变 -> circumCircle 变 -> P_cp 重寻址 -> circle_on_cp 随动
+        commit_incremental_updates(graph, view, draw_order);
 
-        std::cout << "Dirty nodes detected by SolveFrame: ";
-        for(uint32_t id : dirty_nodes) std::cout << id << " ";
-        std::cout << std::endl;
+        std::cout << "Updated P_cp World Pos: (" << data_cp.x << ", " << data_cp.y << ")" << std::endl;
 
-        // 执行局部渲染：只重新计算 dirty_nodes 并在 Buffer 末尾追加
-        calculate_points_core(
-            wasm_final_contiguous_buffer,
-            wasm_function_ranges_buffer,
-            graph.node_pool,
-            draw_order,
-            dirty_nodes,
-            view,
-            false  // is_global_update = false (局部模式)
-        );
 
-        std::cout << "Final Buffer Size (after append): " << wasm_final_contiguous_buffer.size() << std::endl;
-        ExportPoints("points2.txt", wasm_final_contiguous_buffer, wasm_function_ranges_buffer, draw_order);
+        ExportPoints("step2.txt", wasm_final_contiguous_buffer);
 
         // =========================================================
-        // 4. 详细日志分析
+        // Step 3: 视图缩放（测试图解重准度）
         // =========================================================
-        std::cout << "\n--- Ring Buffer Analysis ---" << std::endl;
-        for(size_t i = 0; i < wasm_function_ranges_buffer.size(); ++i) {
-            uint32_t node_id = draw_order[i];
-            auto& r = wasm_function_ranges_buffer[i];
-            bool is_dirty = false;
-            for(uint32_t d : dirty_nodes) if(d == node_id) is_dirty = true;
+        std::cout << "\n[Step 3] Zooming In (x2)..." << std::endl;
+        view.zoom *= 2;
 
-            std::cout << "Node ID " << node_id
-                      << (is_dirty ? " [UPDATED] " : " [STAYED]  ")
-                      << " Offset=" << std::setw(6) << r.start_index
-                      << " Count=" << std::setw(6) << r.point_count << std::endl;
-        }
 
-        std::cout << "\nResults saved. Verify points1.txt (Old) and points2.txt (Combined)." << std::endl;
+        // 视图更新模式：不解方程，只重采样
+        commit_viewport_update(graph, view, draw_order);
+
+        std::cout << "Final P_cp World Pos (After Zoom): (" << data_cp.x << ", " << data_cp.y << ")" << std::endl;
+        ExportPoints("step3.txt", wasm_final_contiguous_buffer);
 
     } catch (const std::exception& e) {
-        std::cerr << "Critical Error: " << e.what() << std::endl;
-        return -1;
+        std::cerr << "Error: " << e.what() << std::endl;
     }
     return 0;
 }

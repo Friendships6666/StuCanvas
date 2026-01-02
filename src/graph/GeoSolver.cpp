@@ -1,4 +1,4 @@
-// --- 文件路径: src/graph/GeoSolver.cpp ---
+﻿// --- 文件路径: src/graph/GeoSolver.cpp ---
 #include "../../include/graph/GeoSolver.h"
 #include <algorithm>
 #include <cmath>
@@ -237,10 +237,13 @@ void Solver_PerpendicularFoot(GeoNode& self, const std::vector<GeoNode>& pool) {
 
 
 void Solver_ConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
+
     if (self.parents.size() < 3) return;
 
     // 1. 获取依赖对象信息
     uint32_t target_id = self.parents[0];
+
+
     const GeoNode& target_node = pool[target_id];
 
     // 如果父对象没生成点，则无法吸附，保持不动
@@ -258,6 +261,7 @@ void Solver_ConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
     // 4. 将锚点转为 Clip Space 方便与 Buffer 数据对比
     PointData anchor_clip{};
     world_to_clip_store(anchor_clip, anchor_x, anchor_y, ndc_map, 0);
+
 
     // 5. 暴力搜索最近点
     size_t start = target_node.buffer_offset;
