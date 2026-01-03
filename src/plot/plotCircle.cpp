@@ -8,14 +8,14 @@
 
 namespace {
     // 辅助：检查点是否在矩形内 (带 epsilon 容差)
-    inline bool is_point_in_rect(double x, double y, double x_min, double x_max, double y_min, double y_max) {
+    bool is_point_in_rect(double x, double y, double x_min, double x_max, double y_min, double y_max) {
         const double EPS = 1e-5;
         return x >= x_min - EPS && x <= x_max + EPS &&
                y >= y_min - EPS && y <= y_max + EPS;
     }
 
     // 辅助：归一化角度到 [0, 2PI)
-    inline double normalize_angle(double a) {
+    double normalize_angle(double a) {
         const double TWO_PI = 6.283185307179586;
         a = std::fmod(a, TWO_PI);
         if (a < 0) a += TWO_PI;
