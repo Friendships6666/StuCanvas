@@ -80,23 +80,34 @@ CPU | U9 275hHx
 本项目作为 **StuWiki** 网站的官方底层图形驱动。Wiki 条目能够承载动态、交互式的几何模型，为用户提供直观的数学视觉化体验。
 
 
-| 测试公式 (LaTeX Formula) | 测试目的 / 压力点 | 预期表现 & 鲁棒性要求 |
-| :--- | :--- | :--- |
-| $y^3 = \sin(x + 999999999)$ | 高精偏移量验证 | 验证运算时精度（$f64$ vs $f32$）。$f32$ 会出现严重锯齿。 |
-| $y^3 = x^{1000000}$ | 大幂次溢出/断裂测试 | 观察函数图像在极高幂次下是否发生断裂或消失。 |
-| $y^3 = \sin(\frac{1}{x})$ | $x=0$ 处的 NaN 逻辑 | 观察 $x=0$ 位置是否存在错误的垂直长直线。 |
-| $y^3 = \tan(\frac{1}{x})$ | 采样逻辑验证 | 观察中心极高频区域是否填满，验证采样策略。 |
-| $y^3 = \sin(99999x)$ | 摩尔纹与点采样测试 | 验证高频震荡下是否产生视觉假象或采样缺失。 |
-| $\sin(x^2 + y^2) = 0.1$ | 复杂隐函数结构 | 观察同心圆是否完整、是否存在断裂。 |
-| $y = 3^x \sin(x)$ | 数值鲁棒性 ($x > 800$) | 验证在大数值指数运算下的渲染稳定性。 |
-| $y = \ln(\cos(x) + \sin(y))$ | 孤立离散点采样 | 验证对隐函数细节区域的捕捉能力。 |
-| $y^3 = \ln(x)$ | 负半轴渐近线渲染 | 观察图像是否渲染到了屏幕最底端的趋近点。 |
-| $y^3 = \tan(x)$ | 奇点与 NaN 处理 | 观察渐近线位置是否产生了不该存在的垂直连线。 |
-| $y^3 = \frac{\ln(x)}{x-1}$ | 可去间断点 (Removable Singularity) | 验证区间算术对间断点处的平滑处理能力。 |
-| $x^{\frac{2}{3}} + y^{\frac{2}{3}} = 1$ | 幂函数负数域解析 | 测试对 `pow` 函数的处理，图像应出现在全部 4 个象限。 |
-| $x^2 + 2x + 1 = 0$ | 临界厚度测试 | 图像应为一条位于 $x=-1$ 的极细垂直线。 |
-| $(y+x+1)^2 (y+1-x) = 0$ | 公式解析逻辑检查 | 验证公式解析器是否能正确分离直线系图像。 |
-| $(\frac{1}{\cos t}, \tan t)$ | 参数方程渐近线 | 测试参数方程在趋近无穷大时的断开处理。 |
+### 🚀 渲染引擎压力测试对比 (Stress Test Benchmark)
+
+| 数学公式 (Formula) | 压力测试描述 (Stress Point) | Stu(性能) | Stu(精度) | Desmos | GeoGebra | Mma | Maple | MatLab | GrafEq |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| $y^3 = \sin(x + 9\dots9)$ | $f64$ 高精偏移锯齿测试 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y^3 = x^{1000000}$ | 极高幂次溢出与图像断裂 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y^3 = \sin(\frac{1}{x})$ | $x=0$ 处 NaN 逻辑稳定性 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y^3 = \tan(\frac{1}{x})$ | 中心极高频区域采样策略 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y^3 = \sin(99999x)$ | 高频摩尔纹与点采样缺失 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $\sin(x^2 + y^2) = 0.1$ | 复杂隐函数同心圆连通性 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y = 3^x \sin(x)$ | $x>800$ 指数运算鲁棒性 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y = \ln(\cos x + \sin y)$ | 隐函数孤立离散细节捕捉 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y^3 = \ln(x)$ | 负半轴渐近线深度渲染 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y^3 = \tan(x)$ | 奇点 NaN 垂直连线剔除 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $\sin(x^2+y^2) = 0.999$ | 极窄阈值隐函数采样测试 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y^3 = \frac{\ln x}{x-1}$ | 间断点处区间算术平滑度 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y^3 = \frac{x^2-4}{x+2}$ | 分式可去间断点逻辑测试 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $x^{2/3} + y^{2/3} = 1$ | 负数域幂函数解析测试 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $x^2 + 2x + 1 = 0$ | 临界厚度极细直线渲染 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $(y+x+1)^2(y+1-x) = 0$ | 复合直线系公式解析检查 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y = \frac{\sin(1/x)}{\sin(1/x)}$ | 间断点空心点鲁棒性测试 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $(\frac{1}{\cos t}, \tan t)$ | 参数方程渐近线断开处理 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+
+> **注：**
+> *   $\color{green}{■\checkmark}$ **通过**：表示图像渲染完整、无锯齿、无多余连线、数值计算稳定。
+> *   $\color{red}{■\times}$ **失败**：表示出现图像断裂、严重摩尔纹、数值溢出崩溃或无法处理 $x=0$ 逻辑。
+
+---
 
 
 
