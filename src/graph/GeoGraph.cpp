@@ -1,7 +1,30 @@
 // --- 文件路径: src/graph/GeoGraph.cpp ---
 #include "../../include/graph/GeoGraph.h"
 #include <algorithm>
+std::string GeometryGraph::GenerateNextName() {
+    // 1. 拷贝当前的索引值，并自增计数器为下一次调用做准备
+    uint32_t current_idx = next_name_index++;
 
+    // 2. 计算字母部分
+    // 26 为英文字母表长度。使用取模运算确定当前处于 a-z 中的哪一个。
+    char letter = static_cast<char>('a' + (current_idx % 26));
+
+    // 3. 计算数字后缀部分
+    // 使用整除运算确定当前是第几轮循环。
+    // 0-25 轮次为 0 (不带后缀)，26-51 轮次为 1 (后缀为 1)，以此类推。
+    uint32_t cycle = current_idx / 26;
+
+    // 4. 构造最终字符串
+    std::string name;
+    name += letter; // 添加基础字母
+
+    if (cycle > 0) {
+        // 从第二轮开始，追加数字后缀
+        name += std::to_string(cycle);
+    }
+
+    return name;
+}
 GeometryGraph::GeometryGraph() {
     buckets.resize(128);
     for(auto& b : buckets) b.reserve(32);
@@ -118,4 +141,40 @@ std::vector<std::vector<uint32_t>> GeometryGraph::GetRequiredRankedBatches(const
     for (uint32_t id : needed) batches[node_pool[id].rank].push_back(id);
 
     return batches;
+}
+
+
+void GeometryGraph::UpdateRankRecursive(uint32_t node_id) {
+    auto& node = node_pool[node_id];
+    uint32_t old_rank = node.rank;
+    uint32_t max_p_rank = 0;
+
+    // 1. 根据当前所有父节点计算理论 Rank
+    for (uint32_t pid : node.parents) {
+        max_p_rank = std::max(max_p_rank, node_pool[pid].rank);
+    }
+    uint32_t new_rank = node.parents.empty() ? 0 : max_p_rank + 1;
+
+    // 2. 更新属性传播 (除了 Rank，还要传播 is_buffer_dependent)
+    bool new_buffer_dep = node.is_heuristic;
+    for (uint32_t pid : node.parents) {
+        if (node_pool[pid].is_heuristic || node_pool[pid].is_buffer_dependent) {
+            new_buffer_dep = true; break;
+        }
+    }
+    node.is_buffer_dependent = new_buffer_dep;
+
+    // 3. 只有当 Rank 真的变了，或者属性变了，才继续向下游传播
+    // 这是一种“剪枝”优化，防止无效递归
+    if (new_rank == old_rank) {
+        // 如果 Rank 没变，但子节点可能需要更新 is_buffer_dependent 标记，
+        // 这里可以根据需要决定是否继续。为了绝对安全，建议继续。
+    }
+
+    node.rank = new_rank;
+
+    // 4. 递归触发所有孩子
+    for (uint32_t cid : node.children) {
+        UpdateRankRecursive(cid);
+    }
 }

@@ -60,22 +60,22 @@ int main() {
 
         // B. 图解附着点 P_cp (Rank 3)
         // 初始猜测在 (0, 5) 附近，即 C 点位置
-        uint32_t P_cp = CreateConstrainedPoint(graph, circumCircle, {0.0}, {5.1});
+        uint32_t P_cp = CreateAnalyticalConstrainedPoint(graph, circumCircle, {0.0}, {5.1});
 
         // C. 附着点上的圆 circle_on_cp (Rank 4)
         // 圆心是 P_cp，半径为 2.0
         uint32_t circle_on_cp = CreateCircle(graph, P_cp, {2.0});
 
-        std::vector<uint32_t> draw_order = { circumCircle, P_cp, circle_on_cp };
+        std::vector<uint32_t> g_draw_order = { circumCircle, P_cp, circle_on_cp };
 
         // =========================================================
         // Step 1: 初始化
         // =========================================================
         std::cout << "[Step 1] Initial Full Render..." << std::endl;
 
-        commit_incremental_updates(graph, view, draw_order);
+        commit_incremental_updates(graph, view, g_draw_order);
 
-        auto& data_cp = std::get<Data_Point>(graph.node_pool[P_cp].data);
+        auto& data_cp = std::get<Data_AnalyticalConstrainedPoint>(graph.node_pool[P_cp].data);
         std::cout << "Initial P_cp World Pos: (" << data_cp.x << ", " << data_cp.y << ")" << std::endl;
         ExportPoints("step1.txt", wasm_final_contiguous_buffer);
 
@@ -86,7 +86,7 @@ int main() {
         UpdateFreePoint(graph, A, {-10.0}, {0.0});
 
         // 这次调用会完成：A 变 -> circumCircle 变 -> P_cp 重寻址 -> circle_on_cp 随动
-        commit_incremental_updates(graph, view, draw_order);
+        commit_incremental_updates(graph, view, g_draw_order);
 
         std::cout << "Updated P_cp World Pos: (" << data_cp.x << ", " << data_cp.y << ")" << std::endl;
 
@@ -101,7 +101,7 @@ int main() {
 
 
         // 视图更新模式：不解方程，只重采样
-        commit_viewport_update(graph, view, draw_order);
+        commit_viewport_update(graph, view, g_draw_order);
 
         std::cout << "Final P_cp World Pos (After Zoom): (" << data_cp.x << ", " << data_cp.y << ")" << std::endl;
         ExportPoints("step3.txt", wasm_final_contiguous_buffer);

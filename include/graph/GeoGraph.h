@@ -88,6 +88,11 @@ struct Data_DualRPN {
     std::vector<RPNBinding> bindings_y{}; // 处理 y(t) 的动态参数
     double t_min{}, t_max{};
 };
+struct Data_TextLabel {
+    double world_x = 0.0; // 锚点的世界坐标缓存
+    double world_y = 0.0;
+};
+
 
 // 直线/线段: 依赖两个点 ID
 struct Data_Line {
@@ -118,6 +123,7 @@ struct Data_RatioPoint {
     double y = 0.0;
 };
 
+
 struct GeoNode;
 using SolverFunc = void(*)(GeoNode& self, const std::vector<GeoNode>& pool);
 
@@ -126,11 +132,24 @@ struct GeoNode {
     uint32_t rank = 0;
     bool active = true;
     bool is_visible = true;
+    struct ObjectStyle {
+        // 显式指定底层类型为 uint32_t，确保 WebGPU 兼容性
+        enum class Line : uint32_t {
+            Solid  = 0x1001,
+            Dashed = 0x1002,
+            Dotted = 0x1003
+        };
 
-    // 拓扑
-    std::vector<uint32_t> parents{};
-    std::vector<uint32_t> children{};
+        enum class Point : uint32_t {
+            Free  = 0x2001,
+            Constrained  = 0x2002,
+            Intersection = 0x2003
+        };
 
+        // 静态工具函数：用于运行时检查
+        static bool IsLine(uint32_t s) { return s >= 0x1000 && s < 0x2000; }
+        static bool IsPoint(uint32_t s) { return s >= 0x2000 && s < 0x3000; }
+    };
     enum class RenderType {
         None,
         Point,      // 包含自由、约束、交点、中点
@@ -139,8 +158,50 @@ struct GeoNode {
         Explicit,   // 显函数
         Parametric, // 参数方程
         Implicit,   // 隐函数
-        Scalar      // 纯数值
+        Scalar,      // 纯数值
+        Text
     } render_type = RenderType::None;
+
+
+
+
+    static constexpr uint32_t PackRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) {
+        return (static_cast<uint32_t>(r) << 24) |
+               (static_cast<uint32_t>(g) << 16) |
+               (static_cast<uint32_t>(b) << 8)  |
+               (static_cast<uint32_t>(a));
+    }
+    // 视觉配置包
+    struct VisualConfig {
+        std::string name = "BasicObject";
+        float thickness = 2.0f;           // 默认粗细
+        uint32_t color = PackRGBA(77, 77, 77);
+        uint32_t style = static_cast<uint32_t>(ObjectStyle::Line::Solid); // 统一存储为 u32
+        float opacity = 1.0f;              // 默认不透明
+
+
+
+        // --- 文字标签控制 (新增) ---
+        bool show_label = true;           // 开关：若为false，关闭昂贵的图解搜索
+        float label_offset_x = 15.0f;     // 像素偏移
+        float label_offset_y = -15.0f;
+        float label_size = 12.0f;         // 字号
+        float label_rotation = 0.0f;      // 旋转弧度
+        uint32_t label_color =PackRGBA(77, 77, 77);// 标签独立颜色
+
+
+
+    };
+
+
+
+    VisualConfig config; // 每个节点自带一份视觉配置
+
+    // 拓扑
+    std::vector<uint32_t> parents{};
+    std::vector<uint32_t> children{};
+
+
 
     // 显存/范围管理 (用于传给 plotCall)
     uint32_t buffer_offset = 0;
@@ -162,7 +223,8 @@ struct GeoNode {
         Data_Scalar,             // 标量
         Data_AnalyticalIntersection,
         Data_AnalyticalConstrainedPoint,
-        Data_RatioPoint
+        Data_RatioPoint,
+        Data_TextLabel
     >;
 
     GeoPayload data;
@@ -172,7 +234,7 @@ struct GeoNode {
     explicit GeoNode(uint32_t _id) : id(_id) {}
 
     // 类型安全检查辅助
-    bool check_parent_type(const std::vector<GeoNode>& pool, size_t parent_idx, RenderType expected) const {
+    [[nodiscard]] bool check_parent_type(const std::vector<GeoNode>& pool, size_t parent_idx, RenderType expected) const {
         if (parent_idx >= parents.size()) return false;
         return pool[parents[parent_idx]].render_type == expected;
     }
@@ -184,6 +246,11 @@ struct GeoNode {
 
 class GeometryGraph {
 public:
+    // 命名计数器，记录当前已分配了多少个自动生成的名称
+    uint32_t next_name_index = 0;
+
+
+    std::string GenerateNextName();
     std::vector<GeoNode> node_pool{};
     std::vector<std::vector<uint32_t>> buckets{};
     uint32_t current_frame_index = 1;
@@ -196,6 +263,7 @@ public:
     std::vector<uint32_t> SolveFrame();
     [[nodiscard("必须检查循环依赖，否则 SolveFrame 会崩溃！")]] bool DetectCycle(uint32_t child_id, uint32_t parent_id) const;
     std::vector<std::vector<uint32_t>> GetRequiredRankedBatches(const std::vector<uint32_t>& targets);
+    void UpdateRankRecursive(uint32_t node_id);
 
 private:
     void Enqueue(GeoNode& node);

@@ -34,6 +34,9 @@ double ExtractValue(const GeoNode& parent, RPNBinding::Property prop, const std:
     if (auto d = std::get_if<Data_RatioPoint>(&parent.data)) {
         return (prop == RPNBinding::POS_X) ? d->x : d->y;
     }
+    if (auto d = std::get_if<Data_TextLabel>(&parent.data)) {
+        return (prop == RPNBinding::POS_X) ? d->world_x : d->world_y;
+    }
     return 0.0;
 }
 struct LineCoords { double x1, y1, x2, y2; };
@@ -238,16 +241,18 @@ void Solver_PerpendicularFoot(GeoNode& self, const std::vector<GeoNode>& pool) {
 
 void Solver_ConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
 
+
+
+
     if (self.parents.size() < 3) return;
 
     // 1. 获取依赖对象信息
     uint32_t target_id = self.parents[0];
 
 
+
     const GeoNode& target_node = pool[target_id];
 
-    // 如果父对象没生成点，则无法吸附，保持不动
-    if (target_node.current_point_count == 0) return;
 
     // 2. 获取当前的“锚点”坐标（由 RPN 标量计算出）
     // 即使是静态值 3.0，也会在上一层 Rank 被算好存入 Data_Scalar::value
@@ -835,4 +840,70 @@ void Solver_CircleThreePoints(GeoNode& self, const std::vector<GeoNode>& pool) {
 
     // 5. 计算半径 R
     d.radius = std::sqrt(std::pow(d.cx - x1, 2) + std::pow(d.cy - y1, 2));
+}
+
+
+void Solver_LabelAnchorPoint(GeoNode& self, const std::vector<GeoNode>& pool) {
+    if (self.parents.size() < 3) return;
+
+    // 1. 获取几何宿主节点 (Parents[0])
+    uint32_t target_id = self.parents[0];
+    const auto& target_node = pool[target_id];
+
+    // ★★★ 核心特化逻辑：如果宿主关闭了标签，直接退出，不执行昂贵的采样搜索 ★★★
+    if (!target_node.config.show_label) {
+        return;
+    }
+
+    // 2. 检查父对象是否有渲染数据
+    if (target_node.current_point_count == 0) return;
+
+    // 3. 提取锚点(猜测点)的 CLIP 坐标
+    const ViewState& view = g_global_view_state;
+    NDCMap ndc_map = BuildNDCMap(view);
+
+    double anchor_x = std::get<Data_Scalar>(pool[self.parents[1]].data).value;
+    double anchor_y = std::get<Data_Scalar>(pool[self.parents[2]].data).value;
+
+    PointData anchor_clip{};
+    world_to_clip_store(anchor_clip, anchor_x, anchor_y, ndc_map, 0);
+
+    // 4. 执行图解搜索 (寻找父对象 Buffer 中离锚点最近的点)
+    size_t start = target_node.buffer_offset;
+    size_t end = start + target_node.current_point_count;
+    float min_dist_sq = std::numeric_limits<float>::max();
+    PointData best_point = anchor_clip;
+    bool found = false;
+
+    for (size_t i = start; i < end; ++i) {
+        const auto& pt = wasm_final_contiguous_buffer[i];
+        float dx = pt.position.x - anchor_clip.position.x;
+        float dy = pt.position.y - anchor_clip.position.y;
+        float d2 = dx * dx + dy * dy;
+        if (d2 < min_dist_sq) {
+            min_dist_sq = d2;
+            best_point = pt;
+            found = true;
+        }
+    }
+
+    // 5. 将找到的最优点写回自己的世界坐标缓存
+    if (found) {
+        double wx = ndc_map.center_x + (double)best_point.position.x / ndc_map.scale_x;
+        double wy = ndc_map.center_y - (double)best_point.position.y / ndc_map.scale_y;
+        self.data = Data_Point{ wx, wy };
+    }
+}
+
+void Solver_TextLabel(GeoNode& self, const std::vector<GeoNode>& pool) {
+    if (self.parents.empty()) return;
+
+    // 父母通常是那个“辅助锚点节点”
+    uint32_t anchor_id = self.parents[0];
+
+    Data_TextLabel d;
+    d.world_x = ExtractValue(pool[anchor_id], RPNBinding::POS_X, pool);
+    d.world_y = ExtractValue(pool[anchor_id], RPNBinding::POS_Y, pool);
+
+    self.data = d;
 }

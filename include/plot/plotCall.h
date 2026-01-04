@@ -18,7 +18,7 @@ enum class RenderUpdateMode {
  * @brief 判断一个求解器是否为“图解型”（依赖屏幕采样 Buffer）
  */
 inline bool is_heuristic_solver(SolverFunc solver) {
-    return (solver == Solver_IntersectionPoint || solver == Solver_ConstrainedPoint);
+    return (solver == Solver_IntersectionPoint || solver == Solver_ConstrainedPoint || solver == Solver_LabelAnchorPoint);
 }
 
 

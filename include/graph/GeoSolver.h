@@ -30,4 +30,6 @@ void Solver_AnalyticalIntersection(GeoNode& self, const std::vector<GeoNode>& po
 void Solver_AnalyticalConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_RatioPoint(GeoNode& self, const std::vector<GeoNode>& pool);
 void Solver_CircleThreePoints(GeoNode& self, const std::vector<GeoNode>& pool);
+void Solver_LabelAnchorPoint(GeoNode& self, const std::vector<GeoNode>& pool);
+void Solver_TextLabel(GeoNode& self, const std::vector<GeoNode>& pool);
 #endif // GEOSOLVER_H
