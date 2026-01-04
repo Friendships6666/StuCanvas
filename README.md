@@ -80,10 +80,10 @@ CPU | U9 275hHx
 本项目作为 **StuWiki** 网站的官方底层图形驱动。Wiki 条目能够承载动态、交互式的几何模型，为用户提供直观的数学视觉化体验。
 
 
-### 🚀 渲染引擎压力测试对比 (Stress Test Benchmark)
+###  渲染引擎压力测试对比 (StuCanvas Benchmark v1.1)
 
-| 数学公式 (Formula) | 压力点描述 (Stress Point) | Stu(性能) | Stu(精度) | Desmos | GeoGebra | Mma | Maple | MatLab | GrafEq |
-| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| 公式 | 描述  |       StuCanvas(性能模式)       |       StuCanvas(精度模式)       | Desmos | GeoGebra |     Mathematica     | Maple | MatLab | GrafEq |
+| :--- | :--- |:---------------------------:|:---------------------------:| :---: | :---: |:-------------------:| :---: | :---: | :---: |
 | $y^3 = \sin(x + 9\dots9)$ | $f64$ 高精偏移锯齿测试 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
 | $y^3 = x^{1000000}$ | 极高幂次溢出与图像断裂 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
 | $y^3 = \sin(\frac{1}{x})$ | $x=0$ 处 NaN 逻辑稳定性 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
