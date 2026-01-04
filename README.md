@@ -82,32 +82,28 @@ CPU | U9 275hHx
 
 ### 🚀 渲染引擎压力测试对比 (Stress Test Benchmark)
 
-| 数学公式 (Formula) | 压力测试描述 (Stress Point) | Stu(性能) | Stu(精度) | Desmos | GeoGebra | Mma | Maple | MatLab | GrafEq |
+| 数学公式 (Formula) | 压力点描述 (Stress Point) | Stu(性能) | Stu(精度) | Desmos | GeoGebra | Mma | Maple | MatLab | GrafEq |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| $y^3 = \sin(x + 9\dots9)$ | $f64$ 高精偏移锯齿测试 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y^3 = x^{1000000}$ | 极高幂次溢出与图像断裂 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y^3 = \sin(\frac{1}{x})$ | $x=0$ 处 NaN 逻辑稳定性 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y^3 = \tan(\frac{1}{x})$ | 中心极高频区域采样策略 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y^3 = \sin(99999x)$ | 高频摩尔纹与点采样缺失 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $\sin(x^2 + y^2) = 0.1$ | 复杂隐函数同心圆连通性 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y = 3^x \sin(x)$ | $x>800$ 指数运算鲁棒性 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y = \ln(\cos x + \sin y)$ | 隐函数孤立离散细节捕捉 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y^3 = \ln(x)$ | 负半轴渐近线深度渲染 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y^3 = \tan(x)$ | 奇点 NaN 垂直连线剔除 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $\sin(x^2+y^2) = 0.999$ | 极窄阈值隐函数采样测试 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y^3 = \frac{\ln x}{x-1}$ | 间断点处区间算术平滑度 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y^3 = \frac{x^2-4}{x+2}$ | 分式可去间断点逻辑测试 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $x^{2/3} + y^{2/3} = 1$ | 负数域幂函数解析测试 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $x^2 + 2x + 1 = 0$ | 临界厚度极细直线渲染 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $(y+x+1)^2(y+1-x) = 0$ | 复合直线系公式解析检查 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $y = \frac{\sin(1/x)}{\sin(1/x)}$ | 间断点空心点鲁棒性测试 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
-| $(\frac{1}{\cos t}, \tan t)$ | 参数方程渐近线断开处理 | $\color{green}{■\checkmark}$ | $\color{green}{■\checkmark}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ | $\color{red}{■\times}$ |
+| $y^3 = \sin(x + 9\dots9)$ | $f64$ 高精偏移锯齿测试 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y^3 = x^{1000000}$ | 极高幂次溢出与图像断裂 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y^3 = \sin(\frac{1}{x})$ | $x=0$ 处 NaN 逻辑稳定性 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y^3 = \tan(\frac{1}{x})$ | 中心极高频区域采样策略 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y^3 = \sin(99999x)$ | 高频摩尔纹与点采样缺失 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $\sin(x^2 + y^2) = 0.1$ | 复杂隐函数同心圆连通性 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y = 3^x \sin(x)$ | $x>800$ 指数运算鲁棒性 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y = \ln(\cos x + \sin y)$ | 隐函数孤立离散细节捕捉 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y^3 = \ln(x)$ | 负半轴渐近线深度渲染 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y^3 = \tan(x)$ | 奇点 NaN 垂直连线剔除 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $\sin(x^2+y^2) = 0.999$ | 极窄阈值隐函数采样测试 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y^3 = \frac{\ln x}{x-1}$ | 间断点处区间算术平滑度 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y^3 = \frac{x^2-4}{x+2}$ | 分式可去间断点逻辑测试 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $x^{2/3} + y^{2/3} = 1$ | 负数域幂函数解析测试 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $x^2 + 2x + 1 = 0$ | 临界厚度极细直线渲染 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $(y+x+1)^2(y+1-x) = 0$ | 复合直线系公式解析检查 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $y = \frac{\sin(1/x)}{\sin(1/x)}$ | 间断点空心点鲁棒性测试 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+| $(\frac{1}{\cos t}, \tan t)$ | 参数方程渐近线断开处理 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
+----
 
-> **注：**
-> *   $\color{green}{■\checkmark}$ **通过**：表示图像渲染完整、无锯齿、无多余连线、数值计算稳定。
-> *   $\color{red}{■\times}$ **失败**：表示出现图像断裂、严重摩尔纹、数值溢出崩溃或无法处理 $x=0$ 逻辑。
-
----
 
 
 
