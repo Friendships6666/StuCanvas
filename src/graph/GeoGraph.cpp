@@ -57,34 +57,49 @@ std::vector<uint32_t> GeometryGraph::SolveFrame() {
 
     std::unordered_set<uint32_t> render_nodes_set;
 
-    for (auto r = min_dirty_rank; r <= max_dirty_rank; ++r) {
-        auto& bucket = buckets[r];
-        if (bucket.empty()) continue;
+    // 1. 使用 int 确保符号比较安全，且每一轮检查最新的 max_dirty_rank
+    // 注意：max_dirty_rank 在循环过程中可能会因为 Enqueue 而增大
+    for (int r = min_dirty_rank; r <= max_dirty_rank; ++r) {
 
-        // 遍历当前 Rank 的所有脏节点
-        for (uint32_t id : bucket) {
+        // 2. 安全检查：防止初始值 10000 导致的直接越界
+        if (r < 0 || r >= (int)buckets.size()) {
+            continue;
+        }
+
+        if (buckets[r].empty()) continue;
+
+        // ★★★ 核心修复：将桶内数据移动到本地变量 ★★★
+        // 这样即使 Enqueue 导致 buckets 扩容（重新分配内存），
+        // 我们当前正在遍历的本地 vector (current_bucket) 也不会受影响。
+        std::vector<uint32_t> current_bucket = std::move(buckets[r]);
+        // std::move 后 buckets[r] 变为空，无需手动执行 bucket.clear()
+
+        // 遍历本地拷贝的任务列表
+        for (uint32_t id : current_bucket) {
             GeoNode& node = node_pool[id];
 
-            // 只有当 node 的更新帧等于当前帧，才说明它是真的需要算
-            // Enqueue 内部已经设置过 node.last_update_frame = current_frame_index
-
+            // 执行不依赖 Buffer 的解析求解
             if (node.solver && !node.is_heuristic && !node.is_buffer_dependent) {
                 node.solver(node, node_pool);
             }
 
+            // 收集渲染目标
             if (node.render_type != GeoNode::RenderType::None && node.render_type != GeoNode::RenderType::Scalar) {
                 render_nodes_set.insert(id);
             }
 
-            // 传播
+            // 传播脏标记给子节点
             for (uint32_t child_id : node.children) {
+                // 如果子节点 rank 更高，Enqueue 会将其放入更高层的桶，循环会后续处理到它
                 Enqueue(node_pool[child_id]);
             }
         }
-        bucket.clear(); // 处理完必须清理
     }
 
-    min_dirty_rank = 10000; max_dirty_rank = 0;
+    // 3. 重置状态，迎接下一帧
+    min_dirty_rank = 10000;
+    max_dirty_rank = 0;
+
     return std::vector<uint32_t>(render_nodes_set.begin(), render_nodes_set.end());
 }
 

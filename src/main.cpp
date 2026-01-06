@@ -75,6 +75,7 @@ int main() {
 
         commit_incremental_updates(graph, view, g_draw_order);
 
+
         auto& data_cp = std::get<Data_AnalyticalConstrainedPoint>(graph.node_pool[P_cp].data);
         std::cout << "Initial P_cp World Pos: (" << data_cp.x << ", " << data_cp.y << ")" << std::endl;
         ExportPoints("step1.txt", wasm_final_contiguous_buffer);
