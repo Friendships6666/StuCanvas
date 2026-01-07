@@ -2,6 +2,7 @@
 #include "../../include/plot/plotCall.h"
 #include "../../include/graph/GeoGraph.h"
 #include "../../include/functions/lerp.h"
+#include "../../include/graph/GeoSolver.h"
 #include "../../pch.h"
 #include <oneapi/tbb/concurrent_queue.h>
 #include <oneapi/tbb/parallel_for_each.h>
@@ -9,7 +10,36 @@
 #include <algorithm>
 #include <vector>
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+
 namespace {
+
+    constexpr uint32_t NULL_ID = 0xFFFFFFFF;
+
+    // 辅助：位图扫描 (与 GeoGraph.cpp 保持一致)
+    inline uint32_t find_first_set_bit_local(uint64_t mask) {
+        if (mask == 0) return 64;
+#ifdef _MSC_VER
+        unsigned long index;
+        _BitScanForward64(&index, mask);
+        return static_cast<uint32_t>(index);
+#else
+        return static_cast<uint32_t>(__builtin_ctzll(mask));
+#endif
+    }
+
+    // =========================================================
+    // 1. 判定逻辑
+    // =========================================================
+    /**
+     * @brief 判定逻辑：
+     * - Viewport 模式下：只有图解型（is_heuristic）需要重算（因为像素Buffer变了，吸附位置要变）。
+     * - Incremental 模式下：图解型及其后代（is_buffer_dependent）都需要重算（同步最新的坐标）。
+     *   实际上在 Incremental 模式下，为了绝对安全和代码简洁，所有脏节点都可以重算，
+     *   因为解析节点的 Solver 开销极低。
+     */
     bool should_resolve_in_render(const GeoNode& node, RenderUpdateMode mode) {
         if (!node.solver) return false;
 
@@ -17,44 +47,37 @@ namespace {
             // 视图更新：解析点坐标不动，只有需要回读 Buffer 的吸附点/交点才重算
             return node.is_heuristic;
         } else {
-            // 增量更新：凡是涉及到 Buffer 或是吸附点后代的，都必须在此层 Rank 实时同步
-            return node.is_heuristic || node.is_buffer_dependent;
+            // 增量更新：凡是脏的都重算，确保解析点也能读到刚刚通过 Solver 更新的图解点坐标
+            return true;
         }
     }
 
     // =========================================================
-    // 1. 结果收集器 (ResultCollector)
-    // 负责将渲染结果追加到全局 Buffer 的末尾 (Ring Buffer 逻辑)
+    // 2. 结果收集器 (ResultCollector)
     // =========================================================
     class ResultCollector {
     public:
         ResultCollector(AlignedVector<PointData>& buffer, std::vector<GeoNode>& nodes)
             : m_buffer(buffer), m_nodes(nodes) {}
 
-        /**
-         * @brief 将队列中的渲染结果写入物理 Buffer
-         * @note 无论全局还是局部更新，都采用追加到当前末尾的逻辑
-         */
         void Flush(oneapi::tbb::concurrent_bounded_queue<FunctionResult>& queue) {
             FunctionResult res;
             while (queue.try_pop(res)) {
                 GeoNode& node = m_nodes[res.function_index];
 
+                // 即使没有点，也要更新偏移，防止数据错乱
                 if (res.points.empty()) {
                     node.current_point_count = 0;
                     continue;
                 }
 
-                // --- Ring Buffer / Append 核心：获取当前物理 Buffer 的长度作为起始偏移 ---
-                size_t current_physical_end = m_buffer.size();
-
-                // 物理追加：老数据不动，新数据直接排在后面
+                // 获取当前物理 Buffer 长度，追加到末尾
+                size_t current_offset = m_buffer.size();
                 m_buffer.insert(m_buffer.end(), res.points.begin(), res.points.end());
 
-                // --- 指针重定向：移动对象指针指向新追加的数据块 ---
-                node.buffer_offset = static_cast<uint32_t>(current_physical_end);
+                // 移动对象指针指向新位置
+                node.buffer_offset = static_cast<uint32_t>(current_offset);
                 node.current_point_count = static_cast<uint32_t>(res.points.size());
-
             }
         }
 
@@ -64,133 +87,119 @@ namespace {
     };
 }
 
+// =========================================================
+// 3. 主计算入口 (calculate_points_core)
+// =========================================================
 void calculate_points_core(
     AlignedVector<PointData>& out_points,
     AlignedVector<FunctionRange>& out_ranges,
-    std::vector<GeoNode>& node_pool,
+    GeometryGraph& graph, // 注意：改为传 GeometryGraph 引用以便访问 buckets_all_heads
     const std::vector<uint32_t>& draw_order,
     const std::vector<uint32_t>& dirty_node_ids,
     const ViewState& view,
     RenderUpdateMode mode
 ) {
-    // A. 环境初始化
+    // A. 环境同步
     g_global_view_state = view;
     NDCMap ndc_map = BuildNDCMap(view);
 
     oneapi::tbb::concurrent_bounded_queue<FunctionResult> results_queue;
     results_queue.set_capacity(4096);
-    ResultCollector collector(out_points, node_pool);
+    ResultCollector collector(out_points, graph.node_pool);
 
-    // B. 确定待处理节点集
-    // Viewport 模式处理所有 draw_order 中的可见节点
-    // Incremental 模式仅处理由 SolveFrame 返回的脏节点
-    std::vector<uint32_t> targets = (mode == RenderUpdateMode::Viewport) ? draw_order : dirty_node_ids;
-    if (targets.empty()) return;
+    // B. 确定本轮需要处理的节点 ID 集合 (如果是 Viewport 模式)
+    // 如果是 Incremental 模式，dirty_node_ids 已经是有序的了，不需要我们再分层
+    // 但为了统一代码路径，我们还是构建一个临时的分层结构
 
     // 如果是视图变化，物理清空 Buffer（采样点集已失效）
     if (mode == RenderUpdateMode::Viewport) {
         out_points.clear();
+        out_points.reserve(draw_order.size() * 100); // 预留空间减少扩容
     }
 
-    // C. 拓扑分层处理 (Rank 分桶)
-    // 即使是局部更新也必须按 Rank 执行，以处理跨节点的 Buffer 回读依赖
-    uint32_t max_rank = 0;
-    for (uint32_t id : targets) max_rank = std::max(max_rank, node_pool[id].rank);
+    if (mode == RenderUpdateMode::Incremental && dirty_node_ids.empty()) return;
 
-    std::vector<std::vector<uint32_t>> rank_batches(max_rank + 1);
-    for (uint32_t id : targets) {
-        rank_batches[node_pool[id].rank].push_back(id);
-    }
+    // C. 核心执行循环：利用位图跳跃扫描
+    // 无论是 Viewport 还是 Incremental，都基于 graph 内部的拓扑层级进行遍历
+    // 区别在于：Viewport 扫描全图，Incremental 扫描 dirty_node_ids 构成的子集
 
-    // D. 核心执行循环
-    for (const auto& batch : rank_batches) {
-        if (batch.empty()) continue;
+    if (mode == RenderUpdateMode::Incremental) {
+        // --- 增量模式：由于 FastScan 已经返回了按 Rank 排序的 dirty_node_ids ---
+        // 我们需要按 Rank 分批执行，以保证依赖正确
+        // FastScan 保证了 dirty_node_ids 是按 Rank 递增的，但同一 Rank 的节点可能相邻
 
-        // 当前 Rank 层级全员并行执行
-        oneapi::tbb::parallel_for_each(batch.begin(), batch.end(), [&](uint32_t id) {
-            GeoNode& node = node_pool[id];
+        // 简单策略：遍历 dirty_node_ids，收集同 Rank 的一批，并行执行，然后 Flush
+        size_t i = 0;
+        while (i < dirty_node_ids.size()) {
+            uint32_t current_rank = graph.node_pool[dirty_node_ids[i]].rank;
+            std::vector<uint32_t> batch;
 
-            // 1. 【智能二次求解】
-            // 如果节点依赖采样 Buffer，在此处实时同步世界坐标
-            // 否则，直接信任 SolveFrame 算好的缓存值
-            if (should_resolve_in_render(node, mode)) {
-                node.solver(node, node_pool);
+            while (i < dirty_node_ids.size() && graph.node_pool[dirty_node_ids[i]].rank == current_rank) {
+                batch.push_back(dirty_node_ids[i]);
+                i++;
             }
 
-            // 2. 【渲染投影/采样任务】
-            // 此时：
-            // - 解析点: 读 wx/wy，仅执行高精度投影 (world_to_clip_store)
-            // - 采样对象: 执行高强度 LOD 采样渲染
-            if (node.render_task && node.is_visible) {
-                node.render_task(node, node_pool, view, ndc_map, results_queue);
-            }
-        });
+            // 并行执行当前 Batch
+            oneapi::tbb::parallel_for_each(batch.begin(), batch.end(), [&](uint32_t id) {
+                GeoNode& node = graph.node_pool[id];
+                if (should_resolve_in_render(node, mode)) {
+                    node.solver(node, graph.node_pool);
+                }
+                if (node.render_task && node.is_visible) {
+                    node.render_task(node, graph.node_pool, view, ndc_map, results_queue);
+                }
+            });
+            collector.Flush(results_queue);
+        }
 
-        // 【关键同步点】
-        // 每一层 Rank 并行结束后立即 Flush，确保下一层 Rank 的图解点能读取到这一层刚生成的像素点
-        collector.Flush(results_queue);
+    } else {
+        // --- 视图模式：全量扫描 Graph 的 buckets_all ---
+        // 利用 active_ranks_mask 跳过空层
+        for (size_t w = 0; w < graph.active_ranks_mask.size(); ++w) {
+            uint64_t mask = graph.active_ranks_mask[w];
+            while (mask > 0) {
+                uint32_t r_offset = find_first_set_bit_local(mask);
+                uint32_t r = static_cast<uint32_t>(w * 64 + r_offset);
+
+                // 收集该层所有节点
+                std::vector<uint32_t> batch;
+                uint32_t curr_id = graph.buckets_all_heads[r];
+                while (curr_id != NULL_ID) {
+                    // 仅处理 draw_order 中可见的节点，或者必须重算的图解节点
+                    // 为简化逻辑，这里处理桶中所有节点，但在 render_task 中判断是否可见
+                    batch.push_back(curr_id);
+                    curr_id = graph.node_pool[curr_id].next_in_bucket;
+                }
+
+                if (!batch.empty()) {
+                    oneapi::tbb::parallel_for_each(batch.begin(), batch.end(), [&](uint32_t id) {
+                        GeoNode& node = graph.node_pool[id];
+                        if (should_resolve_in_render(node, mode)) {
+                            node.solver(node, graph.node_pool);
+                        }
+                        // 只有在 draw_order 里的才需要渲染，或者根据 is_visible
+                        if (node.render_task && node.is_visible) {
+                            node.render_task(node, graph.node_pool, view, ndc_map, results_queue);
+                        }
+                    });
+                    collector.Flush(results_queue);
+                }
+
+                mask &= ~(1ULL << r_offset);
+            }
+        }
     }
 
-    // E. 组装输出元数据 (FunctionRanges)
-    // 严格遵循 draw_order 的层级顺序，确保遮挡关系正确
+    // E. 组装输出 Range 元数据
     out_ranges.clear();
     out_ranges.reserve(draw_order.size());
     for (uint32_t id : draw_order) {
-        const auto& node = node_pool[id];
-        out_ranges.push_back({ node.buffer_offset, node.current_point_count });
+        if (id < graph.node_pool.size()) {
+            const auto& node = graph.node_pool[id];
+            out_ranges.push_back({ node.buffer_offset, node.current_point_count });
+        } else {
+            out_ranges.push_back({ 0, 0 });
+        }
     }
 }
 
-
-/**
- * @brief 执行增量更新提交 (Incremental Commit)
- * 场景：鼠标拖拽点、公式更新、创建新对象
- * 逻辑：先跑逻辑图求解，再将受影响的对象追加到 Buffer 末尾
- */
-void commit_incremental_updates(GeometryGraph& graph, const ViewState& view, const std::vector<uint32_t>& draw_order) {
-    // 1. 逻辑层：执行拓扑求解，计算受影响节点的最新世界坐标
-    // SolveFrame 会清理桶并返回本次变动的可视化节点 ID
-
-    std::vector<uint32_t> dirty_ids = graph.SolveFrame();
-
-
-
-
-
-
-
-    // 如果没有任何逻辑变动，直接返回，节省渲染开销
-    if (dirty_ids.empty()) return;
-
-    // 2. 渲染层：执行追加渲染
-    calculate_points_core(
-        wasm_final_contiguous_buffer,
-        wasm_function_ranges_buffer,
-        graph.node_pool,
-        draw_order,
-        dirty_ids,
-        view,
-        RenderUpdateMode::Incremental
-    );
-}
-
-/**
- * @brief 执行视口更新提交 (Viewport Commit)
- * 场景：Zoom(缩放)、Pan(平移)
- * 逻辑：跳过逻辑求解(世界坐标不变)，全量重刷采样 Buffer
- */
-void commit_viewport_update(GeometryGraph& graph, const ViewState& view, const std::vector<uint32_t>& draw_order) {
-    // 逻辑层：完全跳过 SolveFrame
-    // 因为缩放和平移不改变解析点（如中点、解析交点）的世界坐标。
-
-    // 渲染层：执行视图重刷模式
-    calculate_points_core(
-        wasm_final_contiguous_buffer,
-        wasm_function_ranges_buffer,
-        graph.node_pool,
-        draw_order,
-        {}, // 视图更新不依赖特定的脏 ID，它会遍历 draw_order
-        view,
-        RenderUpdateMode::Viewport
-    );
-}

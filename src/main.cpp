@@ -51,61 +51,7 @@ int main() {
         using namespace GeoFactory;
         GeometryGraph graph;
 
-        // 2. 构建“套娃”依赖场景
-        // A. 基础圆 circumCircle (Rank 2)
-        uint32_t A = CreatePoint(graph, {-5.0}, {0.0});
-        uint32_t B = CreatePoint(graph, {5.0}, {0.0});
-        uint32_t C = CreatePoint(graph, {0.0}, {5.0});
-        uint32_t circumCircle = CreateCircleThreePoints(graph, A, B, C);
 
-        // B. 图解附着点 P_cp (Rank 3)
-        // 初始猜测在 (0, 5) 附近，即 C 点位置
-        uint32_t P_cp = CreateAnalyticalConstrainedPoint(graph, circumCircle, {0.0}, {5.1});
-
-        // C. 附着点上的圆 circle_on_cp (Rank 4)
-        // 圆心是 P_cp，半径为 2.0
-        uint32_t circle_on_cp = CreateCircle(graph, P_cp, {2.0});
-
-        std::vector<uint32_t> g_draw_order = { circumCircle, P_cp, circle_on_cp };
-
-        // =========================================================
-        // Step 1: 初始化
-        // =========================================================
-        std::cout << "[Step 1] Initial Full Render..." << std::endl;
-
-        commit_incremental_updates(graph, view, g_draw_order);
-
-
-        auto& data_cp = std::get<Data_AnalyticalConstrainedPoint>(graph.node_pool[P_cp].data);
-        std::cout << "Initial P_cp World Pos: (" << data_cp.x << ", " << data_cp.y << ")" << std::endl;
-        ExportPoints("step1.txt", wasm_final_contiguous_buffer);
-
-        // =========================================================
-        // Step 2: 移动 A 点（触发连锁反应）
-        // =========================================================
-        std::cout << "\n[Step 2] Moving Point A to (-10.0, 0.0)..." << std::endl;
-        UpdateFreePoint(graph, A, {-10.0}, {0.0});
-
-        // 这次调用会完成：A 变 -> circumCircle 变 -> P_cp 重寻址 -> circle_on_cp 随动
-        commit_incremental_updates(graph, view, g_draw_order);
-
-        std::cout << "Updated P_cp World Pos: (" << data_cp.x << ", " << data_cp.y << ")" << std::endl;
-
-
-        ExportPoints("step2.txt", wasm_final_contiguous_buffer);
-
-        // =========================================================
-        // Step 3: 视图缩放（测试图解重准度）
-        // =========================================================
-        std::cout << "\n[Step 3] Zooming In (x2)..." << std::endl;
-        view.zoom *= 2;
-
-
-        // 视图更新模式：不解方程，只重采样
-        commit_viewport_update(graph, view, g_draw_order);
-
-        std::cout << "Final P_cp World Pos (After Zoom): (" << data_cp.x << ", " << data_cp.y << ")" << std::endl;
-        ExportPoints("step3.txt", wasm_final_contiguous_buffer);
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

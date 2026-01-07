@@ -1,130 +1,224 @@
 // --- 文件路径: src/graph/GeoGraph.cpp ---
 #include "../../include/graph/GeoGraph.h"
 #include <algorithm>
-std::string GeometryGraph::GenerateNextName() {
-    // 1. 拷贝当前的索引值，并自增计数器为下一次调用做准备
-    uint32_t current_idx = next_name_index++;
+#include <iostream>
 
-    // 2. 计算字母部分
-    // 26 为英文字母表长度。使用取模运算确定当前处于 a-z 中的哪一个。
-    char letter = static_cast<char>('a' + (current_idx % 26));
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
 
-    // 3. 计算数字后缀部分
-    // 使用整除运算确定当前是第几轮循环。
-    // 0-25 轮次为 0 (不带后缀)，26-51 轮次为 1 (后缀为 1)，以此类推。
-    uint32_t cycle = current_idx / 26;
+namespace {
+    constexpr uint32_t NULL_ID = 0xFFFFFFFF;
 
-    // 4. 构造最终字符串
-    std::string name;
-    name += letter; // 添加基础字母
-
-    if (cycle > 0) {
-        // 从第二轮开始，追加数字后缀
-        name += std::to_string(cycle);
+    /**
+     * @brief 硬件加速位扫描：从右往左找到第一个 1 的位置
+     */
+    uint32_t find_first_set_bit(uint64_t mask) {
+        if (mask == 0) return 64;
+#ifdef _MSC_VER
+        unsigned long index;
+        _BitScanForward64(&index, mask);
+        return static_cast<uint32_t>(index);
+#else
+        return static_cast<uint32_t>(__builtin_ctzll(mask));
+#endif
     }
-
-    return name;
 }
+
+// =========================================================
+// 1. 初始化与命名系统
+// =========================================================
+
 GeometryGraph::GeometryGraph() {
-    buckets.resize(128);
-    for(auto& b : buckets) b.reserve(32);
+    buckets_all_heads.resize(128, 0xFFFFFFFF);
+    active_ranks_mask.resize(2, 0);
+    m_dirty_mask.reserve(1024); // 预留一点空间
 }
 
 uint32_t GeometryGraph::allocate_node() {
-    auto id = static_cast<uint32_t>(node_pool.size());
+    uint32_t id = static_cast<uint32_t>(node_pool.size());
     node_pool.emplace_back(id);
     return id;
 }
 
-void GeometryGraph::Enqueue(GeoNode& node) {
-    if (node.last_update_frame == current_frame_index) return;
-    node.last_update_frame = current_frame_index;
-
-    if (node.rank >= buckets.size()) buckets.resize(node.rank + 32);
-    buckets[node.rank].emplace_back(node.id);
-
-    if (node.rank < min_dirty_rank) min_dirty_rank = node.rank;
-    if (node.rank > max_dirty_rank) max_dirty_rank = node.rank;
+std::string GeometryGraph::GenerateNextName() {
+    uint32_t current_idx = next_name_index++;
+    char letter = static_cast<char>('a' + (current_idx % 26));
+    uint32_t cycle = current_idx / 26;
+    // 逻辑：a, b, ... z, a1, b1, ... z1, a2...
+    return (cycle == 0) ? std::string(1, letter) : (letter + std::to_string(cycle));
 }
 
-void GeometryGraph::TouchNode(uint32_t id) {
-    if (id >= node_pool.size()) return;
-    Enqueue(node_pool[id]);
+// =========================================================
+// 2. 核心拓扑维护：双向链表桶 O(1) 搬家
+// =========================================================
+
+void GeometryGraph::UpdateBit(uint32_t rank, bool has_elements) {
+    size_t word_idx = rank / 64;
+    if (word_idx >= active_ranks_mask.size()) {
+        active_ranks_mask.resize(word_idx + 1, 0);
+    }
+
+    if (has_elements) {
+        active_ranks_mask[word_idx] |= (1ULL << (rank % 64));
+    } else {
+        active_ranks_mask[word_idx] &= ~(1ULL << (rank % 64));
+    }
 }
 
-std::vector<uint32_t> GeometryGraph::SolveFrame() {
-    current_frame_index++; // 确保新的一帧
+void GeometryGraph::MoveNodeInBuckets(uint32_t id, uint32_t new_rank) {
+    auto& node = node_pool[id];
+    uint32_t old_rank = node.rank;
 
-    std::unordered_set<uint32_t> render_nodes_set;
-
-    // 1. 使用 int 确保符号比较安全，且每一轮检查最新的 max_dirty_rank
-    // 注意：max_dirty_rank 在循环过程中可能会因为 Enqueue 而增大
-    for (int r = min_dirty_rank; r <= max_dirty_rank; ++r) {
-
-        // 2. 安全检查：防止初始值 10000 导致的直接越界
-        if (r < 0 || r >= (int)buckets.size()) {
-            continue;
+    // --- 步骤 A：从旧桶脱离 ---
+    if (node.is_in_bucket && old_rank < buckets_all_heads.size()) {
+        if (node.prev_in_bucket != NULL_ID) {
+            node_pool[node.prev_in_bucket].next_in_bucket = node.next_in_bucket;
+        } else {
+            // 我本来是头指针
+            buckets_all_heads[old_rank] = node.next_in_bucket;
         }
 
-        if (buckets[r].empty()) continue;
+        if (node.next_in_bucket != NULL_ID) {
+            node_pool[node.next_in_bucket].prev_in_bucket = node.prev_in_bucket;
+        }
 
-        // ★★★ 核心修复：将桶内数据移动到本地变量 ★★★
-        // 这样即使 Enqueue 导致 buckets 扩容（重新分配内存），
-        // 我们当前正在遍历的本地 vector (current_bucket) 也不会受影响。
-        std::vector<uint32_t> current_bucket = std::move(buckets[r]);
-        // std::move 后 buckets[r] 变为空，无需手动执行 bucket.clear()
-
-        // 遍历本地拷贝的任务列表
-        for (uint32_t id : current_bucket) {
-            GeoNode& node = node_pool[id];
-
-            // 执行不依赖 Buffer 的解析求解
-            if (node.solver && !node.is_heuristic && !node.is_buffer_dependent) {
-                node.solver(node, node_pool);
-            }
-
-            // 收集渲染目标
-            if (node.render_type != GeoNode::RenderType::None && node.render_type != GeoNode::RenderType::Scalar) {
-                render_nodes_set.insert(id);
-            }
-
-            // 传播脏标记给子节点
-            for (uint32_t child_id : node.children) {
-                // 如果子节点 rank 更高，Enqueue 会将其放入更高层的桶，循环会后续处理到它
-                Enqueue(node_pool[child_id]);
-            }
+        // 检查旧桶是否变空，熄灭位图灯
+        if (buckets_all_heads[old_rank] == NULL_ID) {
+            UpdateBit(old_rank, false);
         }
     }
 
-    // 3. 重置状态，迎接下一帧
-    min_dirty_rank = 10000;
-    max_dirty_rank = 0;
+    // --- 步骤 B：迁入新桶 (插入到链表头部) ---
+    node.rank = new_rank;
+    if (new_rank >= buckets_all_heads.size()) {
+        buckets_all_heads.resize(new_rank + 32, NULL_ID);
+    }
 
-    return std::vector<uint32_t>(render_nodes_set.begin(), render_nodes_set.end());
+    uint32_t current_head = buckets_all_heads[new_rank];
+    node.next_in_bucket = current_head;
+    node.prev_in_bucket = NULL_ID;
+
+    if (current_head != NULL_ID) {
+        node_pool[current_head].prev_in_bucket = id;
+    }
+    buckets_all_heads[new_rank] = id;
+    node.is_in_bucket = true;
+
+    // 点亮位图灯
+    UpdateBit(new_rank, true);
 }
 
+void GeometryGraph::UpdateRankRecursive(uint32_t node_id) {
+    auto& node = node_pool[node_id];
+    uint32_t old_rank = node.rank;
+
+    // 1. 重新根据父母计算 Rank
+    uint32_t max_p_rank = 0;
+    for (uint32_t pid : node.parents) {
+        max_p_rank = std::max(max_p_rank, node_pool[pid].rank);
+    }
+    uint32_t new_rank = node.parents.empty() ? 0 : max_p_rank + 1;
+
+    // 2. 如果 Rank 没变且已经在桶里，终止递归（剪枝）
+    if (new_rank == old_rank && node.is_in_bucket) return;
+
+    // 3. 执行 O(1) 物理搬家
+    MoveNodeInBuckets(node_id, new_rank);
+
+    // 4. 递归向下传播
+    // 拷贝一份 children 以防在递归过程中发生重新分配
+    std::vector<uint32_t> children_copy = node.children;
+    for (uint32_t cid : children_copy) {
+        UpdateRankRecursive(cid);
+    }
+}
+
+// =========================================================
+// 3. 影响分析：FastScan (代替旧的 SolveFrame)
+// =========================================================
+
+std::vector<uint32_t> GeometryGraph::FastScan(const std::vector<uint32_t>& moved_ids) {
+    // 1. 初始化临时位图（可以使用 vector<uint8_t> 以支持动态 ID）
+    if (m_dirty_mask.size() < node_pool.size()) {
+        m_dirty_mask.resize(node_pool.size(), 0);
+    }
+    std::fill(m_dirty_mask.begin(), m_dirty_mask.end(), 0);
+
+    std::vector<uint32_t> targets;
+    uint32_t min_rank_to_start = 0xFFFFFFFF;
+
+    // 2. 标记“震源”并找到最低起始 Rank
+    for (uint32_t id : moved_ids) {
+        if (id >= node_pool.size()) continue;
+        m_dirty_mask[id] = 1;
+        targets.push_back(id);
+        min_rank_to_start = std::min(min_rank_to_start, node_pool[id].rank);
+    }
+
+    if (targets.empty()) return {};
+
+    // 3. 位图跳跃扫描
+    for (size_t w = min_rank_to_start / 64; w < active_ranks_mask.size(); ++w) {
+        uint64_t mask = active_ranks_mask[w];
+
+        // 屏蔽掉低于 min_rank_to_start 的位 (仅在第一轮 word 扫描时需要)
+        if (w == min_rank_to_start / 64) {
+            mask &= (~0ULL << (min_rank_to_start % 64));
+        }
+
+        while (mask > 0) {
+            uint32_t r_offset = find_first_set_bit(mask);
+            uint32_t r = static_cast<uint32_t>(w * 64 + r_offset);
+
+            // 遍历该 Rank 下所有活跃节点
+            uint32_t curr_id = buckets_all_heads[r];
+            while (curr_id != NULL_ID) {
+                auto& node = node_pool[curr_id];
+
+                // 如果当前节点还没进 targets，检查其父母
+                if (m_dirty_mask[curr_id] == 0) {
+                    for (uint32_t pid : node.parents) {
+                        if (m_dirty_mask[pid]) {
+                            m_dirty_mask[curr_id] = 1;
+                            targets.push_back(curr_id);
+                            break;
+                        }
+                    }
+                }
+                curr_id = node.next_in_bucket;
+            }
+            mask &= ~(1ULL << r_offset); // 熄灭当前位，继续找本 Word 下一个
+        }
+    }
+
+    return targets;
+}
+
+// =========================================================
+// 4. 工具逻辑：环检测
+// =========================================================
+
 bool GeometryGraph::DetectCycle(uint32_t child_id, uint32_t parent_id) const {
-    // 如果 child 根本没有被创建或者刚创建(没有children)，那么它不可能有后代指向 parent
-    // 除非我们是在修改一个已有的图结构。
-    // 逻辑：从 child_id 出发，向下遍历所有 children。如果遇到了 parent_id，说明 parent 已经是 child 的后代了。
-    // 如果此时再让 child 依赖 parent，就会形成环。
+    if (child_id == parent_id) return true;
 
-    if (child_id == parent_id) return true; // 自环
+    // 迭代版 DFS
+    static thread_local std::vector<uint32_t> stack;
+    static thread_local std::vector<bool> visited;
 
-    std::vector<uint32_t> stack;
-    std::vector<bool> visited(node_pool.size(), false);
+    stack.clear();
+    if (visited.size() < node_pool.size()) visited.resize(node_pool.size(), false);
+    std::fill(visited.begin(), visited.begin() + node_pool.size(), false);
 
     stack.push_back(child_id);
     visited[child_id] = true;
 
-    while(!stack.empty()) {
+    while (!stack.empty()) {
         uint32_t curr = stack.back();
         stack.pop_back();
 
-        // 检查当前节点的所有孩子
         for (uint32_t kid : node_pool[curr].children) {
-            if (kid == parent_id) return true; // 找到了！parent 已经在 child 的下游了
-
+            if (kid == parent_id) return true;
             if (!visited[kid]) {
                 visited[kid] = true;
                 stack.push_back(kid);
@@ -134,62 +228,75 @@ bool GeometryGraph::DetectCycle(uint32_t child_id, uint32_t parent_id) const {
     return false;
 }
 
-std::vector<std::vector<uint32_t>> GeometryGraph::GetRequiredRankedBatches(const std::vector<uint32_t>& targets) {
-    std::unordered_set<uint32_t> needed;
-    std::vector<uint32_t> q = targets;
-    for (uint32_t id : targets) needed.insert(id);
+void GeometryGraph::DetachFromBucket(uint32_t id) {
+    auto& node = node_pool[id];
+    if (!node.is_in_bucket) return; // 已经不在桶里，直接跳过
 
-    // BFS 补全依赖
-    size_t head = 0;
-    while (head < q.size()) {
-        uint32_t curr = q[head++];
-        for (uint32_t pid : node_pool[curr].parents) {
-            if (needed.insert(pid).second) q.push_back(pid);
+    uint32_t r = node.rank;
+
+    // 1. 处理前驱节点的指向
+    if (node.prev_in_bucket != NULL_ID) {
+        node_pool[node.prev_in_bucket].next_in_bucket = node.next_in_bucket;
+    } else {
+        // 如果我是头节点，更新头指针数组
+        if (r < buckets_all_heads.size()) {
+            buckets_all_heads[r] = node.next_in_bucket;
         }
     }
 
-    // 分桶
-    uint32_t max_r = 0;
-    for (uint32_t id : needed) max_r = std::max(max_r, node_pool[id].rank);
+    // 2. 处理后继节点的指向
+    if (node.next_in_bucket != NULL_ID) {
+        node_pool[node.next_in_bucket].prev_in_bucket = node.prev_in_bucket;
+    }
 
-    std::vector<std::vector<uint32_t>> batches(max_r + 1);
-    for (uint32_t id : needed) batches[node_pool[id].rank].push_back(id);
+    // 3. 重置自身链表指针
+    node.prev_in_bucket = NULL_ID;
+    node.next_in_bucket = NULL_ID;
+    node.is_in_bucket = false;
 
-    return batches;
+    // 4. 关键：如果这一层空了，熄灭位图灯
+    if (r < buckets_all_heads.size() && buckets_all_heads[r] == NULL_ID) {
+        UpdateBit(r, false);
+    }
 }
 
+bool is_heuristic_solver_local(SolverFunc s) {
+    // 凡是需要回读 Buffer 采样点来确定坐标的求解器
+    return (s == Solver_ConstrainedPoint || s == Solver_IntersectionPoint || s == Solver_LabelAnchorPoint);
+}
 
-void GeometryGraph::UpdateRankRecursive(uint32_t node_id) {
-    auto& node = node_pool[node_id];
-    uint32_t old_rank = node.rank;
-    uint32_t max_p_rank = 0;
+void GeometryGraph::LinkAndRank(uint32_t child_id, const std::vector<uint32_t>& new_parent_ids) {
+    if (child_id >= node_pool.size()) return;
 
-    // 1. 根据当前所有父节点计算理论 Rank
-    for (uint32_t pid : node.parents) {
-        max_p_rank = std::max(max_p_rank, node_pool[pid].rank);
+    // 1. 本地备份新父 ID，防止参数引用 node.parents 导致自修改冲突
+    std::vector<uint32_t> safe_new_parents = new_parent_ids;
+
+    // 2. 切断旧关系：从老父亲们的 children 列表中删除自己
+    auto& node = node_pool[child_id];
+    for (uint32_t old_pid : node.parents) {
+        if (old_pid >= node_pool.size()) continue;
+        auto& p_kids = node_pool[old_pid].children;
+        p_kids.erase(std::remove(p_kids.begin(), p_kids.end(), child_id), p_kids.end());
     }
-    uint32_t new_rank = node.parents.empty() ? 0 : max_p_rank + 1;
 
-    // 2. 更新属性传播 (除了 Rank，还要传播 is_buffer_dependent)
-    bool new_buffer_dep = node.is_heuristic;
-    for (uint32_t pid : node.parents) {
-        if (node_pool[pid].is_heuristic || node_pool[pid].is_buffer_dependent) {
-            new_buffer_dep = true; break;
+    // 3. 建立新关系
+    node.parents = safe_new_parents;
+    node.is_heuristic = is_heuristic_solver_local(node.solver);
+
+    for (uint32_t pid : safe_new_parents) {
+        if (pid >= node_pool.size()) continue;
+
+        // --- 安全检查：防止回环 ---
+        if (DetectCycle(child_id, pid)) {
+            // 注意：在正式应用中，这里可能需要回滚操作或抛出异常
+            throw std::runtime_error("Detected circular dependency in LinkAndRank!");
         }
-    }
-    node.is_buffer_dependent = new_buffer_dep;
 
-    // 3. 只有当 Rank 真的变了，或者属性变了，才继续向下游传播
-    // 这是一种“剪枝”优化，防止无效递归
-    if (new_rank == old_rank) {
-        // 如果 Rank 没变，但子节点可能需要更新 is_buffer_dependent 标记，
-        // 这里可以根据需要决定是否继续。为了绝对安全，建议继续。
+        // 注册到父亲的子节点列表
+        node_pool[pid].children.push_back(child_id);
     }
 
-    node.rank = new_rank;
-
-    // 4. 递归触发所有孩子
-    for (uint32_t cid : node.children) {
-        UpdateRankRecursive(cid);
-    }
+    // 4. 触发递归重排：计算新 Rank 并执行 MoveNodeInBuckets 搬家
+    // 这一步会向下传递，确保整棵依赖树的 Rank 都是最新的
+    UpdateRankRecursive(child_id);
 }

@@ -14,12 +14,7 @@ enum class RenderUpdateMode {
     Viewport     // 视图变化（缩放、平移）
 };
 
-/**
- * @brief 判断一个求解器是否为“图解型”（依赖屏幕采样 Buffer）
- */
-inline bool is_heuristic_solver(SolverFunc solver) {
-    return (solver == Solver_IntersectionPoint || solver == Solver_ConstrainedPoint || solver == Solver_LabelAnchorPoint);
-}
+
 
 
 /**
@@ -28,13 +23,12 @@ inline bool is_heuristic_solver(SolverFunc solver) {
 void calculate_points_core(
     AlignedVector<PointData>& out_points,
     AlignedVector<FunctionRange>& out_ranges,
-    std::vector<GeoNode>& node_pool,
+    GeometryGraph& graph, // 注意：改为传 GeometryGraph 引用以便访问 buckets_all_heads
     const std::vector<uint32_t>& draw_order,
     const std::vector<uint32_t>& dirty_node_ids,
     const ViewState& view,
     RenderUpdateMode mode
-);
-void commit_incremental_updates(GeometryGraph& graph, const ViewState& view, const std::vector<uint32_t>& draw_order);
-void commit_viewport_update(GeometryGraph& graph, const ViewState& view, const std::vector<uint32_t>& draw_order);
+) ;
+
 
 #endif //PLOTCALL_H

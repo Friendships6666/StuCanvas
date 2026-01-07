@@ -3,7 +3,7 @@
 #define GEOFACTORY_H
 
 #include "GeoGraph.h"
-
+#include "CommandManager.h" // 必须包含这个才能识别 Transaction
 namespace GeoFactory {
 
     struct Ref {
@@ -24,110 +24,40 @@ namespace GeoFactory {
 
 
 
-    // 统一后的 API
-    uint32_t CreatePoint(GeometryGraph& graph, const RPNParam& x_expr, const RPNParam& y_expr,const GeoNode::VisualConfig& style = {});
-    uint32_t CreateCircle(GeometryGraph& graph, uint32_t center_id, const RPNParam& radius_expr,const GeoNode::VisualConfig& style = {});
+    Transaction CreateScalar(GeometryGraph& graph, const RPNParam& expr, const GeoNode::VisualConfig& style = {});
 
-    // 内部提升函数
-    uint32_t CreateScalar(GeometryGraph& graph, const RPNParam& expr,const GeoNode::VisualConfig& style = {});
+    Transaction CreatePoint(GeometryGraph& graph, const RPNParam& x_expr, const RPNParam& y_expr, const GeoNode::VisualConfig& style = {});
 
-    // 3. 创建显式函数 (使用混合 Token)
-    uint32_t CreateExplicitFunction(
-        GeometryGraph& graph,
-        const std::vector<MixedToken>& tokens,const GeoNode::VisualConfig& style = {}
-    );
+    Transaction CreateLine(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id, bool is_infinite, const GeoNode::VisualConfig& style = {});
 
-    /**
-    * @brief 创建动态参数方程 x = f(t), y = g(t)
-    * @param tokens_x x(t) 的混合 Token 序列
-    * @param tokens_y y(t) 的混合 Token 序列
-    */
-    uint32_t CreateParametricFunction(
-        GeometryGraph& graph,
-        const std::vector<MixedToken>& tokens_x,
-        const std::vector<MixedToken>& tokens_y,
-        double t_min, double t_max,const GeoNode::VisualConfig& style = {}
-    );
+    Transaction CreateCircle(GeometryGraph& graph, uint32_t center_id, const RPNParam& radius_expr, const GeoNode::VisualConfig& style = {});
 
-    /**
-     * @brief 创建动态隐函数 f(x, y) = 0
-     * @param tokens 混合 Token 序列
-     */
-    uint32_t CreateImplicitFunction(
-        GeometryGraph& graph,
-        const std::vector<MixedToken>& tokens,const GeoNode::VisualConfig& style = {}
-    );
+    Transaction CreateCircleThreePoints(GeometryGraph& graph, uint32_t p1, uint32_t p2, uint32_t p3, const GeoNode::VisualConfig& style = {});
 
+    Transaction CreateConstrainedPoint(GeometryGraph& graph, uint32_t target_id, const RPNParam& x_expr, const RPNParam& y_expr, const GeoNode::VisualConfig& style = {});
 
+    Transaction CreateIntersectionPoint(GeometryGraph& graph, const RPNParam& x_e, const RPNParam& y_e, const std::vector<uint32_t>& targets, const GeoNode::VisualConfig& style = {});
 
+    Transaction CreateAnalyticalIntersection(GeometryGraph& graph, uint32_t id1, uint32_t id2, const RPNParam& x_guess, const RPNParam& y_guess, const GeoNode::VisualConfig& style = {});
 
-    /**
-     * @brief 创建一条线段或直线 (依赖两点)
-     * @param is_infinite true 为无限直线, false 为线段
-     */
-    uint32_t CreateLine(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id, bool is_infinite,const GeoNode::VisualConfig& style={} );
+    Transaction CreateAnalyticalConstrainedPoint(GeometryGraph& graph, uint32_t target_id, const RPNParam& x_guess, const RPNParam& y_guess, const GeoNode::VisualConfig& style = {});
 
-    /**
-     * @brief 创建一个中点 (依赖两点)
-     */
-    uint32_t CreateMidpoint(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id,const GeoNode::VisualConfig& style = {} );
+    Transaction CreateRatioPoint(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id, const RPNParam& ratio_expr, const GeoNode::VisualConfig& style = {});
 
+    Transaction CreateParametricFunction(GeometryGraph& graph, const std::vector<MixedToken>& src_x, const std::vector<MixedToken>& src_y, double t_min, double t_max, const GeoNode::VisualConfig& style = {});
 
+    Transaction CreateImplicitFunction(GeometryGraph& graph, const std::vector<MixedToken>& tokens, const GeoNode::VisualConfig& style = {});
 
-    /**
-     * @brief 创建一个动态函数 (显式/隐式/参数方程)
-     */
-    uint32_t CreateFunction(
-        GeometryGraph& graph,
-        GeoNode::RenderType r_type,
-        const AlignedVector<RPNToken>& tokens,
-        const std::vector<RPNBinding>& bindings,
-        const std::vector<uint32_t>& parent_ids,const GeoNode::VisualConfig& style = {}
-    );
-    uint32_t CreatePerpendicular(GeometryGraph& graph, uint32_t segment_id, uint32_t point_id, bool is_infinite,const GeoNode::VisualConfig& style = {});
-    uint32_t CreateParallel(GeometryGraph& graph, uint32_t segment_id, uint32_t point_id,const GeoNode::VisualConfig& style = {});
-    uint32_t CreateConstrainedPoint(GeometryGraph& graph, uint32_t target_id, const RPNParam& x_expr, const RPNParam& y_expr,const GeoNode::VisualConfig& style = {});
-    uint32_t CreateTangent(GeometryGraph& graph, uint32_t constrained_point_id,const GeoNode::VisualConfig& style = {});
-    uint32_t CreateMeasureLength(GeometryGraph& graph, uint32_t p1_id, uint32_t p2_id,const GeoNode::VisualConfig& style = {});
-    uint32_t CreateIntersectionPoint(
-        GeometryGraph& graph,
-        const RPNParam& x_init,
-        const RPNParam& y_init,
-        const std::vector<uint32_t>& target_ids,const GeoNode::VisualConfig& style = {}
-    );
-    uint32_t CreateAnalyticalIntersection(
-    GeometryGraph& graph,
-    uint32_t id1, uint32_t id2,
-    const RPNParam& x_guess,
-    const RPNParam& y_guess,const GeoNode::VisualConfig& style = {}
-    );
+    Transaction CreateExplicitFunction(GeometryGraph& graph, const std::vector<MixedToken>& tokens, const GeoNode::VisualConfig& style = {});
 
-    uint32_t CreateAnalyticalConstrainedPoint(
-        GeometryGraph &graph,
-        uint32_t target_id,
-        const RPNParam &x_guess,
-        const RPNParam &y_guess,const GeoNode::VisualConfig& style = {}
-    );
+    // --- 更新类 (返回事务) ---
+    Transaction UpdateFreePoint_Tx(GeometryGraph& graph, uint32_t id, const RPNParam& x_expr, const RPNParam& y_expr);
 
-    uint32_t CreateRatioPoint(
-        GeometryGraph &graph,
-        uint32_t p1_id,
-        uint32_t p2_id,
-        const RPNParam &ratio_expr,const GeoNode::VisualConfig& style = {}
-    );
+    Transaction DeleteObject_Tx(GeometryGraph& graph, uint32_t id);
 
-    uint32_t CreateCircleThreePoints(
-        GeometryGraph &graph,
-        uint32_t p1_id,
-        uint32_t p2_id,
-        uint32_t p3_id,const GeoNode::VisualConfig& style = {}
-    );
-    void UpdateFreePoint(GeometryGraph& graph, uint32_t id, const RPNParam& x_expr, const RPNParam& y_expr);
-    void UpdateAnalyticalConstrainedPoint(GeometryGraph& graph, uint32_t id, const RPNParam& x_expr, const RPNParam& y_expr);
-    void UpdateConstrainedPoint(GeometryGraph& graph, uint32_t id, const RPNParam& x_expr, const RPNParam& y_expr);
-    void UpdateFunctionRPN(GeometryGraph& graph, uint32_t id, const std::vector<MixedToken>& new_tokens_x, const std::vector<MixedToken>& new_tokens_y);
-    uint32_t CreateSmartTextLabel(GeometryGraph& graph, uint32_t target_id);
-    void UpdateStyle(GeometryGraph& graph, uint32_t id,const ViewState& view,const GeoNode::VisualConfig& new_style,const std::vector<uint32_t>& draw_order);
+    Transaction UpdateStyle_Tx(GeometryGraph& graph, uint32_t id, const GeoNode::VisualConfig& new_style);
+
+    Transaction UpdateLabelPosition_Tx(GeometryGraph& graph, uint32_t label_id, double mouse_wx, double mouse_wy, const ViewState& view);
 
 } // namespace GeoFactory
 

@@ -4,7 +4,7 @@
 
 #include "../../pch.h"
 #include "../functions/lerp.h"
-
+#include "../graph/GeoSolver.h"
 #include "../CAS/RPN/RPN.h"
 #include <variant>
 #include <vector>
@@ -127,29 +127,33 @@ struct Data_RatioPoint {
 struct GeoNode;
 using SolverFunc = void(*)(GeoNode& self, const std::vector<GeoNode>& pool);
 
+
+struct ObjectStyle {
+
+
+    enum class Line : uint32_t {
+        Solid = 0x1001, Dashed = 0x1002, Dotted = 0x1003
+    };
+
+
+    enum class Point : uint32_t {
+        Free = 0x2001, Intersection = 0x2002, Constraint = 0x2003,
+        Circle = 0x2004, Square = 0x2005, Diamond = 0x2006
+    };
+
+
+
+    static bool IsLine(uint32_t s) { return s >= 0x1000 && s < 0x2000; }
+    static bool IsPoint(uint32_t s) { return s >= 0x2000 && s < 0x3000; }
+};
+
+
+
 struct GeoNode {
     uint32_t id{};
-    uint32_t rank = 0;
-    bool active = true;
-    bool is_visible = true;
-    struct ObjectStyle {
-        // 显式指定底层类型为 uint32_t，确保 WebGPU 兼容性
-        enum class Line : uint32_t {
-            Solid  = 0x1001,
-            Dashed = 0x1002,
-            Dotted = 0x1003
-        };
 
-        enum class Point : uint32_t {
-            Free  = 0x2001,
-            Constrained  = 0x2002,
-            Intersection = 0x2003
-        };
 
-        // 静态工具函数：用于运行时检查
-        static bool IsLine(uint32_t s) { return s >= 0x1000 && s < 0x2000; }
-        static bool IsPoint(uint32_t s) { return s >= 0x2000 && s < 0x3000; }
-    };
+
     enum class RenderType {
         None,
         Point,      // 包含自由、约束、交点、中点
@@ -161,6 +165,13 @@ struct GeoNode {
         Scalar,      // 纯数值
         Text
     } render_type = RenderType::None;
+
+    struct {
+        double x = 0.0;      // 存储点坐标或圆心X
+        double y = 0.0;      // 存储点坐标或圆心Y
+        double scalar = 0.0; // 存储标量值或半径
+        bool is_valid = false;
+    } result;
 
 
 
@@ -198,8 +209,24 @@ struct GeoNode {
     VisualConfig config; // 每个节点自带一份视觉配置
 
     // 拓扑
+    uint32_t rank{0};
     std::vector<uint32_t> parents{};
     std::vector<uint32_t> children{};
+    bool is_in_bucket = false;            // 标记当前是否已挂载到 buckets_all 中
+
+
+    uint32_t prev_in_bucket = 0xFFFFFFFF;
+    uint32_t next_in_bucket = 0xFFFFFFFF;
+
+    // 逻辑判定位
+    bool is_heuristic = false;
+
+
+    bool active = true;
+    bool is_visible = true;
+
+
+
 
 
 
@@ -240,8 +267,7 @@ struct GeoNode {
     }
     using RenderTaskFunc = void(*)(GeoNode&, const std::vector<GeoNode>&, const ViewState&, const NDCMap&, oneapi::tbb::concurrent_bounded_queue<FunctionResult>&);
     RenderTaskFunc render_task = nullptr;
-    bool is_heuristic = false;       // 是否是图解点（直接读 Buffer）
-    bool is_buffer_dependent = false; // 是否依赖于任何图解点（间接依赖 Buffer）
+
 };
 
 class GeometryGraph {
@@ -249,24 +275,41 @@ public:
     // 命名计数器，记录当前已分配了多少个自动生成的名称
     uint32_t next_name_index = 0;
 
+    // 每一层只存储链表头部的 ID
+    std::vector<uint32_t> buckets_all_heads;
+
+    // 位图：记录哪些 Rank 是非空的
+    std::vector<uint64_t> active_ranks_mask;
+
+
+    void MoveNodeInBuckets(uint32_t id, uint32_t new_rank);
+
+
+
+
 
     std::string GenerateNextName();
     std::vector<GeoNode> node_pool{};
     std::vector<std::vector<uint32_t>> buckets{};
     uint32_t current_frame_index = 1;
     uint32_t min_dirty_rank = 10000, max_dirty_rank = 0;
+    std::vector<uint8_t> m_dirty_mask;
+
+    uint32_t max_graph_rank = 0; // 记录当前图中最大的 Rank 级别
 
 
     GeometryGraph();
     uint32_t allocate_node();
-    void TouchNode(uint32_t id);
-    std::vector<uint32_t> SolveFrame();
+
     [[nodiscard("必须检查循环依赖，否则 SolveFrame 会崩溃！")]] bool DetectCycle(uint32_t child_id, uint32_t parent_id) const;
-    std::vector<std::vector<uint32_t>> GetRequiredRankedBatches(const std::vector<uint32_t>& targets);
+
     void UpdateRankRecursive(uint32_t node_id);
+    void DetachFromBucket(uint32_t id);
+    std::vector<uint32_t> FastScan(const std::vector<uint32_t>& moved_ids);
+    void LinkAndRank(uint32_t child_id, const std::vector<uint32_t>& new_parent_ids);
 
 private:
-    void Enqueue(GeoNode& node);
+    void UpdateBit(uint32_t rank, bool has_elements);
 };
 
 #endif

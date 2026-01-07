@@ -3,7 +3,9 @@
 #define GEOSOLVER_H
 
 #include "GeoGraph.h"
+struct LineCoords { double x1, y1, x2, y2; };
 double ExtractValue(const GeoNode& parent, RPNBinding::Property prop, const std::vector<GeoNode>& pool);
+std::optional<LineCoords> ExtractLineCoords(const GeoNode& node, const std::vector<GeoNode>& pool);
 // =========================================================
 // 求解器函数声明
 // =========================================================
