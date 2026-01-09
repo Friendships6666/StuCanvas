@@ -46,8 +46,8 @@ public:
     void Redo();
 
     // --- 核心调度：提交并计算 ---
-    void CommandManager::Commit(ViewState& current_view, const std::vector<uint32_t>& draw_order);
-    void CommandManager::ExecuteSingleMutation(const Mutation& m, bool is_undo, std::unordered_set<uint32_t>& dirty_set);
+    void Commit(ViewState& current_view, const std::vector<uint32_t>& draw_order);
+    void ExecuteSingleMutation(const Mutation& m, bool is_undo, std::unordered_set<uint32_t>& dirty_set);
     struct PendingTask {
         Transaction tx;
         bool is_undo_op = false; // true 表示执行 Undo 逻辑，false 表示执行正常/Redo 逻辑

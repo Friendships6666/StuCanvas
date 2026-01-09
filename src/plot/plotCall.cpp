@@ -99,6 +99,7 @@ void calculate_points_core(
     const ViewState& view,
     RenderUpdateMode mode
 ) {
+
     // A. 环境同步
     g_global_view_state = view;
     NDCMap ndc_map = BuildNDCMap(view);

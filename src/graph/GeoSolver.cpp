@@ -16,6 +16,10 @@ double ExtractValue(const GeoNode &parent, RPNBinding::Property prop) {
         default: return 0.0;
     }
 }
+bool is_heuristic_solver_local(SolverFunc s) {
+    // 凡是需要回读 Buffer 采样点来确定坐标的求解器
+    return (s == Solver_ConstrainedPoint || s == Solver_IntersectionPoint || s == Solver_LabelAnchorPoint);
+}
 
 
 void Solver_ScalarRPN(GeoNode &self, const std::vector<GeoNode> &pool) {

@@ -1,60 +1,117 @@
 ﻿#include "../pch.h"
-#include "../include/graph/GeoGraph.h"
-#include "../include/graph/GeoFactory.h"
-#include "../include/plot/plotCall.h"
-#include "../include/functions/lerp.h"
+#include "../include/graph/GeoEngine.h"
 #include <iostream>
 #include <fstream>
-#include <vector>
 #include <iomanip>
 
-// 辅助导出函数
-void ExportPoints(const std::string& filename, const AlignedVector<PointData>& buffer) {
+// 辅助导出函数：将当前显存中的点数据导出为文本
+void ExportPoints(const std::string& filename) {
     std::ofstream outfile(filename);
-    outfile << "# [X_Clip] [Y_Clip] [Func_ID]\n" << std::fixed << std::setprecision(6);
-    for (const auto& pt : buffer) {
-        outfile << pt.position.x << " " << pt.position.y << " " << pt.function_index << "\n";
+    if (!outfile.is_open()) {
+        std::cerr << "Failed to open " << filename << std::endl;
+        return;
+    }
+
+    // 写入元数据头
+    outfile << "# Export: " << filename << "\n";
+    outfile << "# Total Buffer Size: " << wasm_final_contiguous_buffer.size() << "\n";
+    outfile << "# [X_Clip] [Y_Clip] [Func_ID]\n";
+    outfile << std::fixed << std::setprecision(6);
+
+    // 遍历全局 Buffer
+    for (const auto& pt : wasm_final_contiguous_buffer) {
+        outfile << pt.position.x << " "
+                << pt.position.y << " "
+                << pt.function_index << "\n";
     }
     outfile.close();
+    std::cout << "-> [Disk] Saved to " << filename << " (" << wasm_final_contiguous_buffer.size() << " points)" << std::endl;
 }
 
 int main() {
     try {
+        std::cout << "=== GeoEngine Full Cycle Test ===" << std::endl;
+
+        // 0. 初始化引擎 (2560x1600)
+        GeoEngine engine(2560.0, 1600.0);
+
         // =========================================================
-        // 1. 【严格执行】用户指定的初始视图参数
+        // Step 1 & 2: 创建与初始化渲染 -> points1.txt
         // =========================================================
-        double screen_width = 2560.0;
-        double screen_height = 1600.0;
-        double offset_x = 0.0;
-        double offset_y = 0.0;
-        double zoom = 0.1;
+        std::cout << "\n[Phase 1] Create Objects (A, B, Line)" << std::endl;
 
-        double aspect_ratio = screen_width / screen_height;
-        double wppx = (2.0 * aspect_ratio) / (zoom * screen_width);
-        double wppy = -2.0 / (zoom * screen_height);
+        // 提交创建事务 (此时仅在内存中建立逻辑，尚未渲染)
+        uint32_t idA = engine.AddPoint(-5.0, 0.0);
+        uint32_t idB = engine.AddPoint(5.0, 0.0);
+        uint32_t idLine = engine.AddLine(idA, idB);
 
-        Vec2 world_origin = {
-            offset_x - (screen_width * 0.5) * wppx,
-            offset_y - (screen_height * 0.5) * wppy
-        };
+        // 执行第一次渲染 (Incremental 模式：填充空 Buffer)
+        engine.Render();
 
-        ViewState view{};
-        view.screen_width = screen_width;
-        view.screen_height = screen_height;
-        view.offset_x = offset_x;
-        view.offset_y = offset_y;
-        view.zoom = zoom;
-        view.world_origin = world_origin;
-        view.wppx = wppx;
-        view.wppy = wppy;
+        std::cout << "Buffer Status: Initialized." << std::endl;
+        ExportPoints("points1.txt");
 
-        using namespace GeoFactory;
-        GeometryGraph graph;
+        // =========================================================
+        // Step 3: 拖拽更新 (局部增量) -> points2.txt
+        // =========================================================
+        std::cout << "\n[Phase 2] Move Point A to (-10.0, 5.0)" << std::endl;
 
+        // 提交移动事务
+        engine.MovePoint(idA, -10.0, 5.0);
 
+        // 执行渲染 (Incremental 模式：追加新数据到 Buffer 末尾)
+        engine.Render();
+
+        std::cout << "Buffer Status: Appended new positions." << std::endl;
+        // 验证 Ring Buffer：Line 的 Offset 应该指向了 Buffer 后部
+        auto& rangeLine = wasm_function_ranges_buffer[2]; // draw_order[2] 是线
+        std::cout << "Debug: Line Offset moved to " << rangeLine.start_index << std::endl;
+
+        ExportPoints("points2.txt");
+
+        // =========================================================
+        // Step 4: 撤销操作 (Undo) -> points3.txt
+        // =========================================================
+        std::cout << "\n[Phase 3] Undo Move (Ctrl+Z)" << std::endl;
+
+        // 执行撤销 (逻辑回滚 + 增量渲染旧位置)
+        engine.Undo();
+        engine.Render();
+
+        std::cout << "Buffer Status: Appended restored positions (A back to -5.0)." << std::endl;
+        ExportPoints("points3.txt");
+
+        // =========================================================
+        // Step 4.5: 重做操作 (Redo) -> points4.txt
+        // =========================================================
+        std::cout << "\n[Phase 4] Redo Move (Ctrl+Shift+Z)" << std::endl;
+
+        // 执行重做 (逻辑重演 + 增量渲染新位置)
+        engine.Redo();
+        engine.Render();
+
+        std::cout << "Buffer Status: Appended redo positions (A back to -10.0)." << std::endl;
+        ExportPoints("points4.txt");
+
+        // =========================================================
+        // Step 5: 视图缩放 (全量重刷) -> points5.txt
+        // =========================================================
+        std::cout << "\n[Phase 5] Viewport Zoom (x2.0)" << std::endl;
+
+        // 提交视图变更事务
+        engine.PanZoom(0.0, 0.0, 0.2); // Zoom 0.1 -> 0.2
+
+        // 执行渲染 (Viewport 模式：检测到视图变化，清空 Buffer 并重投影)
+        engine.Render();
+
+        std::cout << "Buffer Status: Cleared & Reprojected." << std::endl;
+        ExportPoints("points5.txt");
+
+        std::cout << "\n=== Test Complete ===" << std::endl;
 
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        std::cerr << "CRITICAL ERROR: " << e.what() << std::endl;
+        return -1;
     }
     return 0;
 }

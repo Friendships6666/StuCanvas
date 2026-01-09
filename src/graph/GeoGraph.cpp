@@ -1,5 +1,6 @@
 // --- 文件路径: src/graph/GeoGraph.cpp ---
 #include "../../include/graph/GeoGraph.h"
+#include "../../include/graph/GeoSolver.h"
 #include <algorithm>
 #include <iostream>
 
@@ -260,10 +261,7 @@ void GeometryGraph::DetachFromBucket(uint32_t id) {
     }
 }
 
-bool is_heuristic_solver_local(SolverFunc s) {
-    // 凡是需要回读 Buffer 采样点来确定坐标的求解器
-    return (s == Solver_ConstrainedPoint || s == Solver_IntersectionPoint || s == Solver_LabelAnchorPoint);
-}
+
 
 void GeometryGraph::LinkAndRank(uint32_t child_id, const std::vector<uint32_t>& new_parent_ids) {
     if (child_id >= node_pool.size()) return;

@@ -4,7 +4,7 @@
 
 #include "../../pch.h"
 #include "../functions/lerp.h"
-#include "../graph/GeoSolver.h"
+
 #include "../CAS/RPN/RPN.h"
 #include <variant>
 #include <vector>
