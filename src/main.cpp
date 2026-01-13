@@ -3,7 +3,8 @@
 #include <iostream>
 #include <fstream>
 #include <iomanip>
-
+#include <gen.h>
+#include <giac.h>
 // 辅助导出函数：将当前显存中的点数据导出为文本
 void ExportPoints(const std::string& filename) {
     std::ofstream outfile(filename);
@@ -27,10 +28,80 @@ void ExportPoints(const std::string& filename) {
     outfile.close();
     std::cout << "-> [Disk] Saved to " << filename << " (" << wasm_final_contiguous_buffer.size() << " points)" << std::endl;
 }
+void test_hell_level_cas() {
+    giac::context ctx;
+    auto run_test = [&](const std::string& label, const std::string& command) {
+        std::cout << "\n[HELL TEST] " << label << ": " << command << std::endl;
+        auto start = std::chrono::high_resolution_clock::now();
 
+        giac::gen result(command, &ctx);
+        result = giac::eval(result, 1, &ctx);
+        // 对于极其复杂的代数式，ratnormal 比 simplify 在处理分式和多项式时更底层且高效
+        result = giac::ratnormal(result, &ctx);
+
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+
+        std::cout << "Result: " << result.print(&ctx) << std::endl;
+        std::cout << "Time  : " << duration.count() << " us" << std::endl;
+    };
+
+    // --- 1. Gröbner 基计算 (Gröbner Basis) ---
+    // 这是代数几何的基石。解决多项式理想问题。
+    // 复杂度是指数级的。如果这个能过，说明 Giac 的多项式内核达到了专业级。
+    run_test("Gröbner Basis", "gbasis([x^2 + y^2 - 1, x^2 - z^2 + y, x + y + z], [x, y, z])");
+
+    // --- 2. 三重嵌套符号积分 (Triple Nested Integral) ---
+    // 连续对三个变量求不定积分，测试 AST 的递归深度和变量阴影处理
+    run_test("Triple Integral", "integrate(integrate(integrate(x*y*z, x), y), z)");
+
+    // --- 3. 线性微分方程组 (Systems of ODEs) ---
+    // 解两个耦合的微分方程。非常考验矩阵指数（Matrix Exponential）算法。
+    run_test("ODE System", "desolve([diff(x(t),t) = y(t), diff(y(t),t) = -x(t)], [x(t), y(t)])");
+
+    // --- 4. 符号矩阵求逆 (4x4 Symbolic Matrix Inverse) ---
+    // 4x4 矩阵，每个元素都是符号变量。这会产生极其庞大的中间行列式展开。
+    run_test("4x4 Sym Matrix Inv", "inv([[a,b,0,0],[c,d,0,0],[0,0,e,f],[0,0,g,h]])");
+
+    // --- 5. 贝塞尔函数导数 (Bessel Function Identities) ---
+    // 特殊函数的导数推导。测试特殊函数库及其递归关系。
+    // 预期结果应包含 bessel_j(n-1, x) 或类似项
+    run_test("Bessel Diff", "diff(bessel_j(n, x), x)");
+
+    // --- 6. 符号极限 (二元未定式 / 路径相关性尝试) ---
+    // 这是一个经典的测试。
+
+
+    // --- 7. 离散求和恒等式 (Discrete Summation) ---
+    // 计算组合数的求和。
+    run_test("Combinatoric Sum", "sum(comb(n, k), k, 0, n)");
+}
 int main() {
     try {
         std::cout << "=== GeoEngine Full Cycle Test ===" << std::endl;
+        giac::vecteur v;
+        v.push_back(600);   // window_h
+        v.push_back(800);   // window_w
+        v.push_back(100);  // legende_size
+        v.push_back(30);   // coord_size
+        v.push_back(20);   // param_step
+        v.push_back(0);    // 0: radians, 1: degrees
+
+        // 2. 调用你发现的那个 bool 版 cas_setup
+        // contextptr 传 nullptr 表示初始化全局默认设置
+        giac::cas_setup(v, nullptr);
+        giac::context ctx;
+        giac::gen warmup = giac::eval(giac::gen("1+1", &ctx), 1, &ctx);
+
+        // 2. 强制定义一个变量并执行一次简单的 normal 运算
+        // 这会强制 Giac 初始化全局常量表（如 zero, plus_one 等）
+
+
+
+        test_hell_level_cas();
+
+
+
 
         // 0. 初始化引擎 (2560x1600)
         GeoEngine engine(2560.0, 1600.0);

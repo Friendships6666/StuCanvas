@@ -30,11 +30,11 @@ struct NDCMap {
 // 场景：处理鼠标事件、光栅化前的像素遍历
 // 逻辑：World = Origin + Pixel * WPP
 
-FORCE_INLINE Vec2 screen_to_world_inline(const Vec2& scr, const Vec2& origin, double wppx, double wppy) {
+FORCE_INLINE inline Vec2 screen_to_world_inline(const Vec2& scr, const Vec2& origin, double wppx, double wppy) {
     return { origin.x + scr.x * wppx, origin.y + scr.y * wppy };
 }
 
-FORCE_INLINE std::pair<batch_type, batch_type> screen_to_world_batch(const batch_type& sx, double sy, const Vec2& origin, double wppx, double wppy) {
+FORCE_INLINE inline std::pair<batch_type, batch_type> screen_to_world_batch(const batch_type& sx, double sy, const Vec2& origin, double wppx, double wppy) {
     return { origin.x + sx * batch_type(wppx), origin.y + batch_type(sy * wppy) };
 }
 
@@ -53,7 +53,7 @@ FORCE_INLINE std::pair<batch_type, batch_type> screen_to_world_batch(const batch
  * @param map NDC 映射参数
  * @param func_idx 函数索引
  */
-FORCE_INLINE void world_to_clip_store(
+FORCE_INLINE inline void world_to_clip_store(
     PointData& out,
     double wx, double wy,
     const NDCMap& map,
@@ -81,7 +81,7 @@ FORCE_INLINE void world_to_clip_store(
  * @param map NDC 映射参数
  * @param func_idx 函数索引
  */
-FORCE_INLINE void world_to_clip_store_batch(
+FORCE_INLINE inline void world_to_clip_store_batch(
     PointData* out_ptr,
     const batch_type& wx_batch,
     const batch_type& wy_batch,
@@ -136,7 +136,7 @@ inline NDCMap BuildNDCMap(const ViewState& view) {
     map.scale_y = 2.0 / (view.screen_height * view.wppy);
     return map;
 }
-FORCE_INLINE Vec2 clip_to_world_inline(const Vec2& clip, const NDCMap& map) {
+FORCE_INLINE inline Vec2 clip_to_world_inline(const Vec2& clip, const NDCMap& map) {
     // World = Center + NDC / Scale
     return {
         map.center_x + static_cast<double>(clip.x) / map.scale_x,
@@ -144,7 +144,7 @@ FORCE_INLINE Vec2 clip_to_world_inline(const Vec2& clip, const NDCMap& map) {
     };
 }
 
-FORCE_INLINE std::pair<batch_type, batch_type> clip_to_world_batch(
+FORCE_INLINE inline std::pair<batch_type, batch_type> clip_to_world_batch(
     const batch_type& cx,
     const batch_type& cy,
     const NDCMap& map)
@@ -160,7 +160,7 @@ FORCE_INLINE std::pair<batch_type, batch_type> clip_to_world_batch(
 // ========================================================================
 
 // 隐函数求交点
-FORCE_INLINE bool try_get_intersection_point(Vec2& out, const Vec2& p1, const Vec2& p2, double v1, double v2, const AlignedVector<RPNToken>& prog_check) {
+FORCE_INLINE inline bool try_get_intersection_point(Vec2& out, const Vec2& p1, const Vec2& p2, double v1, double v2, const AlignedVector<RPNToken>& prog_check) {
     if ((v1 * v2 > 0.0) && (std::signbit(v1) == std::signbit(v2))) return false;
     if (std::abs(v1) >= 1e268 && std::abs(v2) >= 1e268) return false;
     double t = -v1 / (v2 - v1);

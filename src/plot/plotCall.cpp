@@ -140,7 +140,7 @@ void calculate_points_core(
                 i++;
             }
 
-            // 并行执行当前 Batch
+
             oneapi::tbb::parallel_for_each(batch.begin(), batch.end(), [&](uint32_t id) {
                 GeoNode& node = graph.node_pool[id];
                 if (should_resolve_in_render(node, mode)) {

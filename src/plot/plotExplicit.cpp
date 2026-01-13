@@ -6,6 +6,8 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
+
+
 constexpr double SAMPLING_DENSITY = 1;
 namespace {
     // 简单的线段裁剪并补点函数

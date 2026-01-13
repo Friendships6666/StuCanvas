@@ -105,11 +105,6 @@ Interval<T> interval_div(const Interval<T>& a, const Interval<T>& b, unsigned in
     return interval_mul(a, b_inv);
 }
 
-// --- 文件路径: include/interval/interval.h ---
-
-// --- 文件路径: include/interval/interval.h ---
-
-// --- 文件路径: include/interval/interval.h ---
 
 template<typename T>
 Interval<T> interval_pow(const Interval<T>& base, const Interval<T>& exp, unsigned int precision_bits = 53) {
