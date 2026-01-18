@@ -21,9 +21,8 @@ set(SOURCE_FILES
         src/graph/GeoFactory.cpp
         include/graph/GeoSolver.h
         src/graph/GeoSolver.cpp
-        include/graph/GeoEngine.h
-        include/graph/CommandManager.h
-        src/graph/CommandManager.cpp
+
+
         include/plot/plotCall.h
         src/plot/plotCall.cpp
         include/plot/plotExplicit.h
@@ -36,10 +35,8 @@ set(SOURCE_FILES
         src/plot/plotSegment.cpp
         include/plot/plotCircle.h
         src/plot/plotCircle.cpp
-        include/plot/plotIndustry.h
-        src/plot/plotIndustry.cpp
-        include/plot/plotIndustryParametric.h
-        src/plot/plotIndustryParametric.cpp
+
+
         include/CAS/RPN/RPN.h
         src/CAS/RPN/RPN.cpp
         include/CAS/RPN/MultiIntervalRPN.h
@@ -48,6 +45,10 @@ set(SOURCE_FILES
         include/interval/MultiInterval.h
         include/functions/functions.h  # 注意：Linux 区分大小写，确保路径一致
         include/functions/lerp.h
+
+        include/CAS/RPN/ShuntingYard.h
+        src/CAS/RPN/ShuntingYard.cpp
+
 )
 
 # ---------------------------------------------------------
@@ -96,8 +97,9 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 
 target_compile_options(${PROJECT_NAME} PRIVATE
         -march=native
-        -O3
+        -O0
         -fpermissive
+        -g3 -fno-limit-debug-info -fstandalone-debug
 )
 
 # ---------------------------------------------------------

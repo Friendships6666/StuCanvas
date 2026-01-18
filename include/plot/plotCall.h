@@ -21,14 +21,11 @@ enum class RenderUpdateMode {
  * @brief 核心渲染调度入口
  */
 void calculate_points_core(
-    AlignedVector<PointData>& out_points,
-    AlignedVector<FunctionRange>& out_ranges,
-    GeometryGraph& graph, // 注意：改为传 GeometryGraph 引用以便访问 buckets_all_heads
-    const std::vector<uint32_t>& draw_order,
-    const std::vector<uint32_t>& dirty_node_ids,
-    const ViewState& view,
+    std::vector<PointData>& out_points,      // 物理点 Buffer
+    std::vector<FunctionRange>& out_ranges,  // 范围索引 Buffer (给 JS 绘图)
+    GeometryGraph& graph,                    // 包含 ViewState, LUT, Pool 的核心对象
     RenderUpdateMode mode
-) ;
+);
 
 
 #endif //PLOTCALL_H

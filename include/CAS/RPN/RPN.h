@@ -23,7 +23,7 @@ enum class RPNTokenType {
     // Trigonometric
     SIN, COS, TAN,
     // Other
-    SIGN, ABS
+    SIGN, ABS, CUSTOM_FUNCTION
 };
 
 struct RPNToken {
@@ -97,7 +97,9 @@ template<typename T> struct is_interval<Interval<T>> : std::true_type {};
 
 template<typename T>
 FORCE_INLINE T evaluate_rpn(
-    const AlignedVector<RPNToken>& p,
+    const RPNToken* p,    // 改为原始指针
+    size_t len,           // 增加长度参数
+
     std::optional<T> x = std::nullopt,
     std::optional<T> y = std::nullopt,
     std::optional<T> t_param = std::nullopt,
@@ -105,7 +107,8 @@ FORCE_INLINE T evaluate_rpn(
 {
     std::array<T, RPN_MAX_STACK_DEPTH> s{};
     int sp = 0;
-    for (const auto& t : p) {
+    for (size_t i = 0; i < len; ++i) {
+        const auto& t = p[i];
         switch (t.type) {
             case RPNTokenType::PUSH_CONST:
                 if constexpr (std::is_same_v<T, Interval_Batch>) {
@@ -216,9 +219,39 @@ FORCE_INLINE T evaluate_rpn(
                 else if constexpr (std::is_same_v<T, double>) { s[sp - 1] = safe_exp_scalar(s[sp - 1]); }
                 else if constexpr (std::is_same_v<T, batch_type>) { s[sp - 1] = safe_exp_batch(s[sp - 1]); }
                 break;
+            case RPNTokenType::CUSTOM_FUNCTION:
+                throw std::runtime_error("Custom function not implemented");
+
+
         }
     }
     return s[0];
+}
+/**
+ * @brief evaluate_rpn 的容器重载版本
+ * 作用：作为包装器，将 AlignedVector 转换为指针和长度，转发给核心执行函数。
+ * 优点：保持了对旧代码的兼容性，同时避免了任何内存拷贝。
+ */
+template<typename T>
+FORCE_INLINE T evaluate_rpn(
+    const AlignedVector<RPNToken>& v,           // 输入容器
+    std::optional<T> x = std::nullopt,         // 可选变量 X
+    std::optional<T> y = std::nullopt,         // 可选变量 Y
+    std::optional<T> t_param = std::nullopt,   // 可选变量 T
+    unsigned int precision_bits = 53           // 计算精度
+) {
+
+
+    // 转发调用指针版本的核心逻辑
+    // v.data() 获取底层连续内存地址，v.size() 获取指令长度
+    return evaluate_rpn<T>(
+        v.data(),
+        v.size(),
+        x,
+        y,
+        t_param,
+        precision_bits
+    );
 }
 
 

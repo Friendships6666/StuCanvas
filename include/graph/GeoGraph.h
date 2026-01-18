@@ -2,314 +2,250 @@
 #ifndef GEOGRAPH_H
 #define GEOGRAPH_H
 
+#include <vector>
+#include <string>
+#include <unordered_map>
+#include <atomic>
+#include <cstdint>
+#include <stdexcept>
+#include <algorithm>
+#include <charconv>
+#include <cstring>
+#include <cmath>
+
 #include "../../pch.h"
+#include "../CAS/RPN/RPN.h"
+#include "../CAS/RPN/ShuntingYard.h"
 #include "../functions/lerp.h"
 
-#include "../CAS/RPN/RPN.h"
-#include <variant>
-#include <vector>
-
-
-struct RPNBinding {
-    uint32_t token_index{};   // RPN 指令数组中的下标 (需要被填写的 PUSH_CONST 位置)
-    uint32_t parent_index{};  // 在当前节点的 parents 列表中的下标 (注意是局部下标，不是全局ID)
-
-    // 从父节点提取什么属性？
-    enum Property {
-        VALUE, // 标量值 (默认)
-        POS_X, // 点的 X 坐标
-        POS_Y  // 点的 Y 坐标
-    } prop = VALUE;
-};
 // =========================================================
-// 1. 核心对象组件 (Components)
+// 1. 基础宏与常量定义
 // =========================================================
-enum class ScalarType {
-    Manual,      // 手动输入的数值 (滑动条)
-    Length,      // 两点距离或线段长度
-    Angle,       // 三点夹角或两条直线夹角
-    Slope,       // 直线斜率
-    Area,        // 多边形面积
-    Expression   // 其他标量运算结果 (如 a + b)
-};
+#ifndef NULL_ID
+#define NULL_ID 0xFFFFFFFF
+#endif
 
-struct Data_Scalar {
-    double value = 0.0; // 最终计算结果，供其他节点读取
-    ScalarType type = ScalarType::Expression;
-
-    // RPN 核心指令与绑定
-    AlignedVector<RPNToken> tokens{};
-    std::vector<RPNBinding> bindings{};
-};
-
-struct Data_Point {
-    double x = 0.0, y = 0.0; // 缓存坐标
-    // 规定：parents[0] 为 X 标量节点，parents[1] 为 Y 标量节点
-};
-
-// 约束点额外信息: 依赖一个对象 ID (Line/Circle/Function)
-struct Data_ConstrainedPoint {
-    uint32_t target_obj_id;
-};
-
-struct Data_AnalyticalIntersection {
-    // 1 代表使用 +sqrt(delta)，-1 代表使用 -sqrt(delta)
-    // 0 用于只有唯一解的情况（如线线交点）
-    int branch_sign = 0;
-
-    double x = 0.0;
-    double y = 0.0;
-    bool is_found = false;
-};
-
-struct Data_IntersectionPoint {
-    double x = 0.0; // ★ 新增：最终交点 X
-    double y = 0.0; // ★ 新增：最终交点 Y
-
-    double anchor_x = 0.0;
-    double anchor_y = 0.0;
-    bool is_found = false;
-    uint32_t num_targets = 0;
-};
-
-
-
-// 显函数/隐函数
-struct Data_SingleRPN {
-    AlignedVector<RPNToken> tokens{};
-    std::vector<RPNBinding> bindings{};
-};
-
-// 参数方程
-struct Data_DualRPN {
-    AlignedVector<RPNToken> tokens_x{};
-    AlignedVector<RPNToken> tokens_y{};
-    std::vector<RPNBinding> bindings_x{}; // 处理 x(t) 的动态参数
-    std::vector<RPNBinding> bindings_y{}; // 处理 y(t) 的动态参数
-    double t_min{}, t_max{};
-};
-struct Data_TextLabel {
-    double world_x = 0.0; // 锚点的世界坐标缓存
-    double world_y = 0.0;
-};
-
-
-// 直线/线段: 依赖两个点 ID
-struct Data_Line {
-    uint32_t p1_id;
-    uint32_t p2_id;
-    bool is_infinite; // true=直线, false=线段
-};
-
-// 圆: 依赖圆心点 ID 和半径 (固定值或标量 ID)
-struct Data_Circle {
-
-    double cx = 0.0, cy = 0.0; // 缓存圆心
-    double radius = 0.0;       // 缓存半径
-    // 规定：parents[0] 为圆心点节点，parents[1] 为半径标量节点
-};
-struct Data_CalculatedLine {
-    double x1, y1;
-    double x2, y2;
-    bool is_infinite; // true=直线, false=线段
-};
-struct Data_AnalyticalConstrainedPoint {
-    double t = 0.0;              // 锁定的参数 (线段比例或圆弧角度)
-    bool is_initialized = false; // 是否已锁定 t
-    double x = 0.0, y = 0.0;     // 计算出的世界坐标缓存
-};
-struct Data_RatioPoint {
-    double x = 0.0;
-    double y = 0.0;
-};
-
+#ifndef FORCE_INLINE
+#if defined(_MSC_VER)
+#define FORCE_INLINE __forceinline
+#else
+#define FORCE_INLINE inline __attribute__((always_inline))
+#endif
+#endif
 
 struct GeoNode;
-using SolverFunc = void(*)(GeoNode& self, const std::vector<GeoNode>& pool);
+struct ViewState;
+struct NDCMap;
+struct FunctionResult;
 
+// 统一函数指针签名
+using SolverFunc = void(*)(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
+using RenderTaskFunc = void(*)(
+    GeoNode& self,
+    const std::vector<GeoNode>& pool,
+    const std::vector<int32_t>& id_map, // <--- 新增此参数
+    const ViewState& v,
+    const NDCMap& m,
+    oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q
+);
 
-struct ObjectStyle {
-
-
-    enum class Line : uint32_t {
-        Solid = 0x1001, Dashed = 0x1002, Dotted = 0x1003
-    };
-
-
-    enum class Point : uint32_t {
-        Free = 0x2001, Intersection = 0x2002, Constraint = 0x2003,
-        Circle = 0x2004, Square = 0x2005, Diamond = 0x2006
-    };
-
-
-
-    static bool IsLine(uint32_t s) { return s >= 0x1000 && s < 0x2000; }
-    static bool IsPoint(uint32_t s) { return s >= 0x2000 && s < 0x3000; }
+// =========================================================
+// 2. 运行时补丁结构 (Resolved IDs)
+// =========================================================
+struct RuntimeBindingSlot {
+    size_t rpn_index;                          // Bytecode 数组中的下标
+    CAS::Parser::CustomFunctionType func_type; // 函数类型 (NONE 代表普通变量)
+    std::vector<uint32_t> dependency_ids;      // 依赖的父节点逻辑 ID 列表
 };
 
+// =========================================================
+// 3. 大一统结果与逻辑槽位 (Fat Slot)
+// =========================================================
+struct alignas(64) ComputedResult {
+    // --- 物理数据区 (32 字节) ---
+    union {
+        // 通用标量/坐标槽
+        struct { double s0, s1, s2, s3; };
+        // 几何语义：点(x,y) | 圆(cx,cy,cr) | 线(x1,y1,x2,y2)
+        struct { double x, y, z, w; };
+        struct { double cx, cy, cr, angle; };
+        struct { double x1, y1, x2, y2; };
+        // 数学语义：复数 | 测量值
+        struct { double re, im, mag, phase; };
+        struct { double area, length, slope, val; };
+    };
 
+    // --- RPN 逻辑层 (16 字节) ---
+    RPNToken*           bytecode_ptr = nullptr;
+    RuntimeBindingSlot* patch_ptr = nullptr;
+    uint32_t            bytecode_len = 0;
+    uint32_t            patch_len = 0;
 
-struct GeoNode {
-    uint32_t id{};
+    // --- 状态与元数据 (16 字节) ---
+    uint32_t flags = 0;
+    int32_t  i0 = 0, i1 = 0, i2 = 0;
 
+    enum FlagMask : uint32_t {
+        VALID        = 1 << 0,
+        VISIBLE      = 1 << 1,
+        DIRTY        = 1 << 2,
+        IS_INFINITE  = 1 << 3,
+        IS_HEURISTIC = 1 << 4,
+        SELECTED     = 1 << 5
+    };
 
-
-    enum class RenderType {
-        None,
-        Point,      // 包含自由、约束、交点、中点
-        Line,       // 直线/线段
-        Circle,     // 圆
-        Explicit,   // 显函数
-        Parametric, // 参数方程
-        Implicit,   // 隐函数
-        Scalar,      // 纯数值
-        Text
-    } render_type = RenderType::None;
-
-    struct {
-        double x = 0.0;      // 存储点坐标或圆心X
-        double y = 0.0;      // 存储点坐标或圆心Y
-        double scalar = 0.0; // 存储标量值或半径
-        bool is_valid = false;
-    } result;
-
-
-
-
-    static constexpr uint32_t PackRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) {
-        return (static_cast<uint32_t>(r) << 24) |
-               (static_cast<uint32_t>(g) << 16) |
-               (static_cast<uint32_t>(b) << 8)  |
-               (static_cast<uint32_t>(a));
+    FORCE_INLINE void set_f(uint32_t mask, bool val) {
+        if (val) flags |= mask;
+        else flags &= ~mask;
     }
-    // 视觉配置包
+    FORCE_INLINE bool check_f(uint32_t mask) const {
+        return (flags & mask) != 0;
+    }
+    FORCE_INLINE void reset() {
+        std::memset(this, 0, sizeof(ComputedResult));
+    }
+
+    template<int N> FORCE_INLINE double& get() {
+        static_assert(N >= 0 && N < 4, "Slot index range 0-3");
+        return *(&s0 + N);
+    }
+    template<int N> FORCE_INLINE const double& get() const {
+        return *(&s0 + N);
+    }
+};
+
+// =========================================================
+// 4. 几何节点 (Fat Entity)
+// =========================================================
+struct GeoNode {
+    /**
+     * @brief 渲染类型枚举：决定了该节点在画面中如何呈现
+     */
+    enum class RenderType : uint8_t {
+        None = 0,
+        Point,      // 自由点、中点、交点
+        Line,       // 直线、线段、射线
+        Circle,     // 圆、圆弧
+        Explicit,   // 显函数 y=f(x)
+        Implicit,   // 隐函数 F(x,y)=0
+        Parametric, // 参数方程 x=f(t), y=g(t)
+        Scalar,     // 纯数值(滑杆/中间计算)
+        Text        // 文字标签
+    };
+
+    /**
+     * @brief 视觉配置：存储节点的静态样式信息
+     */
     struct VisualConfig {
         std::string name = "BasicObject";
-        float thickness = 2.0f;           // 默认粗细
-        uint32_t color = PackRGBA(77, 77, 77);
-        uint32_t style = static_cast<uint32_t>(ObjectStyle::Line::Solid); // 统一存储为 u32
-        float opacity = 1.0f;              // 默认不透明
-
-
-
-        // --- 文字标签控制 (新增) ---
-        bool show_label = true;           // 开关：若为false，关闭昂贵的图解搜索
-        float label_offset_x = 15.0f;     // 像素偏移
-        float label_offset_y = -15.0f;
-        float label_size = 12.0f;         // 字号
-        float label_rotation = 0.0f;      // 旋转弧度
-        uint32_t label_color =PackRGBA(77, 77, 77);// 标签独立颜色
-
-
-
+        float    thickness = 2.0f;           // 线宽或点径
+        uint32_t color = 0x4D4DFFFF;         // 主体颜色 (RGBA)
+        bool     is_visible = true;          // 总开关
+        bool     show_label = true;          // 是否显示文字
+        float    label_offset_x = 15.0f;     // 像素偏移
+        float    label_offset_y = -15.0f;
+        float    label_size = 12.0f;         // 字号
+        uint32_t label_color = 0x4D4DFFFF;   // 标签颜色
     };
 
+    // --- 核心属性 ---
+    uint32_t id = NULL_ID;
+    uint32_t rank = 0;
+    RenderType render_type = RenderType::None;
 
+    ComputedResult result;  // 大一统计算槽位
+    VisualConfig   config;  // 视觉样式配置
 
-    VisualConfig config; // 每个节点自带一份视觉配置
+    // --- 拓扑树 ---
+    std::vector<uint32_t> parents;
+    std::vector<uint32_t> children;
 
-    // 拓扑
-    uint32_t rank{0};
-    std::vector<uint32_t> parents{};
-    std::vector<uint32_t> children{};
-    bool is_in_bucket = false;            // 标记当前是否已挂载到 buckets_all 中
+    // --- 桶索引 (物理索引) ---
+    uint32_t prev_in_bucket = NULL_ID;
+    uint32_t next_in_bucket = NULL_ID;
 
-
-    uint32_t prev_in_bucket = 0xFFFFFFFF;
-    uint32_t next_in_bucket = 0xFFFFFFFF;
-
-    // 逻辑判定位
-    bool is_heuristic = false;
-
-
-    bool active = true;
-    bool is_visible = true;
-
-
-
-
-
-
-    // 显存/范围管理 (用于传给 plotCall)
-    uint32_t buffer_offset = 0;
-    uint32_t current_point_count = 0;
-    uint32_t last_update_frame = 0;
-
-
-    // 数据变体
-    using GeoPayload = std::variant<
-        std::monostate,
-        Data_Point,             // 自由点、中点、计算后的最终坐标
-        Data_ConstrainedPoint,  // 约束点逻辑
-        Data_IntersectionPoint, // 交点逻辑
-        Data_Line,              // 直线逻辑
-        Data_CalculatedLine,    // ★ 新增：直接存坐标的线 (新)
-        Data_Circle,            // 圆逻辑
-        Data_SingleRPN,         // 函数
-        Data_DualRPN,           // 参数方程
-        Data_Scalar,             // 标量
-        Data_AnalyticalIntersection,
-        Data_AnalyticalConstrainedPoint,
-        Data_RatioPoint,
-        Data_TextLabel
-    >;
-
-    GeoPayload data;
-    SolverFunc solver = nullptr;
-
-    GeoNode() = default;
-    explicit GeoNode(uint32_t _id) : id(_id) {}
-
-    // 类型安全检查辅助
-    [[nodiscard]] bool check_parent_type(const std::vector<GeoNode>& pool, size_t parent_idx, RenderType expected) const {
-        if (parent_idx >= parents.size()) return false;
-        return pool[parents[parent_idx]].render_type == expected;
-    }
-    using RenderTaskFunc = void(*)(GeoNode&, const std::vector<GeoNode>&, const ViewState&, const NDCMap&, oneapi::tbb::concurrent_bounded_queue<FunctionResult>&);
+    // --- 行为挂载 ---
+    SolverFunc     solver = nullptr;
     RenderTaskFunc render_task = nullptr;
 
+    // --- 状态与缓存属性 ---
+    uint32_t buffer_offset = 0;
+    uint32_t current_point_count = 0;
+    bool     active = false;
+    bool     is_in_bucket = false;
+
+    // --- 构造函数 ---
+    GeoNode() { result.reset(); }
+    explicit GeoNode(uint32_t _id) : id(_id) { result.reset(); }
+
+    // --- 辅助工具 ---
+    static constexpr uint32_t PackRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) {
+        return (static_cast<uint32_t>(r) << 24) | (static_cast<uint32_t>(g) << 16) |
+               (static_cast<uint32_t>(b) << 8)  | (static_cast<uint32_t>(a));
+    }
+
+    FORCE_INLINE const ComputedResult& get_parent_res(const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, uint32_t p_idx) const {
+        return pool[lut[parents[p_idx]]].result;
+    }
 };
 
+// =========================================================
+// 5. 几何图管理核心 (GeometryGraph)
+// =========================================================
 class GeometryGraph {
 public:
-    // 命名计数器，记录当前已分配了多少个自动生成的名称
+    ViewState view;
+
+    std::vector<uint32_t> m_pending_seeds;
+    void mark_as_seed(uint32_t id) {
+        // 使用简单的 push_back，FastScan 内部会处理重复
+        m_pending_seeds.push_back(id);
+    }
+    std::vector<GeoNode> node_pool;
+    std::vector<int32_t> id_to_index_table;
+    std::atomic<uint32_t> id_generator;
+
     uint32_t next_name_index = 0;
+    std::unordered_map<std::string, uint32_t> name_to_id_map;
 
-    // 每一层只存储链表头部的 ID
     std::vector<uint32_t> buckets_all_heads;
-
-    // 位图：记录哪些 Rank 是非空的
     std::vector<uint64_t> active_ranks_mask;
+    uint32_t max_graph_rank = 0;
 
-
-    void MoveNodeInBuckets(uint32_t id, uint32_t new_rank);
-
-
-
-
-
-    std::string GenerateNextName();
-    std::vector<GeoNode> node_pool{};
-    std::vector<std::vector<uint32_t>> buckets{};
-    uint32_t current_frame_index = 1;
-    uint32_t min_dirty_rank = 10000, max_dirty_rank = 0;
     std::vector<uint8_t> m_dirty_mask;
 
-    uint32_t max_graph_rank = 0; // 记录当前图中最大的 Rank 级别
-
-
     GeometryGraph();
+
     uint32_t allocate_node();
+    void physical_delete(uint32_t id);
 
-    [[nodiscard("必须检查循环依赖，否则 SolveFrame 会崩溃！")]] bool DetectCycle(uint32_t child_id, uint32_t parent_id) const;
+    FORCE_INLINE bool is_alive(uint32_t id) const {
+        return id < id_to_index_table.size() && id_to_index_table[id] != -1;
+    }
 
-    void UpdateRankRecursive(uint32_t node_id);
-    void DetachFromBucket(uint32_t id);
-    std::vector<uint32_t> FastScan(const std::vector<uint32_t>& moved_ids);
+    FORCE_INLINE GeoNode& get_node_by_id(uint32_t id) {
+        return node_pool[id_to_index_table[id]];
+    }
+    FORCE_INLINE const GeoNode& get_node_by_id(uint32_t id) const {
+        return node_pool[id_to_index_table[id]];
+    }
+
+    std::string GenerateNextName();
+    void RegisterNodeName(const std::string& name, uint32_t id);
+    void UnregisterNodeName(const std::string& name);
+    uint32_t GetNodeID(const std::string& name) const;
+
     void LinkAndRank(uint32_t child_id, const std::vector<uint32_t>& new_parent_ids);
+    void DetachFromBucket(uint32_t id);
+    void MoveNodeInBuckets(uint32_t id, uint32_t new_rank);
+    void UpdateRankRecursive(uint32_t start_node_id);
+
+    [[nodiscard]] bool DetectCycle(uint32_t child_id, uint32_t parent_id) const;
+    std::vector<uint32_t> FastScan();
 
 private:
     void UpdateBit(uint32_t rank, bool has_elements);
+    void update_mapping_after_erase(size_t start_index);
 };
 
-#endif
+#endif // GEOGRAPH_H

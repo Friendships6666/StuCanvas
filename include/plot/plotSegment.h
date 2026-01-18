@@ -8,26 +8,7 @@
 #include "../functions/lerp.h" // 引入 NDCMap 定义
 #include <oneapi/tbb/concurrent_queue.h>
 
-/**
- * @brief 特化两点连线绘制器 (线段 / 直线)
- *
- * 技术栈：
- * - 算法: Liang-Barsky 参数化裁剪
- * - 并行: TBB parallel_invoke (水平/垂直裁剪并行)
- * - SIMD: 强制 SIMD128 (Batch=2)
- * - 输出: Clip Space (NDC) Float32
- *
- * @param results_queue 结果队列
- * @param x1, y1 起点 (世界坐标)
- * @param x2, y2 终点 (世界坐标)
- * @param is_segment true=线段(0<=t<=1), false=直线(t无限)
- * @param func_idx 函数索引
- * @param world_origin 视口原点
- * @param wppx, wppy 世界/像素比例
- * @param screen_width, screen_height 屏幕尺寸
- * @param offset_x, offset_y (已废弃，保留接口兼容)
- * @param ndc_map NDC 映射参数 (用于将骨架点转为 Clip 坐标)
- */
+
 void process_two_point_line(
     oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
     double x1, double y1, double x2, double y2,
@@ -36,7 +17,7 @@ void process_two_point_line(
     const Vec2& world_origin,
     double wppx, double wppy,
     double screen_width, double screen_height,
-    double offset_x, double offset_y, // 必须有这两个 double
+    double offset_x, double offset_y, // 对应头文件签名
     const NDCMap& ndc_map
 );
 
