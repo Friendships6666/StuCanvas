@@ -56,18 +56,7 @@ inline std::vector<PointData> wasm_final_contiguous_buffer;
 inline std::vector<FunctionRange> wasm_function_ranges_buffer;
 
 
-// 视图状态定义
-struct ViewState {
-    double screen_width;
-    double screen_height;
-    double offset_x;
-    double offset_y;
-    double zoom;
-    Vec2 world_origin;
-    double wppx;
-    double wppy;
-};
-inline ViewState g_global_view_state;
+
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

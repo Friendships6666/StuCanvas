@@ -16,7 +16,7 @@
 #include "../../pch.h"
 #include "../CAS/RPN/RPN.h"
 #include "../CAS/RPN/ShuntingYard.h"
-#include "../functions/lerp.h"
+
 
 // =========================================================
 // 1. 基础宏与常量定义
@@ -38,8 +38,36 @@ struct ViewState;
 struct NDCMap;
 struct FunctionResult;
 
+
+struct alignas(64) ViewState {
+    double offset_x = 0.0;
+    double offset_y = 0.0;
+    double zoom = 0.1;
+    double screen_width = 1920.0;
+    double screen_height = 1080.0;
+    double wppx = 0.0;
+    double wppy = 0.0;
+    Vec2   world_origin = {0.0, 0.0};
+
+    // ---------------------------------------------------------
+    // C++23 极致性能比对函数
+    // ---------------------------------------------------------
+    FORCE_INLINE bool is_different_from(const ViewState& other) const noexcept {
+        // 在 Clang 21 开启 -O3 时，对于这种对齐的固定大小结构体，
+        // std::memcmp 会被编译器直接内联为 2-4 条连续的 SIMD 比较指令（如 VPCMPEQQ）。
+        // 它的速度比逐个字段判断快一个量级，且能捕获任何细微的位变动。
+        return std::memcmp(this, &other, sizeof(ViewState)) != 0;
+    }
+
+    // 提供一个快速拷贝函数用于 Ping-Pong 切换
+    FORCE_INLINE void copy_from(const ViewState& other) noexcept {
+        std::memcpy(this, &other, sizeof(ViewState));
+    }
+};
+
+
 // 统一函数指针签名
-using SolverFunc = void(*)(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
+using SolverFunc = void(*)(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
 using RenderTaskFunc = void(*)(
     GeoNode& self,
     const std::vector<GeoNode>& pool,
@@ -194,7 +222,8 @@ struct GeoNode {
 // =========================================================
 class GeometryGraph {
 public:
-    ViewState view;
+    ViewState view;          // 当前活跃视口 (由 JS/Factory 修改)
+    ViewState m_last_view;   // 上一帧计算后的视口备份
 
     std::vector<uint32_t> m_pending_seeds;
     void mark_as_seed(uint32_t id) {
@@ -240,8 +269,19 @@ public:
     void MoveNodeInBuckets(uint32_t id, uint32_t new_rank);
     void UpdateRankRecursive(uint32_t start_node_id);
 
+    FORCE_INLINE bool detect_view_change() const {
+        return view.is_different_from(m_last_view);
+    }
+
+
+    FORCE_INLINE void sync_view_snapshot() {
+        m_last_view.copy_from(view);
+    }
+
     [[nodiscard]] bool DetectCycle(uint32_t child_id, uint32_t parent_id) const;
     std::vector<uint32_t> FastScan();
+
+
 
 private:
     void UpdateBit(uint32_t rank, bool has_elements);

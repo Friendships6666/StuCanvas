@@ -29,8 +29,7 @@ set(SOURCE_FILES
         src/plot/plotExplicit.cpp
         include/plot/plotImplicit.h
         src/plot/plotImplicit.cpp
-        include/plot/plotParametric.h
-        src/plot/plotParametric.cpp
+
         include/plot/plotSegment.h
         src/plot/plotSegment.cpp
         include/plot/plotCircle.h

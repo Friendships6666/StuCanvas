@@ -4,9 +4,10 @@
 
 #include "GeoGraph.h"
 #include "../../pch.h"
-void Solver_ScalarRPN(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
-void Solver_StandardLine(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
-void Solver_StandardPoint(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
-void Solver_Midpoint(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
-void Solver_ConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
+#include "../include/functions/lerp.h"
+void Solver_ScalarRPN(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
+void Solver_StandardLine(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
+void Solver_StandardPoint(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
+void Solver_Midpoint(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
+void Solver_ConstrainedPoint(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
 #endif // GEOSOLVER_H

@@ -30,7 +30,7 @@ namespace {
 // =========================================================
 // 1. RPN 标量求解器 (补丁填充 + 数值计算)
 // =========================================================
-void Solver_ScalarRPN(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
+void Solver_ScalarRPN(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
     auto& res = self.result;
     if (!res.bytecode_ptr) return;
 
@@ -71,7 +71,7 @@ void Solver_ScalarRPN(GeoNode& self, const std::vector<GeoNode>& pool, const std
 // =========================================================
 // 2. 标准点求解器 (由 X, Y 标量合成)
 // =========================================================
-void Solver_StandardPoint(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
+void Solver_StandardPoint(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
     const auto& res_x = get_parent_res(pool, lut, self.parents[0]);
     const auto& res_y = get_parent_res(pool, lut, self.parents[1]);
 
@@ -87,7 +87,7 @@ void Solver_StandardPoint(GeoNode& self, const std::vector<GeoNode>& pool, const
 // =========================================================
 // 3. 中点求解器
 // =========================================================
-void Solver_Midpoint(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
+void Solver_Midpoint(GeoNode& self,std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
     const auto& p1 = get_parent_res(pool, lut, self.parents[0]);
     const auto& p2 = get_parent_res(pool, lut, self.parents[1]);
 
@@ -100,62 +100,89 @@ void Solver_Midpoint(GeoNode& self, const std::vector<GeoNode>& pool, const std:
     }
 }
 
-// =========================================================
-// 4. 约束点求解器 (图解吸附：Heuristic)
-// =========================================================
-void Solver_ConstrainedPoint(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
-    // 预检：父母（目标曲线、锚点X、锚点Y）必须全部有效
+
+void Solver_ConstrainedPoint(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
+    // 1. 预检
     if (!are_parents_valid(self, pool, lut)) {
         self.result.set_f(ComputedResult::VALID, false);
         return;
     }
 
-    // target_id 存储在 i0 中
-    const auto& target = pool[lut[static_cast<uint32_t>(self.result.i0)]];
-    const auto& anchor_x = get_parent_res(pool, lut, self.parents[1]);
-    const auto& anchor_y = get_parent_res(pool, lut, self.parents[2]);
+    // 2. 获取依赖项引用
+    const uint32_t target_id = static_cast<uint32_t>(self.result.i0);
+    const auto& target = pool[lut[target_id]];
+    auto& ax_node = pool[lut[self.parents[1]]];
+    auto& ay_node = pool[lut[self.parents[2]]];
 
-    // 如果目标对象本帧没有采样数据（例如无效的隐函数），无法吸附
     if (target.current_point_count == 0) {
         self.result.set_f(ComputedResult::VALID, false);
         return;
     }
 
-    // 构建 NDC 映射用于像素空间比对（利用参数 view）
-    NDCMap ndc_map = BuildNDCMap(view);
+    // 3. 准备空间转换参数 (Double 精度)
+    NDCMap m = BuildNDCMap(view);
 
-    double min_dist_sq = std::numeric_limits<double>::max();
-    double best_x = 0, best_y = 0;
+    // =========================================================
+    // 4. 空间转换：世界坐标 $W_a$ -> 裁剪空间 $C_a$ (Float)
+    // =========================================================
+    // 从父标量中取出存储的世界坐标锚点
+    double world_anchor_x = ax_node.result.s0;
+    double world_anchor_y = ay_node.result.s0;
+
+    // 转换为 Float 精度，以便与 wasm_final_contiguous_buffer 里的 PointData 对齐
+    float clip_anchor_x = static_cast<float>((world_anchor_x - m.center_x) * m.scale_x);
+    float clip_anchor_y = -static_cast<float>((world_anchor_y - m.center_y) * m.scale_y);
+
+    // =========================================================
+    // 5. 裁剪空间搜索：寻找离当前显示最近的像素点
+    // =========================================================
+    float min_dist_sq = std::numeric_limits<float>::max();
+    float best_clip_x = clip_anchor_x;
+    float best_clip_y = clip_anchor_y;
 
     uint32_t start = target.buffer_offset;
     uint32_t end = start + target.current_point_count;
 
-    // 在父对象的采样 Buffer 中执行暴力搜索 (Hot Path)
     for (uint32_t i = start; i < end; ++i) {
         const auto& pt = wasm_final_contiguous_buffer[i];
 
-        // 此处对比逻辑：计算采样点与锚点的欧氏距离平方
-        double dx = (double)pt.position.x - anchor_x.s0;
-        double dy = (double)pt.position.y - anchor_y.s0;
-        double d2 = dx * dx + dy * dy;
+        // 在 Float 精度下的裁剪空间进行欧氏距离比对
+        float dx = pt.position.x - clip_anchor_x;
+        float dy = pt.position.y - clip_anchor_y;
+        float d2 = dx * dx + dy * dy;
 
         if (d2 < min_dist_sq) {
             min_dist_sq = d2;
-            best_x = (double)pt.position.x;
-            best_y = (double)pt.position.y;
+            best_clip_x = pt.position.x;
+            best_clip_y = pt.position.y;
         }
     }
 
-    // 更新结果坐标
-    self.result.x = best_x;
-    self.result.y = best_y;
+    // =========================================================
+    // 6. 逆向转换：最佳裁剪点 $C_{best}$ -> 新世界坐标 $W_{new}$
+    // =========================================================
+    // 利用当前视图参数，将选中的那个像素点还原为真实的数学坐标
+    double world_new_x = m.center_x + static_cast<double>(best_clip_x) / m.scale_x;
+    double world_new_y = m.center_y - static_cast<double>(best_clip_y) / m.scale_y;
+
+    // =========================================================
+    // 7. 同步与回馈 (Ping-Pong)
+    // =========================================================
+    // A. 更新本节点的当前坐标（用于渲染投影）
+    self.result.x = world_new_x;
+    self.result.y = world_new_y;
     self.result.set_f(ComputedResult::VALID, true);
+
+    // B. 写回父节点：更新“世界坐标锚点”
+    // 这样下次 Solver 运行时，会从这个“上一次最接近点”的世界坐标开始重新投影和搜索
+    ax_node.result.s0 = world_new_x;
+    ay_node.result.s0 = world_new_y;
 }
 
 // =========================================================
 // 5. 标准线段/直线求解器
 // =========================================================
-void Solver_StandardLine(GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
+void Solver_StandardLine(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
     auto& res = self.result;
 
     const auto& p1_res = get_parent_res(pool, lut, self.parents[0]);

@@ -42,9 +42,7 @@ namespace {
 // =========================================================
 
 GeometryGraph::GeometryGraph() : id_generator(1) {
-    view.screen_width = 1920;
-    view.screen_height = 1080;
-    view.zoom = 0.1;
+    m_last_view.zoom = -1.0;
     // 构造函数逻辑，确保在头文件中没有重复定义
     buckets_all_heads.resize(128, NULL_ID);
     active_ranks_mask.resize(2, 0);
@@ -193,7 +191,7 @@ std::vector<uint32_t> GeometryGraph::FastScan() {
     if (m_dirty_mask.size() < max_id) {
         m_dirty_mask.resize(max_id + 128, 0);
     }
-    std::fill(m_dirty_mask.begin(), m_dirty_mask.end(), 0);
+    std::ranges::fill(m_dirty_mask, 0);
 
     std::vector<uint32_t> targets;
     uint32_t min_rank_to_start = 0xFFFFFFFF;
@@ -249,6 +247,7 @@ std::vector<uint32_t> GeometryGraph::FastScan() {
             mask &= ~(1ULL << r_offset);
         }
     }
+    std::ranges::sort(targets);
 
     return targets;
 }
