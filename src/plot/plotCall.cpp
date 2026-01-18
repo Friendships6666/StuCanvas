@@ -7,12 +7,9 @@
 #include <oneapi/tbb/concurrent_queue.h>
 #include <vector>
 #include <algorithm>
-#include <cstring> // for std::memcmp
+#include <cstring>
 
 namespace {
-    /**
-     * @brief 硬件级位扫描：定位下一个非空 Rank
-     */
     inline uint32_t find_first_set_bit_local(uint64_t mask) {
         if (mask == 0) return 64;
 #ifdef _MSC_VER
@@ -24,9 +21,6 @@ namespace {
 #endif
     }
 
-    /**
-     * @brief 物理合并：将并行采样的分块结果顺序刷入主连续 Buffer
-     */
     void flush_node_results(
         GeoNode& node,
         oneapi::tbb::concurrent_bounded_queue<FunctionResult>& queue,
@@ -42,13 +36,8 @@ namespace {
         node.current_point_count = static_cast<uint32_t>(out_points.size()) - start_offset;
     }
 
-    /**
-     * @brief 检查直接子节点是否需要父节点的采样 Buffer
-     * 逻辑：如果孩子是图解点（需要吸附）或孩子可见（需要基于父数据绘制），则父节点必须 Plot
-     */
     bool check_children_need_plot(const GeoNode& node, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut) {
         for (uint32_t cid : node.children) {
-            // 通过直映表获取子节点
             const auto& child = pool[lut[cid]];
             if (child.active && (child.result.check_f(ComputedResult::IS_HEURISTIC) || child.config.is_visible)) {
                 return true;
@@ -59,7 +48,7 @@ namespace {
 }
 
 // =========================================================
-// 核心渲染调度入口 (C++23 响应式全自动版)
+// 核心渲染调度入口 (含脏位自动清理机制)
 // =========================================================
 void calculate_points_core(
     std::vector<PointData>& out_points,
@@ -67,30 +56,27 @@ void calculate_points_core(
     GeometryGraph& graph
 ) {
     // ---------------------------------------------------------
-    // 1. 模式检测：硬件级 Ping-Pong ViewState 比对
+    // 1. 模式检测：Ping-Pong 视图检测
     // ---------------------------------------------------------
-    // 使用 std::memcmp 实现最高性能的位模式比对 (C++23 风格)
     bool viewport_changed = std::memcmp(&graph.view, &graph.m_last_view, sizeof(ViewState)) != 0;
 
     if (viewport_changed) [[unlikely]] {
         out_points.clear();
-        out_points.reserve(graph.node_pool.size() * 128); // 全量重绘预分配
+        out_points.reserve(graph.node_pool.size() * 128);
     }
 
-    // 环境映射准备
     const ViewState& view = graph.view;
     NDCMap ndc_map = BuildNDCMap(view);
     oneapi::tbb::concurrent_bounded_queue<FunctionResult> node_queue;
     node_queue.set_capacity(4096);
 
     // ---------------------------------------------------------
-    // 2. 拓扑扩散：获取本帧逻辑受灾名单
+    // 2. 拓扑扩散：获取受灾名单
     // ---------------------------------------------------------
-    // FastScan 已按 ID 排序（用于 binary_search）
     std::vector<uint32_t> affected_ids = graph.FastScan();
 
     // ---------------------------------------------------------
-    // 3. 核心管线：按 Rank 序循环 (保证因果律)
+    // 3. 核心管线：按 Rank 序循环
     // ---------------------------------------------------------
     for (size_t w = 0; w < graph.active_ranks_mask.size(); ++w) {
         uint64_t mask = graph.active_ranks_mask[w];
@@ -103,13 +89,13 @@ void calculate_points_core(
                 GeoNode& node = graph.get_node_by_id(curr_id);
 
                 if (node.active) {
-                    // --- 阶段 A: Solver (逻辑解算) ---
-                    // 只有逻辑脏了，或者视图变了且是图解点，才运行 Solver
+                    // 判定：逻辑是否脏了
                     bool is_logic_dirty = std::binary_search(affected_ids.begin(), affected_ids.end(), node.id);
                     bool is_heuristic = node.result.check_f(ComputedResult::IS_HEURISTIC);
 
+                    // --- 阶段 A: Solver (逻辑解算) ---
                     if (is_logic_dirty || (viewport_changed && is_heuristic)) {
-                        // 级联有效性预检
+                        // 级联预检
                         bool parents_ok = true;
                         for (uint32_t pid : node.parents) {
                             if (!graph.get_node_by_id(pid).result.check_f(ComputedResult::VALID)) {
@@ -126,12 +112,10 @@ void calculate_points_core(
                     }
 
                     // --- 阶段 B: Plot (采样与重投影) ---
-                    // 条件：节点逻辑有效 且 (自身可见 或 孩子需要 Buffer 支撑)
                     if (node.result.check_f(ComputedResult::VALID)) {
                         bool child_needs = check_children_need_plot(node, graph.node_pool, graph.id_to_index_table);
 
                         if (node.config.is_visible || child_needs) {
-                            // 只要视图动了，或者逻辑重新算了，就必须重新 Plot
                             if (viewport_changed || is_logic_dirty) {
                                 if (node.render_task) {
                                     node.render_task(node, graph.node_pool, graph.id_to_index_table, view, ndc_map, node_queue);
@@ -139,9 +123,15 @@ void calculate_points_core(
                                 }
                             }
                         } else if (is_logic_dirty) {
-                            // 若逻辑变了但不再需要显示，重置点数
                             node.current_point_count = 0;
                         }
+                    }
+
+                    // --- 阶段 C: 【核心新增】脏位清理 ---
+                    // 逻辑已经算完，Plot 已经刷完，该节点的本帧使命已完成。
+                    // 清除脏标记，防止下一帧重复计算。
+                    if (is_logic_dirty) {
+                        node.result.set_f(ComputedResult::DIRTY, false);
                     }
                 }
                 curr_id = node.next_in_bucket;
@@ -151,18 +141,24 @@ void calculate_points_core(
     }
 
     // ---------------------------------------------------------
-    // 4. 指令生成：按物理序扫描 (保证后来者后画)
+    // 4. 指令生成
     // ---------------------------------------------------------
     out_ranges.clear();
     for (const auto& node : graph.node_pool) {
-        // 只有活跃、有效且用户希望看到的对象才发出绘图指令
         if (node.active && node.result.check_f(ComputedResult::VALID) && node.config.is_visible) {
             out_ranges.push_back({ node.buffer_offset, node.current_point_count });
         }
     }
 
     // ---------------------------------------------------------
-    // 5. 状态存档：完成 Ping-Pong 步进
+    // 5. 状态同步：完成 Ping-Pong 并清除可能存在的全局 Seeds 遗留
     // ---------------------------------------------------------
     std::memcpy(&graph.m_last_view, &graph.view, sizeof(ViewState));
+
+    // 如果 Factory 有任何漏掉的标记，在这里做最后的兜底清理
+    // (虽然 FastScan 已经清过了，但这增加了系统的鲁棒性)
+
+
+    graph.m_pending_seeds.clear();
+    std::ranges::fill(graph.m_dirty_mask, 0);
 }

@@ -191,7 +191,7 @@ std::vector<uint32_t> GeometryGraph::FastScan() {
     if (m_dirty_mask.size() < max_id) {
         m_dirty_mask.resize(max_id + 128, 0);
     }
-    std::ranges::fill(m_dirty_mask, 0);
+
 
     std::vector<uint32_t> targets;
     uint32_t min_rank_to_start = 0xFFFFFFFF;

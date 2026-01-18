@@ -47,6 +47,8 @@ set(SOURCE_FILES
 
         include/CAS/RPN/ShuntingYard.h
         src/CAS/RPN/ShuntingYard.cpp
+        src/graph/GeoCommands.cpp
+        include/graph/GeoCommands.h
 
 )
 
