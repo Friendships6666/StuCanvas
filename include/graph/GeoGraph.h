@@ -15,15 +15,13 @@
 
 #include "../../pch.h"
 #include "../CAS/RPN/RPN.h"
-#include "../CAS/RPN/ShuntingYard.h"
 
+#include "../graph/GeoCommands.h"
 
 // =========================================================
 // 1. 基础宏与常量定义
 // =========================================================
-#ifndef NULL_ID
-#define NULL_ID 0xFFFFFFFF
-#endif
+
 
 #ifndef FORCE_INLINE
 #if defined(_MSC_VER)
@@ -40,46 +38,48 @@ struct FunctionResult;
 
 
 struct alignas(64) ViewState {
+    // --- 1. 基础配置 (由外部 JS/UI 修改) ---
     double offset_x = 0.0;
     double offset_y = 0.0;
     double zoom = 0.1;
-    double screen_width = 1920.0;
-    double screen_height = 1080.0;
+    double screen_width = 2560;
+    double screen_height = 1600;
+
+    // --- 2. 派生参数 (由 RefreshViewState 统一计算) ---
     double wppx = 0.0;
     double wppy = 0.0;
-    Vec2   world_origin = {0.0, 0.0};
+    Vec2   world_origin = {0.0, 0.0}; // 屏幕左上角
 
-    // ---------------------------------------------------------
-    // C++23 极致性能比对函数
-    // ---------------------------------------------------------
-    FORCE_INLINE bool is_different_from(const ViewState& other) const noexcept {
-        // 在 Clang 21 开启 -O3 时，对于这种对齐的固定大小结构体，
-        // std::memcmp 会被编译器直接内联为 2-4 条连续的 SIMD 比较指令（如 VPCMPEQQ）。
-        // 它的速度比逐个字段判断快一个量级，且能捕获任何细微的位变动。
-        return std::memcmp(this, &other, sizeof(ViewState)) != 0;
-    }
+    // --- 💡 吸收 NDCMap 的投影参数 ---
+    // center_x/y 直接复用 offset_x/y，无需额外字段
+    double ndc_scale_x = 0.0; // 对应之前的 scale_x
+    double ndc_scale_y = 0.0; // 对应之前的 scale_y
 
-    // 提供一个快速拷贝函数用于 Ping-Pong 切换
+    // --- 辅助函数 ---
     FORCE_INLINE void copy_from(const ViewState& other) noexcept {
         std::memcpy(this, &other, sizeof(ViewState));
+    }
+
+    FORCE_INLINE bool is_different_from(const ViewState& other) const noexcept {
+        return std::memcmp(this, &other, sizeof(ViewState)) != 0;
     }
 };
 
 
 // 统一函数指针签名
-using SolverFunc = void(*)(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view);
+using SolverFunc = void(*)(GeoNode& self, GeometryGraph& graph);
 using RenderTaskFunc = void(*)(
     GeoNode& self,
-    const std::vector<GeoNode>& pool,
-    const std::vector<int32_t>& id_map, // <--- 新增此参数
-    const ViewState& v,
+    GeometryGraph& graph,
     const NDCMap& m,
     oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q
 );
 
-// =========================================================
-// 2. 运行时补丁结构 (Resolved IDs)
-// =========================================================
+namespace CAS::Parser {
+    // 💡 正确的前向声明方式：必须指定底层类型 (例如 : uint8_t)
+    enum class CustomFunctionType : uint8_t;
+}
+
 struct RuntimeBindingSlot {
     size_t rpn_index;                          // Bytecode 数组中的下标
     CAS::Parser::CustomFunctionType func_type; // 函数类型 (NONE 代表普通变量)
@@ -90,76 +90,216 @@ struct RuntimeBindingSlot {
 // 3. 大一统结果与逻辑槽位 (Fat Slot)
 // =========================================================
 struct alignas(64) ComputedResult {
-    // --- 物理数据区 (32 字节) ---
     union {
-        // 通用标量/坐标槽
-        struct { double s0, s1, s2, s3; };
-        // 几何语义：点(x,y) | 圆(cx,cy,cr) | 线(x1,y1,x2,y2)
-        struct { double x, y, z, w; };
-        struct { double cx, cy, cr, angle; };
-        struct { double x1, y1, x2, y2; };
-        // 数学语义：复数 | 测量值
-        struct { double re, im, mag, phase; };
-        struct { double area, length, slope, val; };
+        // --- 语义层 1：纯数学/标量模式 (Calculator Mode) ---
+        // 用于非几何节点，如 "2+2" 的结果存储。s4-s6 为以后扩展留出的标量槽。
+        struct { double s0, s1, s2, s3, s4, s5, s6; };
+
+        // --- 语义层 2：几何点模式 (World + View Space) ---
+        struct {
+            // A. 原始世界坐标 (World Space)
+            // 保持 x,y,z,w 命名，兼容旧的 ExtractX/Y 函数及所有拓扑逻辑
+            double x, y, z, w;
+
+            // B. 相对视口坐标 (View/Relative Space)
+            // 存储 (World - ViewOffset)，解决大数值坐标下的渲染抖动与精度丢失
+            double x_view, y_view;
+
+            // C. 几何备用槽位 1
+            double spare_geo_0;
+        };
+
+        // --- 语义层 3：圆与圆锥曲线 ---
+        struct {
+            double cx, cy, cr, angle; // 世界空间
+            double cx_view, cy_view;  // 视口空间
+            double spare_conic_0;
+        };
+
+        // --- 语义层 4：线段与向量 ---
+        struct {
+            double x1, y1, x2, y2;    // 世界空间
+            double x1_view, y1_view;  // 视口空间
+            double spare_line_0;
+        };
+
+        // 占位填充：确保 Union 部分占用 56 字节 (7个double)
+        double _raw_data[7];
     };
 
-    // --- RPN 逻辑层 (16 字节) ---
-    RPNToken*           bytecode_ptr = nullptr;
-    RuntimeBindingSlot* patch_ptr = nullptr;
-    uint32_t            bytecode_len = 0;
-    uint32_t            patch_len = 0;
-
-    // --- 状态与元数据 (16 字节) ---
-    uint32_t flags = 0;
-    int32_t  i0 = 0, i1 = 0, i2 = 0;
+    // --- 状态与元数据 (占据最后 8 字节，凑齐 64 字节) ---
+    // 56 (数据) + 4 (flags) + 4 (i0) = 64 Bytes
+    uint32_t flags;
+    int32_t  i0;    // 备用整数槽位 (如：存储约束点的目标ID)
 
     enum FlagMask : uint32_t {
-        VALID        = 1 << 0,
-        VISIBLE      = 1 << 1,
-        DIRTY        = 1 << 2,
-        IS_INFINITE  = 1 << 3,
-        IS_HEURISTIC = 1 << 4,
-        SELECTED     = 1 << 5
+        VISIBLE      = 1 << 0,
+        DIRTY        = 1 << 1,
+        IS_INFINITE  = 1 << 2,
+        IS_HEURISTIC = 1 << 3,
+        SELECTED     = 1 << 4
     };
+
+    // --- 极致性能工具函数 ---
 
     FORCE_INLINE void set_f(uint32_t mask, bool val) {
         if (val) flags |= mask;
-        else flags &= ~mask;
+        else     flags &= ~mask;
     }
+
     FORCE_INLINE bool check_f(uint32_t mask) const {
         return (flags & mask) != 0;
     }
-    FORCE_INLINE void reset() {
-        std::memset(this, 0, sizeof(ComputedResult));
+
+    /**
+     * @brief 仅重置数值区 (32-56字节)，不触动元数据
+     */
+    FORCE_INLINE void reset_data() {
+        // 使用高效的内存归零
+        std::memset(&_raw_data, 0, 56);
     }
 
-    template<int N> FORCE_INLINE double& get() {
-        static_assert(N >= 0 && N < 4, "Slot index range 0-3");
-        return *(&s0 + N);
+    /**
+     * @brief 彻底重置所有 64 字节（物理清零）
+     */
+    FORCE_INLINE void reset_all() {
+        std::memset(this, 0, 64);
     }
-    template<int N> FORCE_INLINE const double& get() const {
-        return *(&s0 + N);
+
+    // 快捷索引访问
+    template<int N> FORCE_INLINE double& get() {
+        static_assert(N >= 0 && N < 7, "Slot index out of range (0-6)");
+        return _raw_data[N];
     }
 };
 
-// =========================================================
-// 4. 几何节点 (Fat Entity)
-// =========================================================
+namespace GeoType {
+    enum Type : uint32_t {
+        MASK_CAT         = 0xFF00,
+
+        // --- 1. 点类 (CAT_POINT) ---
+        CAT_POINT        = 0x0100,
+        POINT_FREE       = 0x0101,
+        POINT_CONSTRAINED= 0x0102,
+        POINT_INTERSECT  = 0x0103,
+        POINT_MID        = 0x0104,
+
+        // --- 2. 线类 (CAT_LINE) ---
+        CAT_LINE         = 0x0200,
+        LINE_SEGMENT     = 0x0201,
+        LINE_STRAIGHT    = 0x0202,
+        LINE_RAY         = 0x0203,
+        LINE_TANGENT     = 0x0204,
+        LINE_PERP        = 0x0205,
+        LINE_PARALLEL    = 0x0206,
+
+        // --- 3. 圆锥曲线类 (CAT_CONIC) ---
+        CAT_CONIC        = 0x0300,
+        CIRCLE_FULL      = 0x0301,
+        CIRCLE_ARC       = 0x0302,
+
+        // --- 4. 函数/高级曲线类 (CAT_CURVE) ---
+        CAT_CURVE        = 0x0400,
+        FUNC_EXPLICIT    = 0x0401,
+        FUNC_IMPLICIT    = 0x0402,
+        FUNC_PARAMETRIC  = 0x0403,
+
+        // --- 5. 标量/测量类 (CAT_SCALAR) ---
+        CAT_SCALAR       = 0x0500,
+        SCALAR_INTERNAL  = 0x0501,
+        SCALAR_MEASURE   = 0x0502,
+
+        UNKNOWN          = 0x0000
+    };
+
+    // 聚合判断辅助
+    FORCE_INLINE inline bool is_point(uint32_t t)  { return (t & MASK_CAT) == CAT_POINT; }
+    FORCE_INLINE inline bool is_line(uint32_t t)   { return (t & MASK_CAT) == CAT_LINE; }
+    FORCE_INLINE inline bool is_conic(uint32_t t)  { return (t & MASK_CAT) == CAT_CONIC; }
+    FORCE_INLINE inline bool is_curve(uint32_t t)  { return (t & MASK_CAT) == CAT_CURVE; }
+    FORCE_INLINE inline bool is_scalar(uint32_t t) { return (t & MASK_CAT) == CAT_SCALAR; }
+}
+// --- include/graph/GeoGraph.h ---
+
+namespace GeoStatus {
+    enum Code : uint32_t {
+        VALID            = 0,          // 完美状态
+
+        // --- 类别掩码 ---
+        MASK_CAT         = 0xF000,
+        CAT_LINK         = 0x1000,     // 链接/创建错误 (硬伤)
+        CAT_MATH         = 0x2000,     // 数学计算错误 (运行时)
+        CAT_DEPENDENCY   = 0x4000,     // 依赖失效 (级联)
+
+        // --- 1. 链接错误 (Creation Time) ---
+        ERR_ID_NOT_FOUND = 0x1100,     // 找不到指定的父节点 ID
+        ERR_TYPE_MISMATCH= 0x1200,     // 类型不匹配（比如线段需要点，你传了函数）
+        ERR_SYNTAX       = 0x1300,     // 公式语法错误
+        ERR_CIRCULAR     = 0x1400,     // 循环引用检测
+
+        // --- 2. 数学错误 (Runtime) ---
+        ERR_DIV_ZERO     = 0x2100,     // 除以零
+        ERR_MATH_DOMAIN  = 0x2200,     // 数学定义域错误（负数开根号等）
+        ERR_OVERFLOW     = 0x2300,     // 数值溢出 (Infinity)
+        ERR_EMPTY_RESULT = 0x2400,     // 求解器无解（如两条平行线求交点）
+
+        // --- 3. 级联错误 (Propagation) ---
+        ERR_PARENT_INVALID = 0x4100,   // 因为父节点无效导致我也无法计算
+    };
+
+    // 💡 极其迅速的判断函数
+    FORCE_INLINE inline bool ok(uint32_t s) { return s == VALID; }
+}
+
+
+struct LogicChannel {
+    std::string original_infix;   // ASCIIMATH 源码
+    RPNToken*   bytecode_ptr = nullptr;
+    RuntimeBindingSlot* patch_ptr = nullptr;
+    uint32_t    bytecode_len = 0;
+    uint32_t    patch_len = 0;
+    double      value = 0.0;      // 计算出的实时数值
+
+    // 释放内存
+    FORCE_INLINE void clear() {
+        if (bytecode_ptr) {
+            delete[] bytecode_ptr;
+            bytecode_ptr = nullptr;
+        }
+        if (patch_ptr) {
+            delete[] patch_ptr;
+            patch_ptr = nullptr;
+        }
+        bytecode_len = 0;
+        patch_len = 0;
+        value = 0.0;
+        original_infix.clear(); // string 自带内存管理，这里只是清空内容
+    }
+};
+
 struct GeoNode {
+    uint64_t state_mask = 0;
+
+    FORCE_INLINE void set_state(uint64_t bit_index, bool val) {
+        if (val) state_mask |= (1ULL << bit_index);
+        else     state_mask &= ~(1ULL << bit_index);
+    }
+
+    FORCE_INLINE bool check_state(uint64_t bit_index) const {
+        return (state_mask & (1ULL << bit_index)) != 0;
+    }
+
+    FORCE_INLINE void toggle_state(uint64_t bit_index) {
+        state_mask ^= (1ULL << bit_index);
+    }
+
+
+    LogicChannel channels[4];
+
     /**
      * @brief 渲染类型枚举：决定了该节点在画面中如何呈现
      */
-    enum class RenderType : uint8_t {
-        None = 0,
-        Point,      // 自由点、中点、交点
-        Line,       // 直线、线段、射线
-        Circle,     // 圆、圆弧
-        Explicit,   // 显函数 y=f(x)
-        Implicit,   // 隐函数 F(x,y)=0
-        Parametric, // 参数方程 x=f(t), y=g(t)
-        Scalar,     // 纯数值(滑杆/中间计算)
-        Text        // 文字标签
-    };
+    GeoType::Type type = GeoType::UNKNOWN;
 
     /**
      * @brief 视觉配置：存储节点的静态样式信息
@@ -179,7 +319,13 @@ struct GeoNode {
     // --- 核心属性 ---
     uint32_t id = NULL_ID;
     uint32_t rank = 0;
-    RenderType render_type = RenderType::None;
+
+    uint32_t status = GeoStatus::VALID; // 💡 节点生命周期状态
+    FORCE_INLINE bool is_compute_ready() const {
+        // 只有没有链接错误的节点才值得进入 Solver
+        return (status & GeoStatus::MASK_CAT) != GeoStatus::CAT_LINK;
+    }
+
 
     ComputedResult result;  // 大一统计算槽位
     VisualConfig   config;  // 视觉样式配置
@@ -203,8 +349,28 @@ struct GeoNode {
     bool     is_in_bucket = false;
 
     // --- 构造函数 ---
-    GeoNode() { result.reset(); }
-    explicit GeoNode(uint32_t _id) : id(_id) { result.reset(); }
+    GeoNode()
+            : id(NULL_ID),
+              type(GeoType::UNKNOWN),
+              status(GeoStatus::VALID), // 默认状态为 OK (0)
+              active(false)             // 初始不激活
+        {
+        // 彻底清空大一统计算槽位（物理清零数据和 RPN 指令指针）
+        result.reset_all();
+        }
+
+    /**
+     * @brief 显式构造函数：用于 allocate_node 时的初始化
+     */
+    explicit GeoNode(uint32_t _id)
+        : id(_id),
+          type(GeoType::UNKNOWN),
+          status(GeoStatus::VALID),
+          active(false)
+    {
+        result.reset_all();
+    }
+
 
     // --- 辅助工具 ---
     static constexpr uint32_t PackRGBA(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) {
@@ -217,13 +383,38 @@ struct GeoNode {
     }
 };
 
-// =========================================================
-// 5. 几何图管理核心 (GeometryGraph)
-// =========================================================
+
+struct HistoryNode {
+    uint32_t id;
+    int32_t  parent_id = -1;
+    std::vector<GeoCommand::CommandPacket> recipe; // 完整状态配方
+    std::vector<uint32_t> children;                // 分支指向
+};
+namespace GraphStatus {
+    enum Code : uint32_t {
+        READY = 0,
+        ERR_OUT_OF_MEMORY = 0x5001, // 内存溢出
+        ERR_INTERNAL_HALT = 0x5002  // 内部严重错误中止
+    };
+}
 class GeometryGraph {
 public:
+    uint32_t status = GraphStatus::READY;
+
+    // 默认最大缓冲区设置为 1.7GB (约 1.7 * 1024^3 字节)
+    // 注意：PointData 约 12-16 字节，1.7GB 大约能存 1.1 亿到 1.4 亿个点
+    size_t max_buffer_bytes = static_cast<size_t>(1.7 * 1024 * 1024 * 1024);
+    FORCE_INLINE bool is_healthy() const { return status == GraphStatus::READY; }
+    std::vector<PointData> final_points_buffer;
+    std::vector<FunctionRange> final_ranges_buffer;
+    std::vector<HistoryNode> history_tree;
+    int32_t head_version_id = -1;      // 当前 HEAD 指向的版本 ID
+    uint32_t version_id_counter = 0;   // 版本自增计数器
+    void ClearEverything(); // 💡 新增
     ViewState view;          // 当前活跃视口 (由 JS/Factory 修改)
     ViewState m_last_view;   // 上一帧计算后的视口备份
+    uint32_t next_internal_index = 0; // 💡 新增：内部标量计数器
+    std::string GenerateInternalName(); // 💡 新增：生成 _internal_scalar_n
 
     std::vector<uint32_t> m_pending_seeds;
     void mark_as_seed(uint32_t id) {

@@ -11,13 +11,13 @@
 
 void process_two_point_line(
     oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
-    double x1, double y1, double x2, double y2,
+    double x1, double y1, double x2, double y2, // 💡 这里的输入已经是相对坐标 (view-relative)
     bool is_segment,
     unsigned int func_idx,
-    const Vec2& world_origin,
+    const Vec2& world_origin, // 保持签名一致，但计算将更多参考屏幕尺寸
     double wppx, double wppy,
     double screen_width, double screen_height,
-    double offset_x, double offset_y, // 对应头文件签名
+    double offset_x, double offset_y,
     const NDCMap& ndc_map
 );
 

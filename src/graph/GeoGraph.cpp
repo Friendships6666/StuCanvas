@@ -61,21 +61,54 @@ uint32_t GeometryGraph::allocate_node() {
     return new_id;
 }
 
+// --- src/graph/GeoGraph.cpp ---
+
 void GeometryGraph::physical_delete(uint32_t delete_id) {
     if (delete_id >= id_to_index_table.size()) return;
     int32_t target_idx = id_to_index_table[delete_id];
     if (target_idx == -1) return;
 
-    UnregisterNodeName(node_pool[target_idx].config.name);
+    // 1. 获取该节点在点缓冲区中的“遗产”信息
+    GeoNode& node = node_pool[target_idx];
+    uint32_t off = node.buffer_offset;
+    uint32_t cnt = node.current_point_count;
 
+    // 2. 💡 物理清理 final_points_buffer
+    // 这会导致 [off + cnt, end] 范围内的点全部前移 cnt 个单位
+    if (cnt > 0 && off < final_points_buffer.size()) {
+        final_points_buffer.erase(
+            final_points_buffer.begin() + off,
+            final_points_buffer.begin() + off + cnt
+        );
+
+        // 3. 💡 修正所有受灾节点的偏移量
+        // 逻辑：在池子里遍历，凡是排在被删节点“后面”的节点，偏移量全部减去被删点的数量
+        for (auto& other : node_pool) {
+            if (other.active && other.buffer_offset > off) {
+                other.buffer_offset -= cnt;
+            }
+        }
+    }
+
+    // 4. 从拓扑结构中脱离 (DetachFromBucket)
+    DetachFromBucket(delete_id);
+
+    // 5. 注销名字映射
+    UnregisterNodeName(node.config.name);
+
+    // 6. 物理从映射表注销
     id_to_index_table[delete_id] = -1;
+
+    // 7. 从池子中物理擦除节点
     node_pool.erase(node_pool.begin() + target_idx);
+
+    // 8. 修正 node_pool 搬运后的 ID 映射 (O(N) 重整)
     update_mapping_after_erase(static_cast<size_t>(target_idx));
 }
-
 void GeometryGraph::update_mapping_after_erase(size_t start_index) {
+    // 这一步是 O(N) 复杂度，虽然慢，但保证了 ID 到物理地址的绝对准确
     for (size_t i = start_index; i < node_pool.size(); ++i) {
-        uint32_t node_id = node_pool[i].id;
+        uint32_t node_id = node_pool[i].id; // 这里取的是节点自带的逻辑 ID
         id_to_index_table[node_id] = static_cast<int32_t>(i);
     }
 }
@@ -85,30 +118,67 @@ void GeometryGraph::update_mapping_after_erase(size_t start_index) {
 // =========================================================
 
 void GeometryGraph::RegisterNodeName(const std::string& name, uint32_t id) {
-    if (!name.empty()) name_to_id_map[name] = id;
+    if (name.empty()) return;
+    // 直接存储，区分 "PointA" 和 "pointa"
+    name_to_id_map[name] = id;
 }
 
 void GeometryGraph::UnregisterNodeName(const std::string& name) {
-    if (!name.empty()) name_to_id_map.erase(name);
+    if (name.empty()) return;
+    // 直接删除
+    name_to_id_map.erase(name);
 }
 
 uint32_t GeometryGraph::GetNodeID(const std::string& name) const {
     auto it = name_to_id_map.find(name);
     if (it != name_to_id_map.end()) return it->second;
-    throw std::runtime_error("Linker Error: Unknown identifier '" + name + "'");
+
+    // 💡 错误信息现在也可以包含原始名称，方便用户定位
+    // 这里不再 throw，可以根据你之前的架构返回错误码
+    return GeoStatus::ERR_ID_NOT_FOUND;
 }
 
 std::string GeometryGraph::GenerateNextName() {
-    uint32_t current_idx = next_name_index++;
-    char letter = static_cast<char>('a' + (current_idx % 26));
-    uint32_t cycle = current_idx / 26;
-    if (cycle == 0) return std::string(1, letter);
-    char buf[12];
-    buf[0] = letter;
-    auto [ptr, ec] = std::to_chars(buf + 1, buf + 12, cycle);
-    return std::string(buf, ptr - buf);
+    while (true) {
+        // 1. 记录当前索引并递增，准备下一次尝试
+        uint32_t current_idx = next_name_index++;
+
+        char letter = static_cast<char>('a' + (current_idx % 26));
+        uint32_t cycle = current_idx / 26;
+
+        std::string name;
+        if (cycle == 0) {
+            name = std::string(1, letter);
+        } else {
+            char buf[12];
+            buf[0] = letter;
+            auto [ptr, ec] = std::to_chars(buf + 1, buf + 12, cycle);
+            name = std::string(buf, ptr - buf);
+        }
+
+        // 2. 💡 核心逻辑：区分大小写查重
+        // 如果地图里不包含这个名字，说明可用，直接返回
+        if (!name_to_id_map.contains(name)) {
+            return name;
+        }
+
+        // 如果重名（比如用户手动创建了一个叫 "a" 的点），
+        // 循环会继续，使用下一个 next_name_index 再次生成并校验
+    }
 }
 
+std::string GeometryGraph::GenerateInternalName() {
+    while (true) {
+        // 1. 递增内部计数器
+        uint32_t idx = ++next_internal_index;
+        std::string name = "_internal_scalar_" + std::to_string(idx);
+
+        // 2. 💡 查重校验
+        if (!name_to_id_map.contains(name)) {
+            return name;
+        }
+    }
+}
 // =========================================================
 // 3. 拓扑层级维护 (Rank & Bucket List)
 // =========================================================
@@ -177,46 +247,48 @@ void GeometryGraph::UpdateRankRecursive(uint32_t start_node_id) {
 }
 
 
-/**
- * @brief 自动响应式扫描引擎 (修正 ID 寻址逻辑)
- */
 std::vector<uint32_t> GeometryGraph::FastScan() {
-    // 1. 种子消费
+    // 1. 种子消费：如果没有待处理的震源，直接返回
     if (m_pending_seeds.empty()) return {};
-    std::vector<uint32_t> all_seeds = std::move(m_pending_seeds);
-    m_pending_seeds.clear();
 
-    // 2. 脏位图初始化
+    // 2. 脏位图初始化与自动扩容
     uint32_t max_id = id_generator.load(std::memory_order_relaxed);
     if (m_dirty_mask.size() < max_id) {
         m_dirty_mask.resize(max_id + 128, 0);
     }
 
-
     std::vector<uint32_t> targets;
     uint32_t min_rank_to_start = 0xFFFFFFFF;
 
-    // 3. 初始震源处理
-    for (uint32_t id : all_seeds) {
+    // 3. 初始震源处理（种子节点）
+    for (uint32_t id : m_pending_seeds) {
         if (!is_alive(id)) continue;
+        if (m_dirty_mask[id]) continue; // 避免重复添加
 
         m_dirty_mask[id] = 1;
         targets.push_back(id);
 
-        uint32_t r = get_node_by_id(id).rank;
-        if (r < min_rank_to_start) min_rank_to_start = r;
+        GeoNode& node = get_node_by_id(id);
+        if (node.rank < min_rank_to_start) min_rank_to_start = node.rank;
 
-        // 解除失效粘滞
-        get_node_by_id(id).result.set_f(ComputedResult::VALID, true);
+        // 💡 关键：解除“失效粘滞”
+        // 如果节点是因为之前的计算错误或父节点失效而无效，现在它变脏了，应该尝试重新变回 VALID。
+        // 但是：如果是创建时的 ERR_TYPE_MISMATCH 或 ERR_SYNTAX（CAT_LINK类），不自动重置。
+        if ((node.status & GeoStatus::MASK_CAT) != GeoStatus::CAT_LINK) {
+            node.status = GeoStatus::VALID;
+        }
     }
+    m_pending_seeds.clear();
 
-    // 4. 位图跳跃
-    size_t start_word = min_rank_to_start / 64;
+    // 4. 位图跳跃式拓扑扩散
+    size_t start_word = (min_rank_to_start == 0xFFFFFFFF) ? 0 : min_rank_to_start / 64;
+
     for (size_t w = start_word; w < active_ranks_mask.size(); ++w) {
         uint64_t mask = active_ranks_mask[w];
         if (mask == 0) continue;
 
-        if (w == start_word) {
+        // 对齐起始 Rank
+        if (w == start_word && min_rank_to_start != 0xFFFFFFFF) {
             mask &= (~0ULL << (min_rank_to_start % 64));
         }
 
@@ -224,29 +296,34 @@ std::vector<uint32_t> GeometryGraph::FastScan() {
             uint32_t r_offset = find_first_set_bit(mask);
             uint32_t r = static_cast<uint32_t>(w * 64 + r_offset);
 
-            // 💡 修正点：buckets_all_heads[r] 存储的是该层第一个节点的 ID
+            // 遍历当前 Rank 的桶
             uint32_t curr_id = buckets_all_heads[r];
-
             while (curr_id != NULL_ID) {
-                // 💡 修正点：必须通过身份证查表，才能拿到漂移后的物理对象引用
                 GeoNode& node = get_node_by_id(curr_id);
 
+                // 如果当前节点还没变脏，检查它的父节点们
                 if (m_dirty_mask[curr_id] == 0) {
                     for (uint32_t pid : node.parents) {
                         if (m_dirty_mask[pid]) {
+                            // 只要有一个父亲脏了，我也变脏
                             m_dirty_mask[curr_id] = 1;
                             targets.push_back(curr_id);
-                            node.result.set_f(ComputedResult::VALID, true);
+
+                            // 💡 级联重置状态：给子节点重新计算的机会
+                            if ((node.status & GeoStatus::MASK_CAT) != GeoStatus::CAT_LINK) {
+                                node.status = GeoStatus::VALID;
+                            }
                             break;
                         }
                     }
                 }
-                // 下一个也是 ID
                 curr_id = node.next_in_bucket;
             }
             mask &= ~(1ULL << r_offset);
         }
     }
+
+    // 5. 排序：为了在 calculate_points_core 中能用 binary_search 快速判定
     std::ranges::sort(targets);
 
     return targets;
@@ -323,4 +400,55 @@ void GeometryGraph::LinkAndRank(uint32_t child_id, const std::vector<uint32_t>& 
         }
     }
     UpdateRankRecursive(child_id);
+}
+
+
+
+// --- src/graph/GeoGraph.cpp ---
+
+void GeometryGraph::ClearEverything() {
+    // 1. 💡 极致物理清理：释放 LogicChannel 内部的堆内存
+    // 遍历所有节点，无论是否 active，都要清理，防止内存泄漏
+    for (auto& node : node_pool) {
+        // 遍历节点内部的 4 个逻辑通道
+        for (int i = 0; i < 4; ++i) {
+            node.channels[i].clear();
+        }
+
+        // 至于 ComputedResult，因为它现在是纯数据（POD），
+        // 这里的 memset 会把残留的坐标数据抹平，虽然不抹也行（反正会被覆盖），但为了安全起见。
+        node.result.reset_all();
+    }
+
+    // 2. 清空渲染缓冲区并释放物理内存
+    final_points_buffer.clear();
+    final_points_buffer.shrink_to_fit(); // 归还大内存给 WASM
+
+    final_ranges_buffer.clear();
+    final_ranges_buffer.shrink_to_fit();
+
+    // 3. 重置容器
+    node_pool.clear();
+    std::ranges::fill(id_to_index_table, -1);
+
+    // 4. 核心重置：ID 归位 (为了 Git 重演的一致性)
+    id_generator.store(1);
+
+    // 5. 重置其他状态
+    next_name_index = 0;
+    next_internal_index = 0;
+    name_to_id_map.clear();
+
+    std::ranges::fill(buckets_all_heads, NULL_ID);
+    std::ranges::fill(active_ranks_mask, 0);
+    max_graph_rank = 0;
+
+    m_pending_seeds.clear();
+    std::ranges::fill(m_dirty_mask, 0);
+
+    // 6. 强制视图失效
+    m_last_view.zoom = -1.0;
+
+    // 7. 重置健康状态
+    status = GraphStatus::READY;
 }

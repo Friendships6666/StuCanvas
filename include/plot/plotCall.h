@@ -17,11 +17,7 @@
 /**
  * @brief 核心渲染调度入口
  */
-void calculate_points_core(
-    std::vector<PointData>& out_points,
-    std::vector<FunctionRange>& out_ranges,
-    GeometryGraph& graph
-);
+void calculate_points_core(GeometryGraph& graph);
 
 
 #endif //PLOTCALL_H

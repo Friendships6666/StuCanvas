@@ -5,17 +5,17 @@
 #include <string>
 #include <vector>
 #include <string_view>
-
+#include "../include/graph/GeoGraph.h" // 需要 GeoStatus 定义
 namespace CAS::Parser {
 
     // 使用枚举标识函数类型，比字符串比对快得多
-    enum class CustomFunctionType {
+        enum class CustomFunctionType : uint8_t  {
         NONE,
         LENGTH,
         AREA,
         EXTRACT_VALUE_X,
         EXTRACT_VALUE_Y,
-        DISTANCE,
+
         // 易于以后扩展
     };
 
@@ -34,6 +34,9 @@ namespace CAS::Parser {
     struct CompileResult {
         AlignedVector<RPNToken> bytecode;
         std::vector<RPNBindingSlot> binding_slots;
+
+        bool        success = true; // 只保留这个标志
+        std::string error_arg;      // 记录出错的符号（如 "sin(" 或 "++"）
     };
 
     CompileResult compile_infix_to_rpn(std::string_view expression);

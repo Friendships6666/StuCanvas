@@ -1,152 +1,175 @@
 ﻿// --- 文件路径: src/graph/GeoSolver.cpp ---
 #include "../../include/graph/GeoSolver.h"
 #include "../../include/graph/GeoGraph.h"
+#include "../../include/CAS/RPN/ShuntingYard.h"
 #include <cmath>
 #include <limits>
+#include <algorithm>
 
 namespace {
     /**
-     * @brief 极致性能预检：利用传入的实时 LUT 检查父节点有效性
-     * 这保证了失效状态（VALID=false）能顺着 Rank 链条向下传播
+     * @brief 快速获取指定父节点结果引用
      */
-    FORCE_INLINE bool are_parents_valid(const GeoNode& self, const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut) {
-        for (uint32_t pid : self.parents) {
-            // 通过传入的映射表实时寻址
-            if (!pool[lut[pid]].result.check_f(ComputedResult::VALID)) {
-                return false;
-            }
+    FORCE_INLINE const ComputedResult& get_parent_res(const GeometryGraph& graph, uint32_t pid) {
+        return graph.get_node_by_id(pid).result;
+    }
+
+    /**
+     * @brief 数学结果安全性检查：防止 NaN 和 Infinity 污染图
+     */
+    FORCE_INLINE bool validate_math(GeoNode& self, double val) {
+        if (!std::isfinite(val)) {
+            self.status = GeoStatus::ERR_OVERFLOW;
+            return false;
         }
         return true;
     }
 
     /**
-     * @brief 快速获取指定父节点结果引用 (基于传入的 LUT)
+     * @brief [核心辅助] 解算单个逻辑通道
+     * 自动处理补丁回填：变量引用永远读取父节点的“世界坐标 (x/y)”槽位
      */
-    FORCE_INLINE const ComputedResult& get_parent_res(const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, uint32_t pid) {
-        return pool[lut[pid]].result;
-    }
-}
+    double SolveChannel(GeoNode& self, int idx, const GeometryGraph& graph) {
+        auto& ch = self.channels[idx];
+        if (ch.bytecode_len == 0) return ch.value;
 
-// =========================================================
-// 1. RPN 标量求解器 (补丁填充 + 数值计算)
-// =========================================================
-void Solver_ScalarRPN(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
-    auto& res = self.result;
-    if (!res.bytecode_ptr) return;
+        // JIT 补丁回填：从依赖节点中提取“绝对世界坐标”
+        for (uint32_t k = 0; k < ch.patch_len; ++k) {
+            auto& p = ch.patch_ptr[k];
+            const auto& parent_res = get_parent_res(graph, p.dependency_ids[0]);
+            double val = 0.0;
 
-    // 1. 级联失效预检
-    if (!are_parents_valid(self, pool, lut)) {
-        res.set_f(ComputedResult::VALID, false);
-        return;
-    }
-
-    // 2. JIT 补丁回填：将父节点最新数据写入指令流
-    for (uint32_t i = 0; i < res.patch_len; ++i) {
-        auto& p = res.patch_ptr[i];
-        double val = 0.0;
-
-        if (p.func_type == CAS::Parser::CustomFunctionType::NONE) {
-            // 变量路径：从父节点的 s0 槽位提数
-            val = get_parent_res(pool, lut, p.dependency_ids[0]).s0;
-        } else {
-            // 黑箱函数路径：例如 Length(A, B)
-            if (p.func_type == CAS::Parser::CustomFunctionType::LENGTH) {
-                const auto& r1 = get_parent_res(pool, lut, p.dependency_ids[0]);
-                const auto& r2 = get_parent_res(pool, lut, p.dependency_ids[1]);
-                val = std::hypot(r1.x - r2.x, r1.y - r2.y);
+            switch (p.func_type) {
+                case CAS::Parser::CustomFunctionType::NONE:
+                    val = parent_res.s0; // 默认提取第一个标量槽
+                    break;
+                case CAS::Parser::CustomFunctionType::EXTRACT_VALUE_X:
+                    val = parent_res.x;  // 💡 永远读取世界坐标
+                    break;
+                case CAS::Parser::CustomFunctionType::EXTRACT_VALUE_Y:
+                    val = parent_res.y;  // 💡 永远读取世界坐标
+                    break;
+                case CAS::Parser::CustomFunctionType::LENGTH: {
+                    const auto& r2 = get_parent_res(graph, p.dependency_ids[1]);
+                    val = std::hypot(parent_res.x - r2.x, parent_res.y - r2.y);
+                    break;
+                }
+                default: break;
             }
-            // 后续可在此扩展 EXTRACT_X/Y, AREA 等
+            // 原地降级为常量，回填最新的物理数值
+            ch.bytecode_ptr[p.rpn_index].type = RPNTokenType::PUSH_CONST;
+            ch.bytecode_ptr[p.rpn_index].value = val;
         }
-        // 原地覆盖指令中的立即数
-        res.bytecode_ptr[p.rpn_index].value = val;
+
+        // 执行 RPN 虚拟机
+        ch.value = evaluate_rpn<double>(ch.bytecode_ptr, ch.bytecode_len);
+        return ch.value;
     }
-
-    // 3. 执行纯数学虚拟机指令
-    res.s0 = evaluate_rpn<double>(res.bytecode_ptr, res.bytecode_len);
-
-    // 4. 数学自检：处理 NaN 或 Infinity
-    res.set_f(ComputedResult::VALID, std::isfinite(res.s0));
 }
 
 // =========================================================
-// 2. 标准点求解器 (由 X, Y 标量合成)
+// 1. RPN 通用解算器 (标量/函数)
 // =========================================================
-void Solver_StandardPoint(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
-    const auto& res_x = get_parent_res(pool, lut, self.parents[0]);
-    const auto& res_y = get_parent_res(pool, lut, self.parents[1]);
+void Solver_ScalarRPN(GeoNode& self, GeometryGraph& graph) {
+    auto& res = self.result;
 
-    if (res_x.check_f(ComputedResult::VALID) && res_y.check_f(ComputedResult::VALID)) {
-        self.result.x = res_x.s0;
-        self.result.y = res_y.s0;
-        self.result.set_f(ComputedResult::VALID, true);
+    // 遍历 4 个嵌入式逻辑通道进行解算
+    for (int i = 0; i < 4; ++i) {
+        if (self.channels[i].bytecode_len == 0 && i > 0) continue;
+
+        double abs_val = SolveChannel(self, i, graph);
+        if (!validate_math(self, abs_val)) return;
+
+        // 存储到物理槽位 s0-s6
+        res._raw_data[i] = abs_val;
+    }
+    self.status = GeoStatus::VALID;
+}
+
+// =========================================================
+// 2. 标准点求解器 (双轨坐标：世界 + 视口)
+// =========================================================
+void Solver_StandardPoint(GeoNode& self, GeometryGraph& graph) {
+    const auto& v = graph.view;
+
+    // 1. 解算 X 和 Y 两个通道的世界坐标 (W)
+    double abs_x = SolveChannel(self, 0, graph);
+    double abs_y = SolveChannel(self, 1, graph);
+
+    if (std::isfinite(abs_x) && std::isfinite(abs_y)) {
+        // 2. 存储世界坐标 (Slot 0, 1 -> x, y)
+        self.result.x = abs_x;
+        self.result.y = abs_y;
+
+        // 3. 💡 浮动原点脱水：计算视口相对坐标 (Slot 4, 5 -> x_view, y_view)
+        self.result.x_view = abs_x - v.offset_x;
+        self.result.y_view = abs_y - v.offset_y;
+
+        self.status = GeoStatus::VALID;
     } else {
-        self.result.set_f(ComputedResult::VALID, false);
+        self.status = GeoStatus::ERR_OVERFLOW;
     }
 }
 
 // =========================================================
 // 3. 中点求解器
 // =========================================================
-void Solver_Midpoint(GeoNode& self,std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
-    const auto& p1 = get_parent_res(pool, lut, self.parents[0]);
-    const auto& p2 = get_parent_res(pool, lut, self.parents[1]);
+void Solver_Midpoint(GeoNode& self, GeometryGraph& graph) {
+    const auto& v = graph.view;
+    // 获取两个父点（它们已经算好了双轨坐标）
+    const auto& p1 = get_parent_res(graph, self.parents[0]);
+    const auto& p2 = get_parent_res(graph, self.parents[1]);
 
-    if (p1.check_f(ComputedResult::VALID) && p2.check_f(ComputedResult::VALID)) {
-        self.result.x = (p1.x + p2.x) * 0.5;
-        self.result.y = (p1.y + p2.y) * 0.5;
-        self.result.set_f(ComputedResult::VALID, true);
+    // 1. 计算绝对中点
+    double mx = (p1.x + p2.x) * 0.5;
+    double my = (p1.y + p2.y) * 0.5;
+
+    if (std::isfinite(mx) && std::isfinite(my)) {
+        self.result.x = mx;
+        self.result.y = my;
+
+        // 2. 计算相对视口坐标
+        self.result.x_view = mx - v.offset_x;
+        self.result.y_view = my - v.offset_y;
+
+        self.status = GeoStatus::VALID;
     } else {
-        self.result.set_f(ComputedResult::VALID, false);
+        self.status = GeoStatus::ERR_OVERFLOW;
     }
 }
 
-
-void Solver_ConstrainedPoint(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
-    // 1. 预检
-    if (!are_parents_valid(self, pool, lut)) {
-        self.result.set_f(ComputedResult::VALID, false);
-        return;
-    }
-
-    // 2. 获取依赖项引用
+// =========================================================
+// 4. 约束点求解器 (吸附算法 - 修正反向投影)
+// =========================================================
+void Solver_ConstrainedPoint(GeoNode& self, GeometryGraph& graph) {
+    const auto& v = graph.view;
     const uint32_t target_id = static_cast<uint32_t>(self.result.i0);
-    const auto& target = pool[lut[target_id]];
-    auto& ax_node = pool[lut[self.parents[1]]];
-    auto& ay_node = pool[lut[self.parents[2]]];
+    const auto& target = graph.get_node_by_id(target_id);
 
     if (target.current_point_count == 0) {
-        self.result.set_f(ComputedResult::VALID, false);
+        self.status = GeoStatus::ERR_EMPTY_RESULT;
         return;
     }
 
-    // 3. 准备空间转换参数 (Double 精度)
-    NDCMap m = BuildNDCMap(view);
+    // 1. 解算锚点世界坐标
+    double anchor_w_x = SolveChannel(self, 0, graph);
+    double anchor_w_y = SolveChannel(self, 1, graph);
 
-    // =========================================================
-    // 4. 空间转换：世界坐标 $W_a$ -> 裁剪空间 $C_a$ (Float)
-    // =========================================================
-    // 从父标量中取出存储的世界坐标锚点
-    double world_anchor_x = ax_node.result.s0;
-    double world_anchor_y = ay_node.result.s0;
+    // 2. 投影到裁剪空间 (NDC) 参考系
+    float clip_anchor_x = static_cast<float>((anchor_w_x - v.offset_x) * v.ndc_scale_x);
+    float clip_anchor_y = -static_cast<float>((anchor_w_y - v.offset_y) * v.ndc_scale_y);
 
-    // 转换为 Float 精度，以便与 wasm_final_contiguous_buffer 里的 PointData 对齐
-    float clip_anchor_x = static_cast<float>((world_anchor_x - m.center_x) * m.scale_x);
-    float clip_anchor_y = -static_cast<float>((world_anchor_y - m.center_y) * m.scale_y);
-
-    // =========================================================
-    // 5. 裁剪空间搜索：寻找离当前显示最近的像素点
-    // =========================================================
+    // 3. 在 final_points_buffer 中搜索最近采样点
     float min_dist_sq = std::numeric_limits<float>::max();
     float best_clip_x = clip_anchor_x;
     float best_clip_y = clip_anchor_y;
 
+    const auto& pts = graph.final_points_buffer;
     uint32_t start = target.buffer_offset;
     uint32_t end = start + target.current_point_count;
 
     for (uint32_t i = start; i < end; ++i) {
-        const auto& pt = wasm_final_contiguous_buffer[i];
-
-        // 在 Float 精度下的裁剪空间进行欧氏距离比对
+        const auto& pt = pts[i];
         float dx = pt.position.x - clip_anchor_x;
         float dy = pt.position.y - clip_anchor_y;
         float d2 = dx * dx + dy * dy;
@@ -158,48 +181,34 @@ void Solver_ConstrainedPoint(GeoNode& self, std::vector<GeoNode>& pool, const st
         }
     }
 
-    // =========================================================
-    // 6. 逆向转换：最佳裁剪点 $C_{best}$ -> 新世界坐标 $W_{new}$
-    // =========================================================
-    // 利用当前视图参数，将选中的那个像素点还原为真实的数学坐标
-    double world_new_x = m.center_x + static_cast<double>(best_clip_x) / m.scale_x;
-    double world_new_y = m.center_y - static_cast<double>(best_clip_y) / m.scale_y;
+    // 4. 💡 核心修正：逆向还原相对坐标 (匹配 Render 代理的负号)
+    double rel_x = static_cast<double>(best_clip_x) / v.ndc_scale_x;
+    double rel_y = static_cast<double>(best_clip_y) / v.ndc_scale_y; // 关键负号
 
-    // =========================================================
-    // 7. 同步与回馈 (Ping-Pong)
-    // =========================================================
-    // A. 更新本节点的当前坐标（用于渲染投影）
-    self.result.x = world_new_x;
-    self.result.y = world_new_y;
-    self.result.set_f(ComputedResult::VALID, true);
+    self.result.x_view = rel_x;
+    self.result.y_view = rel_y;
+    self.result.x = rel_x + v.offset_x; // 还原世界坐标
+    self.result.y = rel_y + v.offset_y;
 
-    // B. 写回父节点：更新“世界坐标锚点”
-    // 这样下次 Solver 运行时，会从这个“上一次最接近点”的世界坐标开始重新投影和搜索
-    ax_node.result.s0 = world_new_x;
-    ay_node.result.s0 = world_new_y;
+    self.status = GeoStatus::VALID;
 }
 
 // =========================================================
-// 5. 标准线段/直线求解器
+// 5. 标准线段求解器
 // =========================================================
-void Solver_StandardLine(GeoNode& self, std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, const ViewState& view) {
-    auto& res = self.result;
+void Solver_StandardLine(GeoNode& self, GeometryGraph& graph) {
+    const auto& p1 = get_parent_res(graph, self.parents[0]);
+    const auto& p2 = get_parent_res(graph, self.parents[1]);
 
-    const auto& p1_res = get_parent_res(pool, lut, self.parents[0]);
-    const auto& p2_res = get_parent_res(pool, lut, self.parents[1]);
+    // 快照世界坐标用于后续测量
+    self.result.x1 = p1.x; self.result.y1 = p1.y;
+    self.result.x2 = p2.x; self.result.y2 = p2.y;
 
-    // 级联失效判定
-    if (!p1_res.check_f(ComputedResult::VALID) || !p2_res.check_f(ComputedResult::VALID)) {
-        res.set_f(ComputedResult::VALID, false);
-        return;
+    double dx = p1.x - p2.x;
+    double dy = p1.y - p2.y;
+    if ((dx * dx + dy * dy) < 1e-15) {
+        self.status = GeoStatus::ERR_EMPTY_RESULT;
+    } else {
+        self.status = GeoStatus::VALID;
     }
-
-    // 坐标快照到线段自己的结果槽，方便 RenderTask 直接读取
-    res.x1 = p1_res.x; res.y1 = p1_res.y;
-    res.x2 = p2_res.x; res.y2 = p2_res.y;
-
-    // 自检：重合点判定
-    double dx = res.x1 - res.x2;
-    double dy = res.y1 - res.y2;
-    res.set_f(ComputedResult::VALID, (dx * dx + dy * dy) > 1e-15);
 }

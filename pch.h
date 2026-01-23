@@ -52,8 +52,9 @@ using batch_type = xs::batch<double>;
 // 定义一个可以在编译期获取 SIMD 宽度的常量。
 constexpr size_t BATCH_SIZE = batch_type::size;
 // 全局模拟 Buffer (对应 WASM 里的 SharedArrayBuffer)
-inline std::vector<PointData> wasm_final_contiguous_buffer;
-inline std::vector<FunctionRange> wasm_function_ranges_buffer;
+#ifndef NULL_ID
+#define NULL_ID 0xFFFFFFFF
+#endif
 
 
 
