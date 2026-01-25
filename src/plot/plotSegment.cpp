@@ -1,114 +1,107 @@
 // --- 文件路径: src/plot/plotSegment.cpp ---
 
 #include "../../include/plot/plotCall.h"
-#include "../../include/functions/lerp.h"
+#include "../../include/graph/GeoGraph.h"
 #include <algorithm>
 #include <vector>
 #include <cmath>
+#include <cstdint>
 
 /**
- * @brief 优化后的 process_two_point_line (浮动原点版)
- *
- * 逻辑：
- * 1. 输入的 x1, y1, x2, y2 是相对于相机 offset 的局部坐标 (x_view)。
- * 2. 裁剪边界也转化为相对于相机中心的局部边界。
- * 3. 所有的裁剪计算都在 0 附近的极小数值环境下进行，确保浮点精度。
+ * @brief 极致优化的线段/直线绘制器 (16.16 定点数插值版)
+ * 逻辑：在 CLIP 整数空间 [-32767, 32767] 内进行 DDA 插值
  */
 void process_two_point_line(
-    oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
-    double x1, double y1, double x2, double y2, // 💡 这里的输入已经是相对坐标 (view-relative)
+    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>>& queue,
+    double x1, double y1, double x2, double y2, // 输入为相对坐标 (x_view, y_view)
     bool is_segment,
-    unsigned int func_idx,
-    const Vec2& world_origin, // 保持签名一致，但计算将更多参考屏幕尺寸
-    double wppx, double wppy,
-    double screen_width, double screen_height,
-    double offset_x, double offset_y,
-    const NDCMap& ndc_map
+    uint32_t func_id,
+    const ViewState& view
 ) {
-    // =========================================================
-    // 1. 计算局部裁剪边界 (Relative Viewport Bounds)
-    // =========================================================
-    // 在相对坐标系中，屏幕中心是 (0, 0)
-    // 边界就是正负半屏的世界距离
-    double half_w = (screen_width * 0.5) * std::abs(wppx);
-    double half_h = (screen_height * 0.5) * std::abs(wppy);
+    // 1. 计算局部裁剪边界 (基于相对坐标系)
+    // 增加 5% 冗余防止边缘空隙
+    const double margin = 1.05;
+    double rx_max = view.half_w * view.wpp * margin;
+    double rx_min = -rx_max;
+    double ry_max = view.half_h * view.wpp * margin;
+    double ry_min = -ry_max;
 
-    double rx_min = -half_w;
-    double rx_max =  half_w;
-    double ry_min = -half_h;
-    double ry_max =  half_h;
-
-    // 2. 参数化准备: P(t) = P1 + t*(P2 - P1)
-    // 这里的 dx, dy 是小数字之间的减法，精度极高
+    // 2. 准备参数
     double dx = x2 - x1;
     double dy = y2 - y1;
+    double t0 = is_segment ? 0.0 : -1.0e8; // 直线模式下的虚似无穷大
+    double t1 = is_segment ? 1.0 : 1.0e8;
 
-    double final_t0 = is_segment ? 0.0 : -1.0e9;
-    double final_t1 = is_segment ? 1.0 : 1.0e9;
-
-    // =========================================================
-    // 3. 局部坐标系下的 Liang-Barsky 裁剪
-    // =========================================================
+    // 3. Liang-Barsky 裁剪 (使用 f64 确保裁剪精度)
     auto clip_test = [&](double p, double q) -> bool {
-        if (std::abs(p) < 1e-15) return q >= 0; // 平行于边界
+        if (std::abs(p) < 1e-15) return q >= 0;
         double r = q / p;
-        if (p < 0) { // 外部射入内部
-            if (r > final_t1) return false;
-            if (r > final_t0) final_t0 = r;
-        } else { // 内部射向外部
-            if (r < final_t0) return false;
-            if (r < final_t1) final_t1 = r;
+        if (p < 0) {
+            if (r > t1) return false;
+            if (r > t0) t0 = r;
+        } else {
+            if (r < t0) return false;
+            if (r < t1) t1 = r;
         }
         return true;
     };
 
-    if (!clip_test(-dx, x1 - rx_min)) { results_queue->push({func_idx, {}}); return; }
-    if (!clip_test( dx, rx_max - x1)) { results_queue->push({func_idx, {}}); return; }
-    if (!clip_test(-dy, y1 - ry_min)) { results_queue->push({func_idx, {}}); return; }
-    if (!clip_test( dy, ry_max - y1)) { results_queue->push({func_idx, {}}); return; }
+    if (!clip_test(-dx, x1 - rx_min)) return;
+    if (!clip_test( dx, rx_max - x1)) return;
+    if (!clip_test(-dy, y1 - ry_min)) return;
+    if (!clip_test( dy, ry_max - y1)) return;
 
-    if (final_t0 > final_t1) {
-        results_queue->push({func_idx, {}});
-        return;
-    }
+    if (t0 > t1) return;
 
-    // =========================================================
-    // 4. 转换裁剪端点到 CLIP 空间
-    // =========================================================
-    // 💡 浮动原点优势：直接使用相对坐标乘以 scale，无需再减去巨大的 center_x
-    // 我们假设 ndc_map 里的 scale 已经根据当前 view 算好了
-    float cx1 = static_cast<float>((x1 + final_t0 * dx) * ndc_map.scale_x);
-    float cy1 = -static_cast<float>((y1 + final_t0 * dy) * ndc_map.scale_y);
-    float cx2 = static_cast<float>((x1 + final_t1 * dx) * ndc_map.scale_x);
-    float cy2 = -static_cast<float>((y1 + final_t1 * dy) * ndc_map.scale_y);
+    // 4. 转换裁剪后的世界端点到 CLIP 整数空间 (int16_t)
+    // 💡 调用 NoOffset 版本防止二次减去相机偏移
+    Vec2i c1 = view.WorldToClipNoOffset(x1 + t0 * dx, y1 + t0 * dy);
+    Vec2i c2 = view.WorldToClipNoOffset(x1 + t1 * dx, y1 + t1 * dy);
 
-    // =========================================================
-    // 5. 像素级插值 (LOD 保持不变)
-    // =========================================================
-    float dx_pixel = (cx2 - cx1) * (float)screen_width * 0.5f;
-    float dy_pixel = (cy2 - cy1) * (float)screen_height * 0.5f;
-    float pixel_dist = std::sqrt(dx_pixel * dx_pixel + dy_pixel * dy_pixel);
+    // 5. 确定采样密度 (LOD)
+    // 计算在 CLIP 空间下的位移量
+    int32_t dcx = static_cast<int32_t>(c2.x) - static_cast<int32_t>(c1.x);
+    int32_t dcy = static_cast<int32_t>(c2.y) - static_cast<int32_t>(c1.y);
 
-    // 步长：0.4 像素
-    int num_samples = std::max(2, static_cast<int>(std::ceil(pixel_dist / 0.4f)) + 1);
+    // 利用 s2c_scale 将 Clip 距离映射到屏幕像素距离
+    float px_dist_x = static_cast<float>(dcx) / static_cast<float>(view.s2c_scale_x);
+    float px_dist_y = static_cast<float>(dcy) / static_cast<float>(view.s2c_scale_y);
+    float pixel_dist = std::sqrt(px_dist_x * px_dist_x + px_dist_y * px_dist_y);
 
-    // 限制最大采样数，防止内存爆炸
-    num_samples = std::min(num_samples, 8192);
+    // 每 0.5 像素补一个点，兼顾平滑度与性能
+    int num_samples = std::max(2, static_cast<int>(std::ceil(pixel_dist / 0.5f)) + 1);
+    num_samples = std::min(num_samples, 16384);
 
     std::vector<PointData> final_points;
     final_points.reserve(num_samples);
 
-    float f_dx = cx2 - cx1;
-    float f_dy = cy2 - cy1;
+    // =========================================================
+    // 6. 核心优化：16.16 定点数插值循环
+    // =========================================================
+    // 使用 int64 计算步长防止位移溢出，循环内使用 int32
+    int32_t divisor = num_samples - 1;
 
-    for (int i = 0; i < num_samples; ++i) {
-        float t = (float)i / (float)(num_samples - 1);
-        PointData pd;
-        pd.position.x = cx1 + t * f_dx;
-        pd.position.y = cy1 + t * f_dy;
-        pd.function_index = func_idx;
-        final_points.push_back(pd);
+    // 定点数步长：(差值 << 16) / 除数
+    int32_t step_x = static_cast<int32_t>((static_cast<int64_t>(dcx) << 16) / divisor);
+    int32_t step_y = static_cast<int32_t>((static_cast<int64_t>(dcy) << 16) / divisor);
+
+    // 当前定点坐标值 (高16位为整数部分)
+    int32_t cur_x = static_cast<int32_t>(c1.x) << 16;
+    int32_t cur_y = static_cast<int32_t>(c1.y) << 16;
+
+    // 极致性能循环：仅整数加法与移位，不产生类型转换开销
+    for (int i = 0; i < divisor; ++i) {
+        final_points.push_back({
+            static_cast<int16_t>(cur_x >> 16),
+            static_cast<int16_t>(cur_y >> 16)
+        });
+        cur_x += step_x;
+        cur_y += step_y;
     }
 
-    results_queue->push({func_idx, std::move(final_points)});
+    // 最后一项强制锁定，确保图形闭合且无舍入误差
+    final_points.push_back({c2.x, c2.y});
+
+    // 7. 推送至并发队列
+    queue.push(std::move(final_points));
 }

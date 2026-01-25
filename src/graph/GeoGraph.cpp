@@ -41,7 +41,7 @@ namespace {
 // 1. 构造与生命周期管理
 // =========================================================
 
-GeometryGraph::GeometryGraph() : id_generator(1) {
+GeometryGraph::GeometryGraph() : view(), id_generator(1) {
     m_last_view.zoom = -1.0;
     // 构造函数逻辑，确保在头文件中没有重复定义
     buckets_all_heads.resize(128, NULL_ID);
@@ -408,47 +408,51 @@ void GeometryGraph::LinkAndRank(uint32_t child_id, const std::vector<uint32_t>& 
 
 void GeometryGraph::ClearEverything() {
     // 1. 💡 极致物理清理：释放 LogicChannel 内部的堆内存
-    // 遍历所有节点，无论是否 active，都要清理，防止内存泄漏
+    // 必须在 node_pool.clear() 之前执行，否则会导致 bytecode_ptr 等堆指针丢失造成泄漏
     for (auto& node : node_pool) {
-        // 遍历节点内部的 4 个逻辑通道
         for (int i = 0; i < 4; ++i) {
             node.channels[i].clear();
         }
-
-        // 至于 ComputedResult，因为它现在是纯数据（POD），
-        // 这里的 memset 会把残留的坐标数据抹平，虽然不抹也行（反正会被覆盖），但为了安全起见。
+        // ComputedResult 是 POD 类型，reset_all 仅物理清零
         node.result.reset_all();
     }
 
-    // 2. 清空渲染缓冲区并释放物理内存
+    // 2. 清空采样点缓冲区并释放物理内存 (归还给 WASM/系统)
     final_points_buffer.clear();
-    final_points_buffer.shrink_to_fit(); // 归还大内存给 WASM
+    final_points_buffer.shrink_to_fit();
 
-    final_ranges_buffer.clear();
-    final_ranges_buffer.shrink_to_fit();
+    // 适配最新的 GeoFunctionMeta 容器
+    final_meta_buffer.clear();
+    final_meta_buffer.shrink_to_fit();
 
-    // 3. 重置容器
+    // 3. 重置核心容器与 ID 映射表
     node_pool.clear();
+    // 确保映射表恢复到逻辑初始状态
     std::ranges::fill(id_to_index_table, -1);
 
-    // 4. 核心重置：ID 归位 (为了 Git 重演的一致性)
+    // 4. 计数器归位：确保 Git 重演和 ID 生成的一致性
     id_generator.store(1);
-
-    // 5. 重置其他状态
     next_name_index = 0;
     next_internal_index = 0;
     name_to_id_map.clear();
 
+    // 5. 重置拓扑 Rank 系统
     std::ranges::fill(buckets_all_heads, NULL_ID);
     std::ranges::fill(active_ranks_mask, 0);
     max_graph_rank = 0;
 
+    // 6. 清理脏数据追踪器
     m_pending_seeds.clear();
     std::ranges::fill(m_dirty_mask, 0);
 
-    // 6. 强制视图失效
+
     m_last_view.zoom = -1.0;
 
-    // 7. 重置健康状态
+    // 8. 重置 Git/历史树状态
+    history_tree.clear();
+    head_version_id = -1;
+    version_id_counter = 0;
+
+    // 9. 恢复健康状态
     status = GraphStatus::READY;
 }

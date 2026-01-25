@@ -33,33 +33,156 @@
 
 struct GeoNode;
 struct ViewState;
-struct NDCMap;
-struct FunctionResult;
+struct GeoFunctionMeta;
+
+
+namespace GlobalState {
+    enum Mask : uint64_t {
+        DISABLE_LABELS = 1ULL << 0, // 全局第一位：关闭所有标签显示
+    };
+}
+
+enum class FontType : uint8_t {
+    SANS_SERIF = 0,
+    MONOSPACE = 1,
+    SERIF = 2
+};
+
+struct LabelConfig {
+    bool     show = true;
+    int16_t  offset_x = 15;   // 屏幕像素偏移
+    int16_t  offset_y = -15;
+    float    size = 12.0f;
+    uint32_t color = 0xFFFFFFFF;
+    FontType font = FontType::SANS_SERIF;
+};
+
+// 假设项目中定义的类型
+
 
 
 struct alignas(64) ViewState {
-    // --- 1. 基础配置 (由外部 JS/UI 修改) ---
+    // ==========================================
+    // 1. 基础配置 (由外部 JS/UI 直接修改)
+    // ==========================================
     double offset_x = 0.0;
     double offset_y = 0.0;
     double zoom = 0.1;
     double screen_width = 2560;
     double screen_height = 1600;
 
-    // --- 2. 派生参数 (由 RefreshViewState 统一计算) ---
-    double wppx = 0.0;
-    double wppy = 0.0;
-    Vec2   world_origin = {0.0, 0.0}; // 屏幕左上角
+    // 极致压缩常量 M (int16_t 的满量程)
+    static constexpr double M = 32767.0;
+    static constexpr double InvM = 1.0 / 32767.0;
 
-    // --- 💡 吸收 NDCMap 的投影参数 ---
-    // center_x/y 直接复用 offset_x/y，无需额外字段
-    double ndc_scale_x = 0.0; // 对应之前的 scale_x
-    double ndc_scale_y = 0.0; // 对应之前的 scale_y
+    // ==========================================
+    // 2. 预计算派生参数
+    // ==========================================
+    double half_w, half_h;
+    double wpp, inv_wpp;
+    double ndc_scale_x, ndc_scale_y;
+    double c2w_scale_x, c2w_scale_y;
+    double s2c_scale_x, s2c_scale_y;
 
-    // --- 辅助函数 ---
+    // ==========================================
+    // 3. 极致优化的 6 大坐标转换成员函数
+    // ==========================================
+
+    // ① World → Screen (返回 double，用于 UI 精确排版)
+    FORCE_INLINE Vec2 WorldToScreen(double wx, double wy) const noexcept {
+        return {
+            (wx - offset_x) * inv_wpp + half_w,
+            (offset_y - wy) * inv_wpp + half_h
+        };
+    }
+
+    // ② Screen → World (接收 double 像素坐标)
+    FORCE_INLINE Vec2 ScreenToWorld(double sx, double sy) const noexcept {
+        return {
+            (sx - half_w) * wpp + offset_x,
+            offset_y - (sy - half_h) * wpp
+        };
+    }
+
+    // ③ World → Clip (关键转换：由 double 转换为 int16_t 存储)
+    FORCE_INLINE Vec2i WorldToClip(double wx, double wy) const noexcept {
+        return {
+            static_cast<int16_t>((wx - offset_x) * ndc_scale_x),
+            static_cast<int16_t>((wy - offset_y) * ndc_scale_y)
+        };
+    }
+
+    FORCE_INLINE Vec2i WorldToClipNoOffset(double wx, double wy) const noexcept {
+        return {
+            static_cast<int16_t>(wx * ndc_scale_x),
+            static_cast<int16_t>(wy * ndc_scale_y)
+        };
+    }
+
+    // ④ Clip → World (逆向还原：从 int16_t 恢复为 double)
+    FORCE_INLINE Vec2 ClipToWorld(int16_t cx, int16_t cy) const noexcept {
+        return {
+            static_cast<double>(cx) * c2w_scale_x + offset_x,
+            static_cast<double>(cy) * c2w_scale_y + offset_y
+        };
+    }
+
+    // ⑤ Screen → Clip (直接投影：像素快速转 int16_t，用于拾取碰撞)
+    FORCE_INLINE Vec2i ScreenToClip(double sx, double sy) const noexcept {
+        return {
+            static_cast<int16_t>(sx * s2c_scale_x - M),
+            static_cast<int16_t>(M - sy * s2c_scale_y)
+        };
+    }
+
+    // ⑥ Clip → Screen (快速映射：int16_t 转 double 像素坐标)
+    FORCE_INLINE Vec2 ClipToScreen(int16_t cx, int16_t cy) const noexcept {
+        double dcx = static_cast<double>(cx);
+        double dcy = static_cast<double>(cy);
+        return {
+            (dcx * InvM + 1.0) * half_w,
+            (1.0 - dcy * InvM) * half_h
+        };
+    }
+
+    // ==========================================
+    // 4. 状态维护与同步函数
+    // ==========================================
+
+    /**
+     * @brief 更新所有预计算系数 (在 offset, zoom 或 size 改变后调用)
+     */
+    void Refresh() noexcept {
+        half_w = screen_width * 0.5;
+        half_h = screen_height * 0.5;
+        double aspect = screen_width / screen_height;
+
+        // 根据推导：NDC_ScaleY = M * Zoom
+        ndc_scale_y = M * zoom;
+        ndc_scale_x = ndc_scale_y / aspect;
+
+        // WPP = 2.0 / (Height * Zoom)
+        wpp = 2.0 / (screen_height * zoom);
+        inv_wpp = 1.0 / wpp;
+
+        // 预计算反向系数，彻底消除运行时的除法
+        c2w_scale_x = 1.0 / ndc_scale_x;
+        c2w_scale_y = 1.0 / ndc_scale_y;
+
+        s2c_scale_x = (M * 2.0) / screen_width;
+        s2c_scale_y = (M * 2.0) / screen_height;
+    }
+
+    /**
+     * @brief 极致性能复制 (用于 ViewSnapshot 备份)
+     */
     FORCE_INLINE void copy_from(const ViewState& other) noexcept {
         std::memcpy(this, &other, sizeof(ViewState));
     }
 
+    /**
+     * @brief 极致性能检测 (用于判别是否触发全量重算)
+     */
     FORCE_INLINE bool is_different_from(const ViewState& other) const noexcept {
         return std::memcmp(this, &other, sizeof(ViewState)) != 0;
     }
@@ -71,8 +194,8 @@ using SolverFunc = void(*)(GeoNode& self, GeometryGraph& graph);
 using RenderTaskFunc = void(*)(
     GeoNode& self,
     GeometryGraph& graph,
-    const NDCMap& m,
-    oneapi::tbb::concurrent_bounded_queue<FunctionResult>& q
+    const ViewState& view, // 修改这里
+    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>>& q // 修改这里
 );
 
 namespace CAS::Parser {
@@ -309,11 +432,7 @@ struct GeoNode {
         float    thickness = 2.0f;           // 线宽或点径
         uint32_t color = 0x4D4DFFFF;         // 主体颜色 (RGBA)
         bool     is_visible = true;          // 总开关
-        bool     show_label = true;          // 是否显示文字
-        float    label_offset_x = 15.0f;     // 像素偏移
-        float    label_offset_y = -15.0f;
-        float    label_size = 12.0f;         // 字号
-        uint32_t label_color = 0x4D4DFFFF;   // 标签颜色
+        LabelConfig label;
     };
 
     // --- 核心属性 ---
@@ -397,16 +516,19 @@ namespace GraphStatus {
         ERR_INTERNAL_HALT = 0x5002  // 内部严重错误中止
     };
 }
+struct LabelRenderData;
 class GeometryGraph {
 public:
     uint32_t status = GraphStatus::READY;
+    uint64_t global_state_mask = 0; // 全局开关掩码
+    std::vector<LabelRenderData> final_labels_buffer; // 标签容器
 
     // 默认最大缓冲区设置为 1.7GB (约 1.7 * 1024^3 字节)
     // 注意：PointData 约 12-16 字节，1.7GB 大约能存 1.1 亿到 1.4 亿个点
     size_t max_buffer_bytes = static_cast<size_t>(1.7 * 1024 * 1024 * 1024);
     FORCE_INLINE bool is_healthy() const { return status == GraphStatus::READY; }
     std::vector<PointData> final_points_buffer;
-    std::vector<FunctionRange> final_ranges_buffer;
+    std::vector<GeoFunctionMeta> final_meta_buffer;
     std::vector<HistoryNode> history_tree;
     int32_t head_version_id = -1;      // 当前 HEAD 指向的版本 ID
     uint32_t version_id_counter = 0;   // 版本自增计数器
@@ -477,6 +599,18 @@ public:
 private:
     void UpdateBit(uint32_t rank, bool has_elements);
     void update_mapping_after_erase(size_t start_index);
+};
+struct GeoFunctionMeta {
+    uint32_t start_index;           // 4 字节
+    uint32_t count;                 // 4 字节
+    uint32_t id;                    // 4 字节
+    GeoType::Type type;             // 4 字节 (因为指定了底层类型为 uint32_t)
+    GeoNode::VisualConfig config;   // 视觉配置
+};
+struct LabelRenderData {
+    Vec2i    position;   // 计算后的最终 Clip 坐标
+    uint32_t func_id;    // 关联的函数 ID
+
 };
 
 #endif // GEOGRAPH_H

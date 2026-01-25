@@ -37,16 +37,14 @@ using AlignedVector = std::vector<T, xsimd::aligned_allocator<T>>;
 
 struct Vec2 { double x; double y; };
 struct Vec2f { float x; float y; };
-struct PointData { Vec2f position; unsigned int function_index; };
-static_assert(sizeof(PointData) == 12, "PointData size/padding mismatch! Expected 24 bytes.");
+struct Vec2i { int16_t x, y; };
+struct PointData { int16_t x, y; };
+struct FunctionResult { Vec2i start, end; };
 
-struct FunctionRange {
-    uint32_t start_index;
-    uint32_t point_count;
-};
-static_assert(sizeof(FunctionRange) == 8, "FunctionRange size mismatch! Expected 8 bytes.");
 
-struct Uniforms { Vec2 screen_dimensions; double zoom; Vec2 offset; };
+
+
+
 using batch_type = xs::batch<double>;
 
 // 定义一个可以在编译期获取 SIMD 宽度的常量。
@@ -68,11 +66,7 @@ constexpr size_t BATCH_SIZE = batch_type::size;
 #else
 #define FORCE_INLINE __attribute__((always_inline))
 #endif
-// 并发计算结果载体
-struct FunctionResult {
-    unsigned int function_index;
-    std::vector<PointData> points;
-};
+
 using batch_type = xs::batch<double>;
 
 #endif //PCH_H

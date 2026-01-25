@@ -98,9 +98,9 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 
 target_compile_options(${PROJECT_NAME} PRIVATE
         -march=native
-        -O0
+        -O3
         -fpermissive
-        -g3 -fno-limit-debug-info -fstandalone-debug
+
 )
 
 # ---------------------------------------------------------
