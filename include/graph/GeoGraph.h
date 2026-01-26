@@ -39,8 +39,23 @@ struct GeoFunctionMeta;
 namespace GlobalState {
     enum Mask : uint64_t {
         DISABLE_LABELS = 1ULL << 0, // 全局第一位：关闭所有标签显示
+        DISABLE_GRID   = 1ULL << 1, // 全局第二位：禁用所有网格线
+        DiSABLE_GRID_NUMBER = 1ULL << 2, // 全局第三位：禁用所有网格数字
     };
 }
+enum class GridSystemType : uint8_t {
+    CARTESIAN = 0, // 直角坐标系
+    POLAR     = 1  // 极坐标系
+};
+enum class GridLineType : uint8_t {
+    MINOR = 0,
+    MAJOR = 1,
+    AXIS = 2
+};
+struct GridLineData {
+    Vec2i p1;   // 起点 Clip 坐标
+    Vec2i p2;   // 终点 Clip 坐标
+};
 
 enum class FontType : uint8_t {
     SANS_SERIF = 0,
@@ -74,6 +89,9 @@ struct alignas(64) ViewState {
     // 极致压缩常量 M (int16_t 的满量程)
     static constexpr double M = 32767.0;
     static constexpr double InvM = 1.0 / 32767.0;
+
+    // CLIP 空间魔术数字：用于标记无效点（不可绘制）
+    static constexpr int16_t MAGIC_CLIP_X = -32768;
 
     // ==========================================
     // 2. 预计算派生参数
@@ -517,14 +535,21 @@ namespace GraphStatus {
     };
 }
 struct LabelRenderData;
+struct AxisIntersectionData {
+    Vec2i  pos;     // 交点位置 (int16 剪裁空间坐标)
+    double value;   // 坐标数值 (世界空间绝对坐标)
+};
+
 class GeometryGraph {
 public:
+    GridSystemType grid_type = GridSystemType::CARTESIAN; // 默认直角坐标系
+    std::vector<GridLineData> final_grid_buffer; // 网格缓冲区
     uint32_t status = GraphStatus::READY;
     uint64_t global_state_mask = 0; // 全局开关掩码
     std::vector<LabelRenderData> final_labels_buffer; // 标签容器
+    std::vector<AxisIntersectionData> final_axis_intersection_buffer; // 轴交点容器
 
-    // 默认最大缓冲区设置为 1.7GB (约 1.7 * 1024^3 字节)
-    // 注意：PointData 约 12-16 字节，1.7GB 大约能存 1.1 亿到 1.4 亿个点
+
     size_t max_buffer_bytes = static_cast<size_t>(1.7 * 1024 * 1024 * 1024);
     FORCE_INLINE bool is_healthy() const { return status == GraphStatus::READY; }
     std::vector<PointData> final_points_buffer;

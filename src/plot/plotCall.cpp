@@ -18,8 +18,10 @@ namespace {
 #else
         return static_cast<uint32_t>(__builtin_ctzll(mask));
 #endif
+
     }
     // --- src/plot/plotCall.cpp ---
+
 
     void RefreshAllLabels(GeometryGraph& graph) {
         auto& label_buffer = graph.final_labels_buffer;
@@ -51,6 +53,8 @@ namespace {
 
             const PointData& anchor = points[anchor_idx];
 
+
+
             // --- 极致性能：直接整数加法，没有任何浮点转换或缩放 ---
             // 这里的 offset 已经是 16 位整数单位
             label_buffer.push_back({
@@ -63,33 +67,37 @@ namespace {
         }
     }
 
-    /**
-     * @brief 缓冲区压缩 (GC)
-     */
-    void CompactBuffer(GeometryGraph& graph) {
-        auto& buffer = graph.final_points_buffer; // 类型为 std::vector<PointData>
-
-        // 修正 1: 这里统一使用 PointData
-        std::vector<PointData> new_buffer;
-        new_buffer.reserve(buffer.capacity());
-
-        for (auto& node : graph.node_pool) {
-            if (node.active && node.current_point_count > 0) {
-                uint32_t old_offset = node.buffer_offset;
-                uint32_t count = node.current_point_count;
-
-                node.buffer_offset = static_cast<uint32_t>(new_buffer.size());
-
-                // 修正 2: 插入逻辑保持一致
-                new_buffer.insert(new_buffer.end(),
-                                  buffer.begin() + old_offset,
-                                  buffer.begin() + old_offset + count);
-            }
-        }
-        // 修正 3: 现在类型一致，std::move 正常工作
-        graph.final_points_buffer = std::move(new_buffer);
     }
+ // 匿名空间结束
 
+/**
+ * @brief 缓冲区压缩 (GC)
+ */
+void CompactBuffer(GeometryGraph& graph) {
+    auto& buffer = graph.final_points_buffer; // 类型为 std::vector<PointData>
+
+    // 修正 1: 这里统一使用 PointData
+    std::vector<PointData> new_buffer;
+    new_buffer.reserve(buffer.capacity());
+
+    for (auto& node : graph.node_pool) {
+        if (node.active && node.current_point_count > 0) {
+            uint32_t old_offset = node.buffer_offset;
+            uint32_t count = node.current_point_count;
+
+            node.buffer_offset = static_cast<uint32_t>(new_buffer.size());
+
+            // 修正 2: 插入逻辑保持一致
+            new_buffer.insert(new_buffer.end(),
+                              buffer.begin() + old_offset,
+                              buffer.begin() + old_offset + count);
+        }
+    }
+    // 修正 3: 现在类型一致，std::move 正常工作
+    graph.final_points_buffer = std::move(new_buffer);
+}
+
+namespace {
     /**
      * @brief 刷新节点采样结果
      */
@@ -135,6 +143,15 @@ namespace {
             }
         }
 
+
+
+        // Mark old points as garbage before assigning new offset and count
+        if (node.current_point_count > 0) {
+            for (uint32_t i = 0; i < node.current_point_count; ++i) {
+                out_points[node.buffer_offset + i].x = graph.view.MAGIC_CLIP_X;
+            }
+        }
+
         node.buffer_offset = static_cast<uint32_t>(out_points.size());
         node.current_point_count = new_count;
         out_points.insert(out_points.end(), all_new_points.begin(), all_new_points.end());
@@ -148,6 +165,126 @@ namespace {
             }
         }
         return false;
+    }
+    double CalculateGridStep(double wpp) {
+        double target_world_step = 90.0 * wpp;
+        double exponent = std::floor(std::log10(target_world_step));
+        double power_of_10 = std::pow(10.0, exponent);
+        double fraction = target_world_step / power_of_10;
+
+        if (fraction < 1.5)      return 1.0 * power_of_10;
+        if (fraction < 3.5)      return 2.0 * power_of_10;
+        if (fraction < 7.5)      return 5.0 * power_of_10;
+        return 10.0 * power_of_10;
+    }
+
+    /**
+     * @brief 极致性能：单次循环生成所有网格线，并区分 Major 和 Axis
+     */
+    void GenerateCartesianLines(
+        std::vector<GridLineData>& buffer,
+        std::vector<AxisIntersectionData>* intersection_buffer,
+        const ViewState& v,
+        uint64_t global_mask,
+        double min_w, double max_w, double minor_step, double major_step,
+        double ndc_scale, double offset,
+        bool horizontal
+    ) {
+        // 预计算 16.16 增量
+        int32_t step_fp = static_cast<int32_t>((minor_step * ndc_scale) * 65536.0);
+
+        // 计算起始线的对齐世界坐标
+        double first_w = std::floor(min_w / minor_step) * minor_step;
+        int32_t cur_fp = static_cast<int32_t>(((first_w - offset) * ndc_scale) * 65536.0);
+        double cur_w = first_w;
+
+        // 终点限制
+        int32_t end_fp = static_cast<int32_t>(32767) << 16;
+        int32_t start_limit_fp = static_cast<int32_t>(-32767) << 16;
+
+        // 判定阈值（使用 minor_step 的 10% 作为浮点数容差）
+        double eps = minor_step * 0.1;
+
+        while (cur_fp <= end_fp) {
+            if (cur_fp >= start_limit_fp) {
+                int16_t pos = static_cast<int16_t>(cur_fp >> 16);
+
+                // 1. 判定是否为 Axis (坐标接近 0)
+                bool is_axis = (std::abs(cur_w) < eps);
+
+                // 2. 判定是否为 Major (坐标是 major_step 的倍数)
+                double major_rem = std::abs(std::remainder(cur_w, major_step));
+                bool is_major = (major_rem < eps);
+
+                // 只有非轴线才放入网格 buffer（轴线在外部单独绘制以保证最高精度）
+                if (!is_axis) {
+                    if (horizontal)
+                        buffer.push_back({ {-32767, pos}, {32767, pos}});
+                    else
+                        buffer.push_back({ {pos, -32767}, {pos, 32767}});
+
+                    // 如果是 Major 线且有交点容器，记录交点信息 (受 DISABLE_GRID_NUMBER 控制)
+                    if (is_major && intersection_buffer && !(global_mask & GlobalState::DiSABLE_GRID_NUMBER)) {
+                        Vec2i intersection_pos = horizontal ? v.WorldToClip(0, cur_w) : v.WorldToClip(cur_w, 0);
+                        intersection_buffer->push_back({intersection_pos, cur_w});
+                    }
+                }
+            }
+            cur_fp += step_fp;
+            cur_w += minor_step;
+        }
+    }
+}
+
+void RefreshPolarGrid(GeometryGraph& graph) {
+    // 极坐标通常生成放射状直线和同心圆（同心圆由多段线组成）
+    // 目前按架构清空即可
+}
+
+void RefreshCartesianGrid(GeometryGraph& graph) {
+    const auto& v = graph.view;
+    auto& buffer = graph.final_grid_buffer;
+    auto* intersection_buffer = &graph.final_axis_intersection_buffer;
+
+    double major_step = CalculateGridStep(v.wpp);
+    double minor_step = major_step / 5.0;
+
+    Vec2 w_min = v.ScreenToWorld(0, v.screen_height);
+    Vec2 w_max = v.ScreenToWorld(v.screen_width, 0);
+
+    // 绘制横线 (传入 global_state_mask)
+    GenerateCartesianLines(buffer, intersection_buffer, v, graph.global_state_mask,
+                           std::min(w_min.y, w_max.y), std::max(w_min.y, w_max.y),
+                           minor_step, major_step, v.ndc_scale_y, v.offset_y, true);
+
+    // 绘制纵线 (传入 global_state_mask)
+    GenerateCartesianLines(buffer, intersection_buffer, v, graph.global_state_mask,
+                           std::min(w_min.x, w_max.x), std::max(w_min.x, w_max.x),
+                           minor_step, major_step, v.ndc_scale_x, v.offset_x, false);
+
+    // 轴线始终单独精准计算 (pos=0 的位置)
+    Vec2i axis = v.WorldToClip(0, 0);
+    buffer.push_back({ {-32767, axis.y}, {32767, axis.y}});
+    buffer.push_back({ {axis.x, -32767}, {axis.x, 32767}});
+}
+
+void RefreshGridSystem(GeometryGraph& graph) {
+    graph.final_grid_buffer.clear();
+    graph.final_axis_intersection_buffer.clear();
+
+    // 1. 全局开关检查 (Bit 1)
+    if (graph.global_state_mask & GlobalState::DISABLE_GRID) {
+        return;
+    }
+
+    // 2. 根据枚举分发逻辑
+    switch (graph.grid_type) {
+        case GridSystemType::CARTESIAN:
+            RefreshCartesianGrid(graph);
+            break;
+        case GridSystemType::POLAR:
+            RefreshPolarGrid(graph);
+            break;
     }
 }
 
@@ -251,6 +388,9 @@ void calculate_points_core(GeometryGraph& graph) {
         }
     }
     RefreshAllLabels(graph);
+    if (graph.detect_view_change()) {
+        RefreshGridSystem(graph);
+    }
 
     graph.sync_view_snapshot();
     graph.m_pending_seeds.clear();

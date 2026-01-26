@@ -19,5 +19,10 @@
  */
 void calculate_points_core(GeometryGraph& graph);
 
+/**
+ * @brief 缓冲区压缩 (GC)
+ */
+void CompactBuffer(GeometryGraph& graph);
+
 
 #endif //PLOTCALL_H

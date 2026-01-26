@@ -49,6 +49,9 @@ set(SOURCE_FILES
         src/CAS/RPN/ShuntingYard.cpp
         src/graph/GeoCommands.cpp
         include/graph/GeoCommands.h
+        src/graph/GeoInteract.cpp
+        include/graph/GeoInteract.h
+
 
 )
 

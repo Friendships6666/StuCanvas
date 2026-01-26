@@ -152,6 +152,12 @@ void Solver_ConstrainedPoint(GeoNode& self, GeometryGraph& graph) {
 
     for (uint32_t i = start; i < end; ++i) {
         const auto& pt = pts[i];
+
+        // 跳过垃圾数据点
+        if (pt.x == graph.view.MAGIC_CLIP_X) {
+            continue;
+        }
+
         // 整数减法
         int32_t dx = static_cast<int32_t>(pt.x) - anchor_clip.x;
         int32_t dy = static_cast<int32_t>(pt.y) - anchor_clip.y;
