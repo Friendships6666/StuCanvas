@@ -65,7 +65,7 @@ StuCanvas 集成以下 C++ 库：
 
 
 ###  渲染引擎压力测试对比 (StuCanvas Benchmark v1.1)
-**注意：此表还在测试中，并非最终测试测试结果**
+**注意：此表还在测试中，不代表最终结果**
 | 公式                                | 描述  |       StuCanvas(性能模式)       |       StuCanvas(精度模式)       | Desmos | GeoGebra |     Mathematica     | Maple | MatLab | GrafEq |
 |:----------------------------------| :--- |:---------------------------:|:---------------------------:| :---: | :---: |:-------------------:| :---: | :---: | :---: |
 | $y^3 = \sin(x + 99999999)$        | $f64$ 高精偏移锯齿测试 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
