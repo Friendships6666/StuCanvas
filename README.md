@@ -1,6 +1,5 @@
 # StuCanvas
 
-现代化 Web 端跨平台实时函数绘制与几何图形构建应用。
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg?style=flat-square&logo=gnu)](https://www.gnu.org/licenses/gpl-3.0)
 [![WASM Build](https://img.shields.io/badge/WASM-Emscripten-green.svg)]()
