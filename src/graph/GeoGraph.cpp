@@ -84,7 +84,7 @@ void GeometryGraph::physical_delete(uint32_t delete_id) {
         // 3. 💡 修正所有受灾节点的偏移量
         // 逻辑：在池子里遍历，凡是排在被删节点“后面”的节点，偏移量全部减去被删点的数量
         for (auto& other : node_pool) {
-            if (other.active && other.buffer_offset > off) {
+            if (other.buffer_offset > off) {
                 other.buffer_offset -= cnt;
             }
         }
@@ -135,7 +135,7 @@ uint32_t GeometryGraph::GetNodeID(const std::string& name) const {
 
     // 💡 错误信息现在也可以包含原始名称，方便用户定位
     // 这里不再 throw，可以根据你之前的架构返回错误码
-    return GeoStatus::ERR_ID_NOT_FOUND;
+    return GeoErrorStatus::ERR_ID_NOT_FOUND;
 }
 
 std::string GeometryGraph::GenerateNextName() {
@@ -271,12 +271,9 @@ std::vector<uint32_t> GeometryGraph::FastScan() {
         GeoNode& node = get_node_by_id(id);
         if (node.rank < min_rank_to_start) min_rank_to_start = node.rank;
 
-        // 💡 关键：解除“失效粘滞”
-        // 如果节点是因为之前的计算错误或父节点失效而无效，现在它变脏了，应该尝试重新变回 VALID。
-        // 但是：如果是创建时的 ERR_TYPE_MISMATCH 或 ERR_SYNTAX（CAT_LINK类），不自动重置。
-        if ((node.status & GeoStatus::MASK_CAT) != GeoStatus::CAT_LINK) {
-            node.status = GeoStatus::VALID;
-        }
+
+            node.error_status = GeoErrorStatus::VALID;
+
     }
     m_pending_seeds.clear();
 
@@ -310,8 +307,8 @@ std::vector<uint32_t> GeometryGraph::FastScan() {
                             targets.push_back(curr_id);
 
                             // 💡 级联重置状态：给子节点重新计算的机会
-                            if ((node.status & GeoStatus::MASK_CAT) != GeoStatus::CAT_LINK) {
-                                node.status = GeoStatus::VALID;
+                            if ((node.error_status & GeoErrorStatus::MASK_CAT) != GeoErrorStatus::CAT_LINK) {
+                                node.error_status = GeoErrorStatus::VALID;
                             }
                             break;
                         }
@@ -383,14 +380,12 @@ void GeometryGraph::LinkAndRank(uint32_t child_id, const std::vector<uint32_t>& 
     for (uint32_t old_pid : node.parents) {
         if (is_alive(old_pid)) {
             auto& p_kids = get_node_by_id(old_pid).children;
-            p_kids.erase(std::remove(p_kids.begin(), p_kids.end(), child_id), p_kids.end());
+            std::erase(p_kids, child_id);
         }
     }
 
     node.parents = new_parent_ids;
 
-    // ★ 关键重构：将图解状态统一到 ComputedResult 标志位中 ★
-    node.result.set_f(ComputedResult::IS_HEURISTIC, is_heuristic_solver_local(node.solver));
 
     // 建立新连边
     for (uint32_t pid : node.parents) {

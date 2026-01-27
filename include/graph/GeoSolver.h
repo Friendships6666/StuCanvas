@@ -29,4 +29,7 @@ void Solver_Midpoint(GeoNode& self, GeometryGraph& graph);
 // 约束点求解器 (执行裁剪空间投影与吸附算法)
 void Solver_ConstrainedPoint(GeoNode& self, GeometryGraph& graph);
 
+// 图解交点求解器
+void Solver_GraphicalIntersectionPoint(GeoNode& self, GeometryGraph& graph);
+
 #endif // GEOSOLVER_H

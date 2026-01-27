@@ -41,7 +41,8 @@ struct Vec2i { int16_t x, y; };
 struct PointData { int16_t x, y; };
 struct FunctionResult { Vec2i start, end; };
 
-
+#include <expected>
+#include <string_view>
 
 
 

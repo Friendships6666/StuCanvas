@@ -36,13 +36,17 @@ struct ViewState;
 struct GeoFunctionMeta;
 
 
-namespace GlobalState {
-    enum Mask : uint64_t {
-        DISABLE_LABELS = 1ULL << 0, // 全局第一位：关闭所有标签显示
-        DISABLE_GRID   = 1ULL << 1, // 全局第二位：禁用所有网格线
-        DiSABLE_GRID_NUMBER = 1ULL << 2, // 全局第三位：禁用所有网格数字
-    };
-}
+
+enum GraphMask : uint64_t {
+    DISABLE_LABELS = 1ULL << 0, // 全局第一位：关闭所有标签显示
+    DISABLE_GRID   = 1ULL << 1, // 全局第二位：禁用所有网格线
+    DISABLE_GRID_NUMBER = 1ULL << 2, // 全局第三位：禁用所有网格数字
+};
+enum NodeMask : uint64_t {
+    IS_GRAPHICAL = 1ULL << 0,
+    IS_VISIBLE = 1ULL << 1,
+    IS_DIRTY = 1ULL << 2,
+};
 enum class GridSystemType : uint8_t {
     CARTESIAN = 0, // 直角坐标系
     POLAR     = 1  // 极坐标系
@@ -64,7 +68,7 @@ enum class FontType : uint8_t {
 };
 
 struct LabelConfig {
-    bool     show = true;
+    bool     show_label = true;
     int16_t  offset_x = 15;   // 屏幕像素偏移
     int16_t  offset_y = -15;
     float    size = 12.0f;
@@ -230,7 +234,7 @@ struct RuntimeBindingSlot {
 // =========================================================
 // 3. 大一统结果与逻辑槽位 (Fat Slot)
 // =========================================================
-struct alignas(64) ComputedResult {
+struct ComputedResult {
     union {
         // --- 语义层 1：纯数学/标量模式 (Calculator Mode) ---
         // 用于非几何节点，如 "2+2" 的结果存储。s4-s6 为以后扩展留出的标量槽。
@@ -263,55 +267,21 @@ struct alignas(64) ComputedResult {
             double x1_view, y1_view;  // 视口空间
             double spare_line_0;
         };
-
-        // 占位填充：确保 Union 部分占用 56 字节 (7个double)
         double _raw_data[7];
     };
 
-    // --- 状态与元数据 (占据最后 8 字节，凑齐 64 字节) ---
-    // 56 (数据) + 4 (flags) + 4 (i0) = 64 Bytes
-    uint32_t flags;
-    int32_t  i0;    // 备用整数槽位 (如：存储约束点的目标ID)
 
-    enum FlagMask : uint32_t {
-        VISIBLE      = 1 << 0,
-        DIRTY        = 1 << 1,
-        IS_INFINITE  = 1 << 2,
-        IS_HEURISTIC = 1 << 3,
-        SELECTED     = 1 << 4
-    };
 
-    // --- 极致性能工具函数 ---
 
-    FORCE_INLINE void set_f(uint32_t mask, bool val) {
-        if (val) flags |= mask;
-        else     flags &= ~mask;
-    }
-
-    FORCE_INLINE bool check_f(uint32_t mask) const {
-        return (flags & mask) != 0;
-    }
-
-    /**
-     * @brief 仅重置数值区 (32-56字节)，不触动元数据
-     */
-    FORCE_INLINE void reset_data() {
-        // 使用高效的内存归零
-        std::memset(&_raw_data, 0, 56);
-    }
 
     /**
      * @brief 彻底重置所有 64 字节（物理清零）
      */
     FORCE_INLINE void reset_all() {
-        std::memset(this, 0, 64);
+        std::memset(this, 0, sizeof(ComputedResult));
     }
 
-    // 快捷索引访问
-    template<int N> FORCE_INLINE double& get() {
-        static_assert(N >= 0 && N < 7, "Slot index out of range (0-6)");
-        return _raw_data[N];
-    }
+
 };
 
 namespace GeoType {
@@ -323,7 +293,8 @@ namespace GeoType {
         POINT_FREE       = 0x0101,
         POINT_CONSTRAINED= 0x0102,
         POINT_INTERSECT  = 0x0103,
-        POINT_MID        = 0x0104,
+        POINT_INTERSECT_GRAPHICAL  = 0x0104,
+        POINT_MID        = 0x0105,
 
         // --- 2. 线类 (CAT_LINE) ---
         CAT_LINE         = 0x0200,
@@ -362,7 +333,7 @@ namespace GeoType {
 }
 // --- include/graph/GeoGraph.h ---
 
-namespace GeoStatus {
+namespace GeoErrorStatus {
     enum Code : uint32_t {
         VALID            = 0,          // 完美状态
 
@@ -377,6 +348,7 @@ namespace GeoStatus {
         ERR_TYPE_MISMATCH= 0x1200,     // 类型不匹配（比如线段需要点，你传了函数）
         ERR_SYNTAX       = 0x1300,     // 公式语法错误
         ERR_CIRCULAR     = 0x1400,     // 循环引用检测
+        ERR_EMPTY_FORMULA = 0x1500,
 
         // --- 2. 数学错误 (Runtime) ---
         ERR_DIV_ZERO     = 0x2100,     // 除以零
@@ -399,7 +371,7 @@ struct LogicChannel {
     RuntimeBindingSlot* patch_ptr = nullptr;
     uint32_t    bytecode_len = 0;
     uint32_t    patch_len = 0;
-    double      value = 0.0;      // 计算出的实时数值
+    double      value = std::numeric_limits<double>::quiet_NaN();      // 计算出的实时数值
 
     // 释放内存
     FORCE_INLINE void clear() {
@@ -419,20 +391,9 @@ struct LogicChannel {
 };
 
 struct GeoNode {
+    std::vector<uint32_t> target_ids;
     uint64_t state_mask = 0;
 
-    FORCE_INLINE void set_state(uint64_t bit_index, bool val) {
-        if (val) state_mask |= (1ULL << bit_index);
-        else     state_mask &= ~(1ULL << bit_index);
-    }
-
-    FORCE_INLINE bool check_state(uint64_t bit_index) const {
-        return (state_mask & (1ULL << bit_index)) != 0;
-    }
-
-    FORCE_INLINE void toggle_state(uint64_t bit_index) {
-        state_mask ^= (1ULL << bit_index);
-    }
 
 
     LogicChannel channels[4];
@@ -449,7 +410,6 @@ struct GeoNode {
         std::string name = "BasicObject";
         float    thickness = 2.0f;           // 线宽或点径
         uint32_t color = 0x4D4DFFFF;         // 主体颜色 (RGBA)
-        bool     is_visible = true;          // 总开关
         LabelConfig label;
     };
 
@@ -457,10 +417,10 @@ struct GeoNode {
     uint32_t id = NULL_ID;
     uint32_t rank = 0;
 
-    uint32_t status = GeoStatus::VALID; // 💡 节点生命周期状态
+    uint32_t error_status = GeoErrorStatus::VALID; // 💡 节点生命周期状态
     FORCE_INLINE bool is_compute_ready() const {
         // 只有没有链接错误的节点才值得进入 Solver
-        return (status & GeoStatus::MASK_CAT) != GeoStatus::CAT_LINK;
+        return (error_status & GeoErrorStatus::MASK_CAT) != GeoErrorStatus::CAT_LINK;
     }
 
 
@@ -474,6 +434,7 @@ struct GeoNode {
     // --- 桶索引 (物理索引) ---
     uint32_t prev_in_bucket = NULL_ID;
     uint32_t next_in_bucket = NULL_ID;
+    bool     is_in_bucket = false;
 
     // --- 行为挂载 ---
     SolverFunc     solver = nullptr;
@@ -482,15 +443,15 @@ struct GeoNode {
     // --- 状态与缓存属性 ---
     uint32_t buffer_offset = 0;
     uint32_t current_point_count = 0;
-    bool     active = false;
-    bool     is_in_bucket = false;
+
+
 
     // --- 构造函数 ---
     GeoNode()
             : id(NULL_ID),
               type(GeoType::UNKNOWN),
-              status(GeoStatus::VALID), // 默认状态为 OK (0)
-              active(false)             // 初始不激活
+              error_status(GeoErrorStatus::VALID) // 默认状态为 OK (0)
+
         {
         // 彻底清空大一统计算槽位（物理清零数据和 RPN 指令指针）
         result.reset_all();
@@ -502,8 +463,8 @@ struct GeoNode {
     explicit GeoNode(uint32_t _id)
         : id(_id),
           type(GeoType::UNKNOWN),
-          status(GeoStatus::VALID),
-          active(false)
+          error_status(GeoErrorStatus::VALID)
+
     {
         result.reset_all();
     }
@@ -515,9 +476,7 @@ struct GeoNode {
                (static_cast<uint32_t>(b) << 8)  | (static_cast<uint32_t>(a));
     }
 
-    FORCE_INLINE const ComputedResult& get_parent_res(const std::vector<GeoNode>& pool, const std::vector<int32_t>& lut, uint32_t p_idx) const {
-        return pool[lut[parents[p_idx]]].result;
-    }
+
 };
 
 

@@ -52,6 +52,16 @@ namespace GeoFactory {
                                  const std::string &y_expr,
                                  const GeoNode::VisualConfig &config = {});
 
+    /**
+     * @brief 创建图解交点
+     * @param target_ids 参与交点计算的对象ID列表，要求为非点、非标量对象
+     */
+    uint32_t AddGraphicalIntersection(GeometryGraph &graph,
+                                      const std::vector<uint32_t> &target_ids,
+                                      const std::string &x_expr,
+                                      const std::string &y_expr,
+                                      const GeoNode::VisualConfig &config = {});
+
     void DeleteObjectRecursive(GeometryGraph &graph, uint32_t target_id);
 
     void InternalUpdateScalar(GeometryGraph &graph, uint32_t scalar_id, const std::string &new_infix);
