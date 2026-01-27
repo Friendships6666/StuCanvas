@@ -1,7 +1,6 @@
 ﻿// --- 文件路径: src/plot/plotCircle.cpp ---
 
 #include "../../include/plot/plotCircle.h"
-#include "../../include/functions/lerp.h" // 包含 world_to_clip_store
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -24,47 +23,39 @@ namespace {
 }
 
 void process_circle_specialized(
-    oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
+    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>>* results_queue,
     double cx, double cy, double r,
-    unsigned int func_idx,
-    const Vec2& world_origin,
-    double wppx, double wppy,
-    double screen_width, double screen_height,
-    const NDCMap& ndc_map
+    const ViewState& view
 ) {
 
     // 1. 确定世界坐标视口边界
-    double wx_start = world_origin.x;
-    double wx_end = world_origin.x + screen_width * wppx;
-    double wy_start = world_origin.y;
-    double wy_end = world_origin.y + screen_height * wppy;
+    // 使用 ViewState 的 ScreenToWorld 转换屏幕角落点，获取世界坐标边界
+    Vec2 world_top_left = view.ScreenToWorld(0, 0);
+    Vec2 world_bottom_right = view.ScreenToWorld(view.screen_width, view.screen_height);
 
-    double x_min = std::min(wx_start, wx_end);
-    double x_max = std::max(wx_start, wx_end);
-    double y_min = std::min(wy_start, wy_end);
-    double y_max = std::max(wy_start, wy_end);
+    double x_min = std::min(world_top_left.x, world_bottom_right.x);
+    double x_max = std::max(world_top_left.x, world_bottom_right.x);
+    double y_min = std::min(world_top_left.y, world_bottom_right.y);
+    double y_max = std::max(world_top_left.y, world_bottom_right.y);
 
     // 2. 快速剔除：包围盒不相交
     if (cx + r < x_min || cx - r > x_max || cy + r < y_min || cy - r > y_max) {
-
-
-        results_queue->push({func_idx, {}});
+        results_queue->push({}); // 推送空向量表示无结果
         return;
     }
-
 
     // 3. 计算 LOD (采样密度)
     // 屏幕像素半径 R_px
-    double r_pixel = std::abs(r / wppx);
+    // 使用 ViewState 的 zoom 和 screen_height 来计算 wpp（世界坐标每像素）
+    double wpp = view.wpp;
+    double r_pixel = std::abs(r / wpp);
+
     if (r_pixel < 0.5) {
-        results_queue->push({func_idx, {}});
-        std::cout << "r:"<<r << std::endl;
+        results_queue->push({}); // 推送空向量表示无结果
         return;
     }
 
-
-
-    double base_dt = 1 / pow(r_pixel,1.005);
+    double base_dt = 1 / pow(r_pixel, 1.005);
 
     // 4. 寻找所有切分点 t (交点 + 0 + 2PI)
     std::vector<double> cut_points;
@@ -92,16 +83,13 @@ void process_circle_specialized(
             cut_points.push_back(normalize_angle(M_PI - t));
         }
     };
-    solve_y(y_min); solve_y(y_max); // 修正：这里应该是 y_min, y_max
+    solve_y(y_min); solve_y(y_max); 
 
     // 排序切分点，形成有序的时间轴
     std::sort(cut_points.begin(), cut_points.end());
 
     std::vector<PointData> final_points;
-    // 预估最大点数分配内存
-
     final_points.reserve(6000);
-
 
     // 5. 遍历切分区间，计算有效部分
     for (size_t i = 0; i < cut_points.size() - 1; ++i) {
@@ -109,18 +97,14 @@ void process_circle_specialized(
         double t_end = cut_points[i+1];
         if (t_end - t_start < 1e-5) continue;
 
-
-
         // 取中点检查是否在屏幕内
         double t_mid = (t_start + t_end) * 0.5;
         double mx = cx + r * std::cos(t_mid);
         double my = cy + r * std::sin(t_mid);
 
         if (is_point_in_rect(mx, my, x_min, x_max, y_min, y_max)) {
-
             // 区间在屏幕内 -> 插值生成
             double span = t_end - t_start;
-            // 动态计算该段需要的步数
             int steps = std::max(2, static_cast<int>(std::ceil(span / base_dt)));
             double step_t = span / (steps - 1);
 
@@ -131,16 +115,12 @@ void process_circle_specialized(
                 double wx = cx + r * std::cos(t);
                 double wy = cy + r * std::sin(t);
 
-                // 转存为 Clip Float
-                PointData pd{};
-                world_to_clip_store(pd, wx, wy, ndc_map, func_idx);
-                final_points.push_back(pd);
+                // 转存为 Clip Int16，使用 WorldToClipNoOffset
+                Vec2i clip_coords = view.WorldToClipNoOffset(wx, wy);
+                final_points.push_back({clip_coords.x, clip_coords.y});
             }
-            // 按照要求：不插入 NaN，多段之间会自动连线
         }
     }
 
-
-
-    results_queue->push({func_idx, std::move(final_points)});
+    results_queue->push(std::move(final_points));
 }

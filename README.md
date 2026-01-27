@@ -2,7 +2,7 @@
 
 现代化 Web 端跨平台实时函数绘制与几何图形构建应用。
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg?style=flat-square&logo=gnu)](https://www.gnu.org/licenses/gpl-3.0)
 [![WASM Build](https://img.shields.io/badge/WASM-Emscripten-green.svg)]()
 [![Graphics](https://img.shields.io/badge/Graphics-WebGPU-orange.svg)]()
 
@@ -15,7 +15,7 @@
 
 *   **混合渲染算法**：混合 **区间算术 (Interval Arithmetic)** & **行进网格法 (Marching Squares)**，加速渲染&保持精度。
 *   **特殊抗锯齿技术**：针对“点图元”设计的抗锯齿方案，高性能高精度。
-*   **任意精度支持**：底层默认采用 `Double` 精度，并支持通过扩展实现 **任意精度浮点运算**，彻底消除微观缩放下的浮点漂移。
+*   **任意精度支持**：底层默认采用 `Double` 精度，并支持通过扩展实现 **任意精度浮点运算**。
 
 ## 依赖库 
 
@@ -39,7 +39,7 @@ StuCanvas 集成以下 C++ 库：
 
 ## 效果
 
-复合函数算法算法，精准处理各类复杂的几何关系与极端函数形态。
+启发式函数渲染算法，精准处理各类复杂的几何关系与极端函数形态。
 
 <table>
   <tr>
@@ -56,22 +56,7 @@ StuCanvas 集成以下 C++ 库：
   </tr>
 </table>
 
-### 实时交互演示
 
-CPU | U9 275hHx
-
-<table>
-  <tr>
-    <td align="center">
-      <video src="./docs/videos/1.mp4" width="300px" controls>您的浏览器不支持视频播放</video><br/>
-      <sub>StuCanvas实时绘制100个复杂隐函数</sub>
-    </td>
-    <td align="center">
-      <video src="./docs/videos/2.mp4" width="300px" controls>您的浏览器不支持视频播放</video><br/>
-      <sub>Desmos实时绘制50个y^3=sin(10x)</sub>
-    </td>
-  </tr>
-</table>
 
 
 ## 应用与集成
@@ -81,7 +66,7 @@ CPU | U9 275hHx
 
 
 ###  渲染引擎压力测试对比 (StuCanvas Benchmark v1.1)
-
+**注意：此表还在测试中，并非最终测试测试结果**
 | 公式                                | 描述  |       StuCanvas(性能模式)       |       StuCanvas(精度模式)       | Desmos | GeoGebra |     Mathematica     | Maple | MatLab | GrafEq |
 |:----------------------------------| :--- |:---------------------------:|:---------------------------:| :---: | :---: |:-------------------:| :---: | :---: | :---: |
 | $y^3 = \sin(x + 99999999)$        | $f64$ 高精偏移锯齿测试 | $\color{green}{\checkmark}$ | $\color{green}{\checkmark}$ | $\color{red}{\times}$ | $\color{red}{\times}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ | $\color{orange}{?}$ |
@@ -107,6 +92,3 @@ CPU | U9 275hHx
 
 
 
-## 许可证
-
-本项目采用 MIT 许可证。

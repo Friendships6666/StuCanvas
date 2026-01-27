@@ -304,6 +304,7 @@ namespace GeoType {
         LINE_TANGENT     = 0x0204,
         LINE_PERP        = 0x0205,
         LINE_PARALLEL    = 0x0206,
+        LINE_VECTOR      = 0x0207,
 
         // --- 3. 圆锥曲线类 (CAT_CONIC) ---
         CAT_CONIC        = 0x0300,

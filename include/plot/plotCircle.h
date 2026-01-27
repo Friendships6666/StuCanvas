@@ -5,7 +5,7 @@
 
 #include "../../pch.h"
 #include "plotCall.h"
-#include "../functions/lerp.h"
+#include "../graph/GeoGraph.h" // 包含 PointData
 #include <oneapi/tbb/concurrent_queue.h>
 
 /**
@@ -20,13 +20,9 @@
  * 3. 输出: Clip Space (Float)
  */
 void process_circle_specialized(
-    oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
+    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>>* results_queue,
     double cx, double cy, double r, // 世界坐标圆心与半径
-    unsigned int func_idx,
-    const Vec2& world_origin,
-    double wppx, double wppy,
-    double screen_width, double screen_height,
-    const NDCMap& ndc_map
+    const ViewState& view
 );
 
 #endif // PLOTCIRCLE_H
