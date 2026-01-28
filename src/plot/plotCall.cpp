@@ -3,6 +3,7 @@
 #include "../../include/graph/GeoGraph.h"
 #include "../../include/graph/GeoSolver.h"
 #include "../../pch.h"
+#include <../include/grids/grids.h>
 #include <oneapi/tbb/concurrent_queue.h>
 #include <vector>
 #include <algorithm>
@@ -166,74 +167,7 @@ namespace {
         }
         return false;
     }
-    double CalculateGridStep(double wpp) {
-        double target_world_step = 90.0 * wpp;
-        double exponent = std::floor(std::log10(target_world_step));
-        double power_of_10 = std::pow(10.0, exponent);
-        double fraction = target_world_step / power_of_10;
 
-        if (fraction < 1.5)      return 1.0 * power_of_10;
-        if (fraction < 3.5)      return 2.0 * power_of_10;
-        if (fraction < 7.5)      return 5.0 * power_of_10;
-        return 10.0 * power_of_10;
-    }
-
-    /**
-     * @brief 极致性能：单次循环生成所有网格线，并区分 Major 和 Axis
-     */
-    void GenerateCartesianLines(
-        std::vector<GridLineData>& buffer,
-        std::vector<AxisIntersectionData>* intersection_buffer,
-        const ViewState& v,
-        uint64_t global_mask,
-        double min_w, double max_w, double minor_step, double major_step,
-        double ndc_scale, double offset,
-        bool horizontal
-    ) {
-        // 预计算 16.16 增量
-        int32_t step_fp = static_cast<int32_t>((minor_step * ndc_scale) * 65536.0);
-
-        // 计算起始线的对齐世界坐标
-        double first_w = std::floor(min_w / minor_step) * minor_step;
-        int32_t cur_fp = static_cast<int32_t>(((first_w - offset) * ndc_scale) * 65536.0);
-        double cur_w = first_w;
-
-        // 终点限制
-        int32_t end_fp = static_cast<int32_t>(32767) << 16;
-        int32_t start_limit_fp = static_cast<int32_t>(-32767) << 16;
-
-        // 判定阈值（使用 minor_step 的 10% 作为浮点数容差）
-        double eps = minor_step * 0.1;
-
-        while (cur_fp <= end_fp) {
-            if (cur_fp >= start_limit_fp) {
-                int16_t pos = static_cast<int16_t>(cur_fp >> 16);
-
-                // 1. 判定是否为 Axis (坐标接近 0)
-                bool is_axis = (std::abs(cur_w) < eps);
-
-                // 2. 判定是否为 Major (坐标是 major_step 的倍数)
-                double major_rem = std::abs(std::remainder(cur_w, major_step));
-                bool is_major = (major_rem < eps);
-
-                // 只有非轴线才放入网格 buffer（轴线在外部单独绘制以保证最高精度）
-                if (!is_axis) {
-                    if (horizontal)
-                        buffer.push_back({ {-32767, pos}, {32767, pos}});
-                    else
-                        buffer.push_back({ {pos, -32767}, {pos, 32767}});
-
-                    // 如果是 Major 线且有交点容器，记录交点信息 (受 DISABLE_GRID_NUMBER 控制)
-                    if (is_major && intersection_buffer && !(global_mask & DISABLE_GRID_NUMBER)) {
-                        Vec2i intersection_pos = horizontal ? v.WorldToClip(0, cur_w) : v.WorldToClip(cur_w, 0);
-                        intersection_buffer->push_back({intersection_pos, cur_w});
-                    }
-                }
-            }
-            cur_fp += step_fp;
-            cur_w += minor_step;
-        }
-    }
 }
 
 void RefreshPolarGrid(GeometryGraph& graph) {
@@ -288,112 +222,160 @@ void RefreshGridSystem(GeometryGraph& graph) {
     }
 }
 
+#include <oneapi/tbb/parallel_for.h>
+
 void calculate_points_core(GeometryGraph& graph) {
     if (!graph.is_healthy()) return;
 
     auto& out_points = graph.final_points_buffer;
     auto& out_meta = graph.final_meta_buffer;
+    const ViewState& view = graph.view;
 
+    // 1. 视口变化全局处理
     bool viewport_changed = graph.detect_view_change();
     if (viewport_changed) {
         out_points.clear();
+        out_meta.clear();
+        // 视口变化时，所有节点都要检查是否需要重绘
         for (auto& n : graph.node_pool) {
             graph.mark_as_seed(n.id);
         }
     }
 
-
-    const ViewState& view = graph.view;
-    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> node_queue;
-    node_queue.set_capacity(4096);
-
+    // 2. 运行 FastScan 进行脏位和图解属性传染
+    // 此时 affected_ids 包含所有 logic_dirty 的 ID
     std::vector<uint32_t> affected_ids = graph.FastScan();
 
+    // 准备并发队列
+    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> node_queue;
+    node_queue.set_capacity(8192);
+
+    // 临时任务容器 (复用内存以优化性能)
+    std::vector<GeoNode*> solver_tasks;
+    std::vector<GeoNode*> plot_tasks;
+    solver_tasks.reserve(1024);
+    plot_tasks.reserve(1024);
+
+    // 3. 拓扑 Rank 大循环
     for (size_t w = 0; w < graph.active_ranks_mask.size(); ++w) {
         uint64_t mask = graph.active_ranks_mask[w];
         while (mask > 0) {
             uint32_t r_offset = find_first_set_bit_local(mask);
             uint32_t r = static_cast<uint32_t>(w * 64 + r_offset);
+            mask &= ~(1ULL << r_offset); // 移向下一个 Rank
 
+            solver_tasks.clear();
+            plot_tasks.clear();
+
+            // --- 阶段 A: 任务收集 ---
             uint32_t curr_id = graph.buckets_all_heads[r];
             while (curr_id != NULL_ID) {
                 GeoNode& node = graph.get_node_by_id(curr_id);
-                if (node.error_status == GeoErrorStatus::VALID) {
 
+                // 跳过无效节点 (FastScan 已经处理了 link 错误和 parent 错误)
+                if (GeoErrorStatus::ok(node.error_status)) {
+                    bool is_dirty = std::ranges::binary_search(affected_ids, node.id);
+                    bool is_graphical = (node.state_mask & (IS_GRAPHICAL | IS_GRAPHICAL_INFECTED));
 
-                    bool is_logic_dirty = std::ranges::binary_search(affected_ids, node.id);
-                    bool is_heuristic = node.state_mask & IS_GRAPHICAL;
-
-                    if (is_logic_dirty || (viewport_changed && is_heuristic)) {
-                        if (is_heuristic) {
-                            for (uint32_t pid : node.parents) {
-                                GeoNode& parent = graph.get_node_by_id(pid);
-                                if (parent.current_point_count == 0 && parent.render_task) {
-                                    parent.render_task(parent, graph, view, node_queue);
-                                    flush_node_results(parent, node_queue, graph);
-                                }
-                            }
-                        }
-
-                        bool parents_ok = true;
-                        for (uint32_t pid : node.parents) {
-                            if (!GeoErrorStatus::ok(graph.get_node_by_id(pid).error_status)) {
-                                parents_ok = false; break;
-                            }
-                        }
-
-                        if (parents_ok) {
-                            node.solver(node, graph);
-                        } else {
-                            node.error_status = GeoErrorStatus::ERR_PARENT_INVALID;
-                        }
+                    // Solver 判定条件：脏 || (视图变化 && 图解)
+                    if (is_dirty || (viewport_changed && is_graphical)) {
+                        solver_tasks.push_back(&node);
                     }
 
-                    if (GeoErrorStatus::ok(node.error_status)) {
-                        bool child_needs = check_children_need_plot(node, graph);
-
-                        if ((node.state_mask & IS_VISIBLE) || child_needs) {
-                            if (viewport_changed || is_logic_dirty) {
-                                if (node.render_task) {
-                                    // 💡 关键调用点：确保签名匹配
-                                    node.render_task(node, graph, view, node_queue);
-                                    flush_node_results(node, node_queue, graph);
-                                }
-                            }
-                        } else if (is_logic_dirty) {
-                            node.current_point_count = 0;
-                        }
+                    // Plot 判定条件：脏 || 视图变化
+                    if ((node.state_mask & IS_VISIBLE) && (is_dirty || viewport_changed)) {
+                        plot_tasks.push_back(&node);
                     }
 
-                    if (is_logic_dirty) {
-                        node.state_mask |= IS_DIRTY;
-                    }
-
-                    curr_id = node.next_in_bucket;
+                    if (is_dirty) node.state_mask |= IS_DIRTY;
                 }
-                mask &= ~(1ULL << r_offset);
+                curr_id = node.next_in_bucket;
+            }
+
+            if (solver_tasks.empty() && plot_tasks.empty()) continue;
+
+            // --- 阶段 B: 执行 Solver ---
+            if (!solver_tasks.empty()) {
+                if (solver_tasks.size() > 500) {
+                    oneapi::tbb::parallel_for(size_t(0), solver_tasks.size(), [&](size_t i) {
+                        GeoNode* n = solver_tasks[i];
+                        n->solver(*n, graph);
+                    });
+                } else {
+                    for (auto* n : solver_tasks) {
+                        n->solver(*n, graph);
+                    }
+                }
+
+                // 核心：无效状态传染。如果有节点计算失败，立即标记子孙
+                for (auto* n : solver_tasks) {
+                    if (!GeoErrorStatus::ok(n->error_status)) {
+                        // 级联标记无效（利用拓扑序，只需标记直接孩子，后面的 Rank 会继续传）
+                        for (uint32_t cid : n->children) {
+                            graph.get_node_by_id(cid).error_status = GeoErrorStatus::ERR_PARENT_INVALID;
+                        }
+                    }
+                }
+            }
+
+            // --- 阶段 C: 执行 Plot ---
+            // 过滤掉因为刚刚 Solver 失败而变得无效的 Plot 任务
+            auto it = std::remove_if(plot_tasks.begin(), plot_tasks.end(), [](GeoNode* n) {
+                return !GeoErrorStatus::ok(n->error_status);
+            });
+            plot_tasks.erase(it, plot_tasks.end());
+
+            if (!plot_tasks.empty()) {
+                if (plot_tasks.size() > 100) {
+                    oneapi::tbb::parallel_for(size_t(0), plot_tasks.size(), [&](size_t i) {
+                        GeoNode* n = plot_tasks[i];
+                        if (n->render_task) {
+                            n->render_task(*n, graph, view, node_queue);
+                        }
+                    });
+                } else {
+                    for (auto* n : plot_tasks) {
+                        if (n->render_task) {
+                            n->render_task(*n, graph, view, node_queue);
+                        }
+                    }
+                }
+
+                // 串行收割数据入主缓冲区（保持线程安全和内存连续性）
+                // 注意：flush_node_results 内部会处理 node_queue 的 try_pop
+                for (auto* n : plot_tasks) {
+                    flush_node_results(*n, node_queue, graph);
+                }
             }
         }
     }
 
+    // 4. 后处理与元数据构建
     out_meta.clear();
-    for (const auto& node : graph.node_pool) {
-        if (GeoErrorStatus::ok(node.error_status) && (node.state_mask & IS_VISIBLE) && node.current_point_count > 0) {
-            out_meta.push_back({
-                node.buffer_offset,
-                node.current_point_count,
-                node.id,
-                node.type,
-                node.config,
-                node.state_mask
-            });
-        }
+    for (auto& node : graph.node_pool) {
+
+
+        out_meta.push_back({
+            node.buffer_offset,
+            node.current_point_count,
+            node.id,
+            node.type,
+            node.config,
+            node.state_mask
+        });
+
+
+        // 5. 清理临时掩码：脏标记和图解传染标记
+        node.state_mask &= ~(IS_DIRTY | IS_GRAPHICAL_INFECTED);
     }
+
+    // 6. 辅助系统刷新
     RefreshAllLabels(graph);
-    if (graph.detect_view_change()) {
+    if (viewport_changed) {
         RefreshGridSystem(graph);
     }
 
+    // 7. 同步状态，准备下一帧
     graph.sync_view_snapshot();
     graph.m_pending_seeds.clear();
     std::ranges::fill(graph.m_dirty_mask, 0);

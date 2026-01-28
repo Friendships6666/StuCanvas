@@ -48,6 +48,7 @@ enum NodeMask : uint64_t {
     IS_VISIBLE = 1ULL << 1,
     IS_DIRTY = 1ULL << 2,
     IS_SELECTED = 1ULL << 3,
+    IS_GRAPHICAL_INFECTED = 1ULL << 4,
 };
 enum class GridSystemType : uint8_t {
     CARTESIAN = 0, // 直角坐标系
@@ -505,6 +506,13 @@ struct AxisIntersectionData {
 
 class GeometryGraph {
 public:
+    std::vector<uint32_t> registers;
+
+    std::vector<PointData> preview_points;
+    GeoNode::VisualConfig preview_visual_config;
+    GeoType::Type preview_type = GeoType::UNKNOWN;
+
+
     GridSystemType grid_type = GridSystemType::CARTESIAN; // 默认直角坐标系
     std::vector<GridLineData> final_grid_buffer; // 网格缓冲区
     uint32_t status = GraphStatus::READY;

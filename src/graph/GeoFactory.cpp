@@ -58,7 +58,7 @@ namespace GeoFactory {
             // 调用极致优化的 DDA 补点算法
             process_two_point_line(q, p1.result.x_view, p1.result.y_view,
                                    p2.result.x_view, p2.result.y_view,
-                                   true, self.id, view);
+                                   true, view);
         }
 
         /**

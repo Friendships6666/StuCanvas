@@ -20,4 +20,6 @@ uint32_t AddPoint_Interact(GeometryGraph& graph, double screen_x, double screen_
  */
 uint32_t InitSegment_Interact(GeometryGraph& graph, double screen_x, double screen_y);
 uint32_t TrySelect_Interact(GeometryGraph& graph, double screen_x, double screen_y, bool is_multi_select);
+Vec2 SnapToGrid_Interact(GeometryGraph& graph, Vec2 world_coord);
+void PreviewSegment_Intertact(GeometryGraph& graph,uint32_t id,double screen_x,double screen_y);
 #endif // GEO_INTERACT_H

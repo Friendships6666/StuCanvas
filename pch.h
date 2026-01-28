@@ -52,7 +52,7 @@ using batch_type = xs::batch<double>;
 constexpr size_t BATCH_SIZE = batch_type::size;
 // 全局模拟 Buffer (对应 WASM 里的 SharedArrayBuffer)
 #ifndef NULL_ID
-#define NULL_ID 0xFFFFFFFF
+#define NULL_ID 0
 #endif
 
 

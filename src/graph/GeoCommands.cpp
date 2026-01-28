@@ -5,8 +5,7 @@
 #include <algorithm>
 #include <vector>
 
-extern std::vector<PointData> wasm_final_contiguous_buffer;
-extern std::vector<FunctionRange> wasm_function_ranges_buffer;
+
 
 namespace GeoCommand {
 

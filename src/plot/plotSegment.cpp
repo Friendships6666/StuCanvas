@@ -2,6 +2,7 @@
 
 #include "../../include/plot/plotCall.h"
 #include "../../include/graph/GeoGraph.h"
+#include "../../include/plot/plotSegment.h"
 #include <algorithm>
 #include <vector>
 #include <cmath>
@@ -15,7 +16,6 @@ void process_two_point_line(
     oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>>& queue,
     double x1, double y1, double x2, double y2, // 输入为相对坐标 (x_view, y_view)
     bool is_segment,
-    uint32_t func_id,
     const ViewState& view
 ) {
     // 1. 计算局部裁剪边界 (基于相对坐标系)

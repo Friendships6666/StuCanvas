@@ -15,42 +15,44 @@ set(SOURCE_FILES
         pch.h
         pch.cpp
         src/main.cpp
-#        include/graph/GeoGraph.h
-#        src/graph/GeoGraph.cpp
-#        include/graph/GeoFactory.h
-#        src/graph/GeoFactory.cpp
-#        include/graph/GeoSolver.h
-#        src/graph/GeoSolver.cpp
-#
-#
-#        include/plot/plotCall.h
-#        src/plot/plotCall.cpp
-#        include/plot/plotExplicit.h
-#        src/plot/plotExplicit.cpp
-#        include/plot/plotImplicit.h
-#        src/plot/plotImplicit.cpp
-#
-#        include/plot/plotSegment.h
-#        src/plot/plotSegment.cpp
-#        include/plot/plotCircle.h
-#        src/plot/plotCircle.cpp
-#
-#
-#        include/CAS/RPN/RPN.h
-#        src/CAS/RPN/RPN.cpp
-#        include/CAS/RPN/MultiIntervalRPN.h
-#        include/interval/interval.h
-#        src/interval/intervalEvaluate.cpp
-#        include/interval/MultiInterval.h
-#        include/functions/functions.h  # 注意：Linux 区分大小写，确保路径一致
-#        include/functions/lerp.h
-#
-#        include/CAS/RPN/ShuntingYard.h
-#        src/CAS/RPN/ShuntingYard.cpp
-#        src/graph/GeoCommands.cpp
-#        include/graph/GeoCommands.h
-#        src/graph/GeoInteract.cpp
-#        include/graph/GeoInteract.h
+        include/graph/GeoGraph.h
+        src/graph/GeoGraph.cpp
+        include/graph/GeoFactory.h
+        src/graph/GeoFactory.cpp
+        include/graph/GeoSolver.h
+        src/graph/GeoSolver.cpp
+
+
+        include/plot/plotCall.h
+        src/plot/plotCall.cpp
+        include/plot/plotExplicit.h
+        src/plot/plotExplicit.cpp
+        include/plot/plotImplicit.h
+        src/plot/plotImplicit.cpp
+
+        include/plot/plotSegment.h
+        src/plot/plotSegment.cpp
+        include/plot/plotCircle.h
+        src/plot/plotCircle.cpp
+
+
+        include/CAS/RPN/RPN.h
+        src/CAS/RPN/RPN.cpp
+        include/CAS/RPN/MultiIntervalRPN.h
+        include/interval/interval.h
+        src/interval/intervalEvaluate.cpp
+        include/interval/MultiInterval.h
+        include/functions/functions.h  # 注意：Linux 区分大小写，确保路径一致
+        include/functions/lerp.h
+
+        include/CAS/RPN/ShuntingYard.h
+        src/CAS/RPN/ShuntingYard.cpp
+        src/graph/GeoCommands.cpp
+        include/graph/GeoCommands.h
+        src/graph/GeoInteract.cpp
+        include/graph/GeoInteract.h
+        src/grids/grids.cpp
+        include/grids/grids.h
 
 
 )

@@ -2,6 +2,7 @@
 #include "../../include/graph/GeoFactory.h"
 #include "../../include/plot/plotCall.h"
 #include "../../include/graph/GeoGraph.h"
+#include "../../include/grids/grids.h"
 #include <vector>
 #include <set>
 #include <string>
@@ -153,6 +154,7 @@ uint32_t InitSegment_Interact(GeometryGraph& graph, double screen_x, double scre
             const auto& selected_node = graph.get_node_by_id(selected_id);
             if (GeoType::is_point(selected_node.type)) {
                 graph.get_node_by_id(selected_id).state_mask |= IS_SELECTED;
+                graph.registers[0] = selected_id;
                 return selected_id; // 成功选中一个点，返回其ID
             }
         }
@@ -162,6 +164,54 @@ uint32_t InitSegment_Interact(GeometryGraph& graph, double screen_x, double scre
     // AddPoint_Interact 现在会返回新创建点的ID
     auto new_point = AddPoint_Interact(graph, screen_x, screen_y);
     graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
+    graph.registers[0] = selected_id;
     return new_point;
 
+}
+
+/**
+ * @brief 仅吸附主网格(Major Grid)交点
+ * 直接复用 CalculateGridStep 获取主网格步长
+ */
+Vec2 SnapToGrid_Interact(GeometryGraph& graph, Vec2 world_coord) {
+    const auto& view = graph.view;
+
+    // 1. 获取主网格步长 (Major Step)
+    // 此时 snap_step 严格等于渲染层中的 major_step
+    double snap_step = CalculateGridStep(view.wpp);
+
+    // 2. 计算最近的 Major 坐标倍数
+    double snapped_x = std::round(world_coord.x / snap_step) * snap_step;
+    double snapped_y = std::round(world_coord.y / snap_step) * snap_step;
+
+    // 3. 计算吸附阈值（10 屏幕像素）
+    double threshold = 10.0 * view.wpp;
+    double dx = world_coord.x - snapped_x;
+    double dy = world_coord.y - snapped_y;
+
+    // 4. 执行吸附判定
+    // 使用距离平方判定，效率更高
+    if ((dx * dx + dy * dy) <= (threshold * threshold)) {
+        return { snapped_x, snapped_y };
+    }
+
+    // 移除 else 冗余：若未进入 if 块，自然返回原始坐标
+    return world_coord;
+}
+
+
+void PreviewSegment_Intertact(GeometryGraph& graph,uint32_t id,double screen_x,double screen_y)
+{
+    auto& node = graph.get_node_by_id(id);
+    if (GeoType::is_point(node.type) && node.error_status == GeoErrorStatus::VALID) {
+        const auto& view = graph.view;
+        Vec2 mouse_pos = view.ScreenToWorld(screen_x,screen_y);
+        auto mouse_pos_no_offset_x = mouse_pos.x - view.offset_x;
+        auto mouse_pos_no_offset_y = mouse_pos.y - view.offset_y;
+        double point_x = node.result.x_view;
+        double point_y = node.result.y_view;
+
+
+
+    }
 }

@@ -248,10 +248,9 @@ void GeometryGraph::UpdateRankRecursive(uint32_t start_node_id) {
 
 
 std::vector<uint32_t> GeometryGraph::FastScan() {
-    // 1. 种子消费：如果没有待处理的震源，直接返回
     if (m_pending_seeds.empty()) return {};
 
-    // 2. 脏位图初始化与自动扩容
+    // 1. 扩容脏位图
     uint32_t max_id = id_generator.load(std::memory_order_relaxed);
     if (m_dirty_mask.size() < max_id) {
         m_dirty_mask.resize(max_id + 128, 0);
@@ -260,31 +259,22 @@ std::vector<uint32_t> GeometryGraph::FastScan() {
     std::vector<uint32_t> targets;
     uint32_t min_rank_to_start = 0xFFFFFFFF;
 
-    // 3. 初始震源处理（种子节点）
+    // 2. 震源初始化
     for (uint32_t id : m_pending_seeds) {
         if (!is_alive(id)) continue;
-        if (m_dirty_mask[id]) continue; // 避免重复添加
-
         m_dirty_mask[id] = 1;
-        targets.push_back(id);
-
-        GeoNode& node = get_node_by_id(id);
-        if (node.rank < min_rank_to_start) min_rank_to_start = node.rank;
-
-
-            node.error_status = GeoErrorStatus::VALID;
-
+        uint32_t r = get_node_by_id(id).rank;
+        if (r < min_rank_to_start) min_rank_to_start = r;
     }
     m_pending_seeds.clear();
 
-    // 4. 位图跳跃式拓扑扩散
+    // 3. 拓扑序正向扫描 (从父到子)
     size_t start_word = (min_rank_to_start == 0xFFFFFFFF) ? 0 : min_rank_to_start / 64;
 
     for (size_t w = start_word; w < active_ranks_mask.size(); ++w) {
         uint64_t mask = active_ranks_mask[w];
         if (mask == 0) continue;
 
-        // 对齐起始 Rank
         if (w == start_word && min_rank_to_start != 0xFFFFFFFF) {
             mask &= (~0ULL << (min_rank_to_start % 64));
         }
@@ -293,36 +283,59 @@ std::vector<uint32_t> GeometryGraph::FastScan() {
             uint32_t r_offset = find_first_set_bit(mask);
             uint32_t r = static_cast<uint32_t>(w * 64 + r_offset);
 
-            // 遍历当前 Rank 的桶
             uint32_t curr_id = buckets_all_heads[r];
             while (curr_id != NULL_ID) {
                 GeoNode& node = get_node_by_id(curr_id);
 
-                // 如果当前节点还没变脏，检查它的父节点们
-                if (m_dirty_mask[curr_id] == 0) {
-                    for (uint32_t pid : node.parents) {
-                        if (m_dirty_mask[pid]) {
-                            // 只要有一个父亲脏了，我也变脏
-                            m_dirty_mask[curr_id] = 1;
-                            targets.push_back(curr_id);
+                // 💡 A. 检查本节点是否需要向下传染 (脏位 或 图解属性)
+                bool is_dirty = m_dirty_mask[curr_id];
+                bool is_graphical = (node.state_mask & (IS_GRAPHICAL | IS_GRAPHICAL_INFECTED));
 
-                            // 💡 级联重置状态：给子节点重新计算的机会
-                            if ((node.error_status & GeoErrorStatus::MASK_CAT) != GeoErrorStatus::CAT_LINK) {
-                                node.error_status = GeoErrorStatus::VALID;
-                            }
-                            break;
+                if (is_dirty || is_graphical) {
+                    for (uint32_t cid : node.children) {
+                        if (is_dirty) m_dirty_mask[cid] = 1;
+                        if (is_graphical) {
+                            // 传染图解受累属性
+                            get_node_by_id(cid).state_mask |= IS_GRAPHICAL_INFECTED;
                         }
                     }
                 }
+
+                // 💡 B. 如果节点变脏，执行“安全状态重置” (关键点)
+                // 必须在此处执行，因为此时所有父节点已处理完毕
+                if (is_dirty) {
+                    targets.push_back(curr_id);
+
+                    // 只有非硬伤（不是链接错误）才重置
+                    if ((node.error_status & GeoErrorStatus::MASK_CAT) != GeoErrorStatus::CAT_LINK) {
+
+                        // --- 极致性能：检查父节点是否有“硬伤” ---
+                        bool parent_has_hard_error = false;
+                        for (uint32_t pid : node.parents) {
+                            // 检查父节点是否存在无法逾越的错误（如 ID 丢失、语法错误）
+                            // 此时父节点的状态已经是本帧最新的
+                            uint32_t p_status = get_node_by_id(pid).error_status;
+                            if (p_status != GeoErrorStatus::VALID) {
+                                parent_has_hard_error = true;
+                                break;
+                            }
+                        }
+
+                        if (parent_has_hard_error) {
+                            node.error_status = GeoErrorStatus::ERR_PARENT_INVALID;
+                        } else {
+                            node.error_status = GeoErrorStatus::VALID; // 安全重置，等待 Solver
+                        }
+                    }
+                }
+
                 curr_id = node.next_in_bucket;
             }
             mask &= ~(1ULL << r_offset);
         }
     }
 
-    // 5. 排序：为了在 calculate_points_core 中能用 binary_search 快速判定
     std::ranges::sort(targets);
-
     return targets;
 }
 // =========================================================
