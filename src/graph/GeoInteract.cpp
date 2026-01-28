@@ -7,9 +7,8 @@
 #include <string>
 #include <cmath>
 
-void AddPoint_Interact(GeometryGraph& graph, double screen_x, double screen_y) {
-    // 1. 立即执行 GC，确保缓冲区一致性
-    // CompactBuffer(graph); // 假设 CompactBuffer 在 GeoGraph 内部或其他地方被调用
+uint32_t AddPoint_Interact(GeometryGraph& graph, double screen_x, double screen_y) {
+
 
     const auto& view = graph.view;
     const auto& points = graph.final_points_buffer;
@@ -51,8 +50,7 @@ void AddPoint_Interact(GeometryGraph& graph, double screen_x, double screen_y) {
         
         if (node_hit) {
             intersection_candidates_ids.push_back(node.id);
-            // 为了效率，如果找到足够多的交点候选（例如，至少2个），可以提前退出
-            // if (intersection_candidates_ids.size() >= 2) break; 
+
         }
     }
 
@@ -63,17 +61,107 @@ void AddPoint_Interact(GeometryGraph& graph, double screen_x, double screen_y) {
 
 
     if (intersection_candidates_ids.empty()) {
-        // 情况 A: 空旷区域 -> 创建自由点
-        GeoFactory::AddFreePoint(graph, x_str, y_str);
-    } 
-    else if (intersection_candidates_ids.size() == 1) {
-        // 情况 B: 命中一个非点、非标量对象 -> 创建约束点
-        uint32_t target_id = intersection_candidates_ids[0];
-        GeoFactory::AddConstrainedPoint(graph, target_id, x_str, y_str);
+        return GeoFactory::AddFreePoint(graph, x_str, y_str);
     }
-    else {
-        // 情况 C: 命中多个非点、非标量对象 -> 创建图解交点
-        // x_str 和 y_str 作为锚点公式，指示初始交点位置
-        GeoFactory::AddGraphicalIntersection(graph, intersection_candidates_ids, x_str, y_str);
+
+    if (intersection_candidates_ids.size() == 1) {
+        return GeoFactory::AddConstrainedPoint(graph, intersection_candidates_ids[0], x_str, y_str);
     }
+
+    // 情况 C: 命中多个对象
+    return GeoFactory::AddGraphicalIntersection(graph, intersection_candidates_ids, x_str, y_str);
+}
+uint32_t TrySelect_Interact(GeometryGraph& graph, double screen_x, double screen_y, bool is_multi_select) {
+    // 1. 如果不是多选模式，清除所有节点的选中状态
+    if (!is_multi_select) {
+        for (auto& node : graph.node_pool) {
+            if (graph.is_alive(node.id)) {
+                node.state_mask &= ~IS_SELECTED;
+            }
+        }
+    }
+
+    const auto& view = graph.view;
+    const auto& points_buffer = graph.final_points_buffer;
+
+    // 2. 将鼠标屏幕位置映射到 int16 剪裁空间
+    Vec2i target_clip = view.ScreenToClip(screen_x, screen_y);
+
+    uint32_t nearest_id = 0;
+    int64_t min_dist_sq = std::numeric_limits<int64_t>::max();
+
+    // 3. 遍历所有活跃节点，寻找最近的符合条件的节点
+    for (auto& node : graph.node_pool) {
+        if (!graph.is_alive(node.id) || !(node.state_mask & IS_VISIBLE)) continue;
+
+        int32_t current_threshold_sq = 0;
+        if (GeoType::is_point(node.type)) {
+            // 点对象：10 像素容忍度
+            double clip_threshold = 10.0 * view.s2c_scale_y;
+            current_threshold_sq = static_cast<int32_t>(clip_threshold * clip_threshold);
+
+            // 对于点对象，直接使用其自身的中心点坐标
+            Vec2i node_clip_pos = view.WorldToClip(node.result.x, node.result.y);
+            int64_t dx = static_cast<int64_t>(node_clip_pos.x) - target_clip.x;
+            int64_t dy = static_cast<int64_t>(node_clip_pos.y) - target_clip.y;
+            int64_t d2 = dx * dx + dy * dy;
+
+            if (d2 <= current_threshold_sq && d2 < min_dist_sq) {
+                min_dist_sq = d2;
+                nearest_id = node.id;
+            }
+
+        } else if (!GeoType::is_scalar(node.type)) {
+            // 非点、非标量对象：5 像素容忍度
+            double clip_threshold = 5.0 * view.s2c_scale_y;
+            current_threshold_sq = static_cast<int32_t>(clip_threshold * clip_threshold);
+
+            // 遍历节点的渲染点数据
+            uint32_t start_idx = node.buffer_offset;
+            uint32_t end_idx = start_idx + node.current_point_count;
+            for (uint32_t i = start_idx; i < end_idx; ++i) {
+                const auto& pt = points_buffer[i];
+                if (pt.x == graph.view.MAGIC_CLIP_X) continue; // 跳过无效点
+
+                int64_t dx = static_cast<int64_t>(pt.x) - target_clip.x;
+                int64_t dy = static_cast<int64_t>(pt.y) - target_clip.y;
+                int64_t d2 = dx * dx + dy * dy;
+
+                if (d2 <= current_threshold_sq && d2 < min_dist_sq) {
+                    min_dist_sq = d2;
+                    nearest_id = node.id;
+                }
+            }
+        }
+    }
+
+    // 4. 更新选中状态并返回ID
+
+    return nearest_id;
+}
+
+uint32_t InitSegment_Interact(GeometryGraph& graph, double screen_x, double screen_y) {
+    // 1. 尝试选择已有的点
+    // 假设 TrySelect_Interact 会处理 IS_SELECTED 掩码的设置
+    uint32_t selected_id = TrySelect_Interact(graph, screen_x, screen_y, false); // 非多选模式
+
+
+
+    // 2. 检查选中的节点是否是一个点
+    if (selected_id != 0) { // 假设 0 是 NULL_ID
+        if (graph.is_alive(selected_id)) {
+            const auto& selected_node = graph.get_node_by_id(selected_id);
+            if (GeoType::is_point(selected_node.type)) {
+                graph.get_node_by_id(selected_id).state_mask |= IS_SELECTED;
+                return selected_id; // 成功选中一个点，返回其ID
+            }
+        }
+    }
+
+    // 3. 如果没有选中有效的点，则创建一个新的点
+    // AddPoint_Interact 现在会返回新创建点的ID
+    auto new_point = AddPoint_Interact(graph, screen_x, screen_y);
+    graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
+    return new_point;
+
 }

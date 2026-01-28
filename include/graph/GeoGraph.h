@@ -42,10 +42,12 @@ enum GraphMask : uint64_t {
     DISABLE_GRID   = 1ULL << 1, // 全局第二位：禁用所有网格线
     DISABLE_GRID_NUMBER = 1ULL << 2, // 全局第三位：禁用所有网格数字
 };
+
 enum NodeMask : uint64_t {
     IS_GRAPHICAL = 1ULL << 0,
     IS_VISIBLE = 1ULL << 1,
     IS_DIRTY = 1ULL << 2,
+    IS_SELECTED = 1ULL << 3,
 };
 enum class GridSystemType : uint8_t {
     CARTESIAN = 0, // 直角坐标系
@@ -305,6 +307,7 @@ namespace GeoType {
         LINE_PERP        = 0x0205,
         LINE_PARALLEL    = 0x0206,
         LINE_VECTOR      = 0x0207,
+        LINE_FIXED_DISTANCE = 0x0208,
 
         // --- 3. 圆锥曲线类 (CAT_CONIC) ---
         CAT_CONIC        = 0x0300,
@@ -591,6 +594,7 @@ struct GeoFunctionMeta {
     uint32_t id;                    // 4 字节
     GeoType::Type type;             // 4 字节 (因为指定了底层类型为 uint32_t)
     GeoNode::VisualConfig config;   // 视觉配置
+    uint64_t state_mask;
 };
 struct LabelRenderData {
     Vec2i    position;   // 计算后的最终 Clip 坐标

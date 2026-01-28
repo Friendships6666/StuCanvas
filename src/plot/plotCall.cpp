@@ -318,7 +318,7 @@ void calculate_points_core(GeometryGraph& graph) {
             uint32_t curr_id = graph.buckets_all_heads[r];
             while (curr_id != NULL_ID) {
                 GeoNode& node = graph.get_node_by_id(curr_id);
-                if (node.error_status = GeoErrorStatus::VALID) {
+                if (node.error_status == GeoErrorStatus::VALID) {
 
 
                     bool is_logic_dirty = std::ranges::binary_search(affected_ids, node.id);
@@ -384,7 +384,8 @@ void calculate_points_core(GeometryGraph& graph) {
                 node.current_point_count,
                 node.id,
                 node.type,
-                node.config
+                node.config,
+                node.state_mask
             });
         }
     }
