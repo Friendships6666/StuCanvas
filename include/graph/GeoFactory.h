@@ -15,7 +15,7 @@ namespace GeoFactory {
     /**
      * @brief 创建内部标量 (通常不可见，但允许传入配置以供调试或特殊命名)
      */
-    uint32_t AddInternalScalar(GeometryGraph &graph,
+    uint32_t CreateInternalScalar(GeometryGraph &graph,
                                const std::string &infix_expr,
                                const GeoNode::VisualConfig &config = {});
 
@@ -23,7 +23,7 @@ namespace GeoFactory {
      * @brief 创建自由点
      * @param config 包含颜色、粗细、名字、是否可见等
      */
-    uint32_t AddFreePoint(GeometryGraph &graph,
+    uint32_t CreateFreePoint(GeometryGraph &graph,
                           const std::string &x_expr,
                           const std::string &y_expr,
                           const GeoNode::VisualConfig &config = {});
@@ -31,12 +31,12 @@ namespace GeoFactory {
     /**
      * @brief 创建线段
      */
-    uint32_t AddSegment(GeometryGraph &graph,
+    uint32_t CreateSegment(GeometryGraph &graph,
                         uint32_t p1_id,
                         uint32_t p2_id,
                         const GeoNode::VisualConfig &config = {});
 
-    uint32_t AddMidPoint(GeometryGraph &graph,
+    uint32_t CreateMidPoint(GeometryGraph &graph,
                          uint32_t p1_id,
                          uint32_t p2_id,
                          const GeoNode::VisualConfig &config = {});
@@ -46,17 +46,20 @@ namespace GeoFactory {
      * @param target_id 目标对象 (Line/Circle/Curve)
      * @param x_expr, y_expr 初始吸附位置的锚点公式
      */
-    uint32_t AddConstrainedPoint(GeometryGraph &graph,
+    uint32_t CreateConstrainedPoint(GeometryGraph &graph,
                                  uint32_t target_id,
                                  const std::string &x_expr,
                                  const std::string &y_expr,
                                  const GeoNode::VisualConfig &config = {});
+    uint32_t CreateCircle_1Point_1Radius(GeometryGraph &graph,uint32_t center_id,const std::string &r,const GeoNode::VisualConfig &config = {});
+    uint32_t CreateCircle_2Points(GeometryGraph &graph,uint32_t id1,uint32_t id2,const GeoNode::VisualConfig &config = {});
+    uint32_t CreateCircle_3Points(GeometryGraph &graph,uint32_t id1,uint32_t id2,uint32_t id3,const GeoNode::VisualConfig &config = {});
 
     /**
      * @brief 创建图解交点
      * @param target_ids 参与交点计算的对象ID列表，要求为非点、非标量对象
      */
-    uint32_t AddGraphicalIntersection(GeometryGraph &graph,
+    uint32_t CreateGraphicalIntersection(GeometryGraph &graph,
                                       const std::vector<uint32_t> &target_ids,
                                       const std::string &x_expr,
                                       const std::string &y_expr,

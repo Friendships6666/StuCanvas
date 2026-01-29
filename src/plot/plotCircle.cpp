@@ -22,7 +22,7 @@ namespace {
     }
 }
 
-void process_circle_specialized(
+void PlotCircle(
     oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>>* results_queue,
     double cx, double cy, double r,
     const ViewState& view

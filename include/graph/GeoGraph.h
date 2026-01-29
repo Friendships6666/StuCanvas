@@ -313,8 +313,10 @@ namespace GeoType {
 
         // --- 3. 圆锥曲线类 (CAT_CONIC) ---
         CAT_CONIC        = 0x0300,
-        CIRCLE_FULL      = 0x0301,
-        CIRCLE_ARC       = 0x0302,
+        CIRCLE_FULL_1POINT_1RADIUS     = 0x0301,
+        CIRCLE_FULL_3POINTS  = 0x0302,
+        CIRCLE_FULL_2POINTS    = 0x0303,
+        CIRCLE_ARC       = 0x0304,
 
         // --- 4. 函数/高级曲线类 (CAT_CURVE) ---
         CAT_CURVE        = 0x0400,
@@ -361,6 +363,7 @@ namespace GeoErrorStatus {
         ERR_MATH_DOMAIN  = 0x2200,     // 数学定义域错误（负数开根号等）
         ERR_OVERFLOW     = 0x2300,     // 数值溢出 (Infinity)
         ERR_EMPTY_RESULT = 0x2400,     // 求解器无解（如两条平行线求交点）
+        ERR_INVALID_RADIUS = 0x2500,
 
         // --- 3. 级联错误 (Propagation) ---
         ERR_PARENT_INVALID = 0x4100,   // 因为父节点无效导致我也无法计算
@@ -507,6 +510,7 @@ struct AxisIntersectionData {
 
 class GeometryGraph {
 public:
+    static GeoNode NULL_NODE; // 这是一个全局或静态的无效节点
     Vec2 mouse_position;
 
     std::vector<uint32_t> preview_registers;
@@ -562,14 +566,21 @@ public:
     void physical_delete(uint32_t id);
 
     FORCE_INLINE bool is_alive(uint32_t id) const {
-        return id < id_to_index_table.size() && id_to_index_table[id] != -1;
+        return id < id_to_index_table.size() && id_to_index_table[id] != -1 && id_to_index_table[id] != 0;
     }
 
     FORCE_INLINE GeoNode& get_node_by_id(uint32_t id) {
-        return node_pool[id_to_index_table[id]];
+        if (is_alive(id)) {
+            return node_pool[id_to_index_table[id]];
+        }
+        return NULL_NODE;
     }
+
     FORCE_INLINE const GeoNode& get_node_by_id(uint32_t id) const {
-        return node_pool[id_to_index_table[id]];
+        if (is_alive(id)) {
+            return node_pool[id_to_index_table[id]];
+        }
+        return NULL_NODE;;
     }
 
     std::string GenerateNextName();

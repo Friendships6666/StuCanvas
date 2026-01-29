@@ -123,10 +123,127 @@ void Solver_Midpoint(GeoNode& self, GeometryGraph& graph) {
         self.error_status = GeoErrorStatus::ERR_OVERFLOW;
     }
 }
+void Solver_Circle_1Point_1Radius(GeoNode& self, GeometryGraph& graph) {
+    // 1. 核心计算：解算半径通道
+    double radius = SolveChannel(self, 0, graph);
 
-// =========================================================
-// 4. 约束点求解器 (极致优化的 int16 空间吸附搜索)
-// =========================================================
+    // 2. 健壮性检查：半径必须有效且通常应为非负
+    if (!std::isfinite(radius)) {
+        self.error_status = GeoErrorStatus::ERR_OVERFLOW;
+        return; // 早期返回，避免后续无效计算
+    }
+
+    if (radius < 0) {
+        self.error_status = GeoErrorStatus::ERR_INVALID_RADIUS;
+        return; // 早期返回，避免后续无效计算
+    }
+
+    // 3. 性能优化：只获取一次父节点引用
+    // 假设 parents[0] 是圆心点
+    const auto& center_node = graph.get_node_by_id(self.parents[0]);
+
+    // 4. 批量赋值：利用已缓存的引用，这些操作在汇编层面只是简单的内存偏移
+    auto& res = self.result;
+    const auto& c_res = center_node.result;
+
+    res.cr = radius;
+    res.cx = c_res.x;
+    res.cy = c_res.y;
+    res.cx_view = c_res.x_view;
+    res.cy_view = c_res.y_view;
+
+    // 5. 最后更新状态
+    self.error_status = GeoErrorStatus::VALID;
+}
+void Solver_Circle_2Points(GeoNode& self, GeometryGraph& graph) {
+    // 1. 一次性获取两个父节点的引用，避免后续重复查表
+    // 假设 parents[0] 是圆心，parents[1] 是圆周上的一点
+    const auto& p1 = graph.get_node_by_id(self.parents[0]);
+    const auto& p2 = graph.get_node_by_id(self.parents[1]);
+
+    const auto& r1 = p1.result;
+    const auto& r2 = p2.result;
+
+    // 2. 计算半径：使用相对坐标 (view space) 保证大数值下的精度
+    double dx = r1.x_view - r2.x_view;
+    double dy = r1.y_view - r2.y_view;
+
+    // 使用 std::hypot 防止 dx*dx + dy*dy 过程中可能出现的中间溢出
+    double distance = std::hypot(dx, dy);
+
+    // 3. 安全性校验：检查计算结果是否有效
+    if (!std::isfinite(distance)) {
+        self.error_status = GeoErrorStatus::ERR_OVERFLOW;
+        return;
+    }
+
+    // 4. 批量同步结果
+    // 直接利用已经拿到的 r1 引用，避免再次调用 get_node_by_id
+    auto& res = self.result;
+    res.cr = distance;
+    res.cx = r1.x;
+    res.cy = r1.y;
+    res.cx_view = r1.x_view;
+    res.cy_view = r1.y_view;
+
+    // 5. 更新状态
+    self.error_status = GeoErrorStatus::VALID;
+}
+
+void Solver_Circle_3Points(GeoNode& self, GeometryGraph& graph) {
+    // 1. 获取三点父节点的结果
+    const auto& p1 = get_parent_res(graph, self.parents[0]);
+    const auto& p2 = get_parent_res(graph, self.parents[1]);
+    const auto& p3 = get_parent_res(graph, self.parents[2]);
+
+    // 使用相对坐标 (x_view, y_view) 防止大数值下的精度抖动
+    double x1 = p1.x_view, y1 = p1.y_view;
+    double x2 = p2.x_view, y2 = p2.y_view;
+    double x3 = p3.x_view, y3 = p3.y_view;
+
+    // 2. 计算行列式 D (Det)
+    // D = 2 * (x1(y2 - y3) + x2(y3 - y1) + x3(y1 - y2))
+    // 如果 D 为 0，说明三点共线，无法构成圆
+    double D = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
+
+    if (std::abs(D) < 1e-12) {
+        self.error_status = GeoErrorStatus::ERR_EMPTY_RESULT; // 三点共线，无解
+        return;
+    }
+
+    // 3. 计算各点到原点的距离平方（在相对空间下）
+    double s1 = x1 * x1 + y1 * y1;
+    double s2 = x2 * x2 + y2 * y2;
+    double s3 = x3 * x3 + y3 * y3;
+
+    // 4. 根据公式求解圆心坐标 (cx_view, cy_view)
+    double cx_v = (s1 * (y2 - y3) + s2 * (y3 - y1) + s3 * (y1 - y2)) / D;
+    double cy_v = (s1 * (x3 - x2) + s2 * (x1 - x3) + s3 * (x2 - x1)) / D;
+
+    // 5. 计算半径 r
+    // 使用 std::hypot 比 sqrt(dx*dx + dy*dy) 更能防止中间过程溢出
+    double r = std::hypot(cx_v - x1, cy_v - y1);
+
+    // 6. 安全性校验
+    if (!std::isfinite(cx_v) || !std::isfinite(cy_v) || !std::isfinite(r)) {
+        self.error_status = GeoErrorStatus::ERR_OVERFLOW;
+        return;
+    }
+
+    // 7. 写入结果槽位 (ComputedResult)
+    // A. 视口空间结果 (用于渲染和吸附)
+    self.result.cx_view = cx_v;
+    self.result.cy_view = cy_v;
+    self.result.cr = r;
+
+    // B. 还原世界空间结果 (用于拓扑逻辑和持久化)
+    const auto& v = graph.view;
+    self.result.cx = cx_v + v.offset_x;
+    self.result.cy = cy_v + v.offset_y;
+
+    // 8. 更新状态
+    self.error_status = GeoErrorStatus::VALID;
+}
 void Solver_ConstrainedPoint(GeoNode& self, GeometryGraph& graph) {
     double anchor_w_x = std::isfinite(self.channels[0].value) ? self.channels[0].value : SolveChannel(self, 0, graph);
     double anchor_w_y = std::isfinite(self.channels[1].value) ? self.channels[1].value : SolveChannel(self, 1, graph);

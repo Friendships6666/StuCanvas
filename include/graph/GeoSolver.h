@@ -25,6 +25,9 @@ void Solver_StandardLine(GeoNode& self, GeometryGraph& graph);
 
 // 中点求解器
 void Solver_Midpoint(GeoNode& self, GeometryGraph& graph);
+void Solver_Circle_1Point_1Radius(GeoNode& self, GeometryGraph& graph);
+void Solver_Circle_2Points(GeoNode& self, GeometryGraph& graph);
+void Solver_Circle_3Points(GeoNode& self, GeometryGraph& graph);
 
 // 约束点求解器 (执行裁剪空间投影与吸附算法)
 void Solver_ConstrainedPoint(GeoNode& self, GeometryGraph& graph);

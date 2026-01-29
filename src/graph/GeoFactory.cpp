@@ -5,6 +5,8 @@
 #include "../../include/CAS/RPN/ShuntingYard.h"
 #include "../../include/graph/GeoSolver.h"
 #include "../../include/plot/plotSegment.h"
+#include "../../include/plot/plotCircle.h"
+
 #include <algorithm>
 #include <expected>
 
@@ -59,6 +61,19 @@ namespace GeoFactory {
             process_two_point_line(q, p1.result.x_view, p1.result.y_view,
                                    p2.result.x_view, p2.result.y_view,
                                    true, view);
+        }
+
+
+
+        void Render_Circle(GeoNode &self, GeometryGraph &graph, const ViewState &view,
+                          oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
+            if (!GeoErrorStatus::ok(self.error_status)) return;
+
+
+
+            PlotCircle(&q, self.result.x_view, self.result.x_view,self.result.cr,view);
+
+
         }
 
         /**
@@ -146,7 +161,7 @@ namespace GeoFactory {
     // 公开工厂方法
     // =========================================================
 
-    uint32_t AddInternalScalar(GeometryGraph &graph, const std::string &infix_expr, const GeoNode::VisualConfig &config) {
+    uint32_t CreateInternalScalar(GeometryGraph &graph, const std::string &infix_expr, const GeoNode::VisualConfig &config) {
         uint32_t id = graph.allocate_node();
         std::vector<uint32_t> parents;
         CompileChannelInternal(graph, id, 0, infix_expr, parents);
@@ -155,7 +170,7 @@ namespace GeoFactory {
         return id;
     }
 
-    uint32_t AddFreePoint(GeometryGraph &graph, const std::string &x_expr, const std::string &y_expr, const GeoNode::VisualConfig &config) {
+    uint32_t CreateFreePoint(GeometryGraph &graph, const std::string &x_expr, const std::string &y_expr, const GeoNode::VisualConfig &config) {
         uint32_t id = graph.allocate_node();
         std::vector<uint32_t> combined_parents;
         CompileChannelInternal(graph, id, 0, x_expr, combined_parents);
@@ -170,7 +185,7 @@ namespace GeoFactory {
         return id;
     }
 
-    uint32_t AddSegment(GeometryGraph &graph, uint32_t p1_id, uint32_t p2_id, const GeoNode::VisualConfig &config) {
+    uint32_t CreateSegment(GeometryGraph &graph, uint32_t p1_id, uint32_t p2_id, const GeoNode::VisualConfig &config) {
         if (!is_point(graph.get_node_by_id(p1_id).type) || !is_point(graph.get_node_by_id(p2_id).type)) {
             return 0;
         }
@@ -187,7 +202,7 @@ namespace GeoFactory {
         return id;
     }
 
-    uint32_t AddMidPoint(GeometryGraph &graph, uint32_t p1_id, uint32_t p2_id, const GeoNode::VisualConfig &config) {
+    uint32_t CreateMidPoint(GeometryGraph &graph, uint32_t p1_id, uint32_t p2_id, const GeoNode::VisualConfig &config) {
         if (!is_point(graph.get_node_by_id(p1_id).type) || !is_point(graph.get_node_by_id(p2_id).type)) {
             return 0;
         }
@@ -202,7 +217,44 @@ namespace GeoFactory {
         return id;
     }
 
-    uint32_t AddConstrainedPoint(GeometryGraph &graph, uint32_t target_id, const std::string &x_expr, const std::string &y_expr, const GeoNode::VisualConfig &config) {
+
+
+    uint32_t CreateCircle_1Point_1Radius(GeometryGraph &graph,uint32_t center_id,const std::string &r,const GeoNode::VisualConfig &config) {
+        if (is_point(graph.get_node_by_id(center_id).type)) {
+            return 0;
+        }
+        uint32_t id = graph.allocate_node();
+        std::vector<uint32_t> combined_parents;
+        CompileChannelInternal(graph, id, 0, r, combined_parents);
+        SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_1POINT_1RADIUS, Solver_Circle_1Point_1Radius,
+                      Render_Circle);
+        graph.LinkAndRank(id, combined_parents);
+        return id;
+    }
+
+
+    uint32_t CreateCircle_3Points(GeometryGraph &graph,uint32_t id1,uint32_t id2,uint32_t id3,const GeoNode::VisualConfig &config) {
+        if (is_point(graph.get_node_by_id(id1).type) && is_point(graph.get_node_by_id(id2).type) && is_point(graph.get_node_by_id(id3).type)) {
+            return 0;
+        }
+        uint32_t id = graph.allocate_node();
+        SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_3POINTS, Solver_Circle_3Points, Render_Circle);
+        graph.LinkAndRank(id, {id1,id2,id3});
+        return id;
+    }
+
+    uint32_t CreateCircle_2Points(GeometryGraph &graph,uint32_t id1,uint32_t id2,const GeoNode::VisualConfig &config) {
+        if (is_point(graph.get_node_by_id(id1).type) && is_point(graph.get_node_by_id(id2).type)) {
+            return 0;
+        }
+        uint32_t id = graph.allocate_node();
+        SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_2POINTS, Solver_Circle_2Points, Render_Circle);
+        graph.LinkAndRank(id, {id1,id2});
+        return id;
+
+    }
+
+    uint32_t CreateConstrainedPoint(GeometryGraph &graph, uint32_t target_id, const std::string &x_expr, const std::string &y_expr, const GeoNode::VisualConfig &config) {
         if (is_point(graph.get_node_by_id(target_id).type)) {
             return 0;
         }
@@ -303,7 +355,7 @@ namespace GeoFactory {
         RefreshViewState(graph);
     }
 
-    uint32_t AddGraphicalIntersection(GeometryGraph &graph,
+    uint32_t CreateGraphicalIntersection(GeometryGraph &graph,
                                       const std::vector<uint32_t> &target_ids,
                                       const std::string &x_expr,
                                       const std::string &y_expr,

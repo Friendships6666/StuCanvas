@@ -120,11 +120,11 @@ static CommandPacket ExtractNodeToCommand(const GeoNode& node, const GeometryGra
 
         switch (static_cast<OpCode>(pkt.op)) {
             case OpCode::CREATE_FREE_POINT:
-                GeoFactory::AddFreePoint(graph, pkt.s0, pkt.s1, cfg); break;
+                GeoFactory::CreateFreePoint(graph, pkt.s0, pkt.s1, cfg); break;
             case OpCode::CREATE_SEGMENT_2P:
                 GeoFactory::AddSegment(graph, pkt.id0, pkt.id1, cfg); break;
             case OpCode::CREATE_MID_POINT:
-                GeoFactory::AddMidPoint(graph, pkt.id0, pkt.id1, cfg); break;
+                GeoFactory::CreateMidPoint(graph, pkt.id0, pkt.id1, cfg); break;
             case OpCode::CREATE_CONSTRAINED_POINT:
                 GeoFactory::AddConstrainedPoint(graph, pkt.id0, pkt.s0, pkt.s1, cfg); break;
             case OpCode::DELETE_PHYSICAL:

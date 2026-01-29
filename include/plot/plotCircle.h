@@ -19,7 +19,7 @@
  *    - INTERSECT: 解析解求出可见的 t 区间，分段生成。
  * 3. 输出: Clip Space (Float)
  */
-void process_circle_specialized(
+void PlotCircle(
     oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>>* results_queue,
     double cx, double cy, double r, // 世界坐标圆心与半径
     const ViewState& view

@@ -49,10 +49,16 @@ set(SOURCE_FILES
         src/CAS/RPN/ShuntingYard.cpp
         src/graph/GeoCommands.cpp
         include/graph/GeoCommands.h
-        src/graph/GeoInteract.cpp
-        include/graph/GeoInteract.h
+        src/graph/interact/GeoInteract.cpp
+        include/graph/interact/GeoInteract.h
         src/grids/grids.cpp
         include/grids/grids.h
+        src/graph/interact/preview/line/previewSegment.cpp
+        include/graph/interact/preview/line/previewLine.h
+        src/graph/interact/preview/circle/circle_2points.cpp
+        include/graph/interact/preview/circle/circle_2points.h
+        include/graph/interact/preview/circle/circle_3points.h
+        src/graph/interact/preview/circle/circle_3points.cpp
 
 
 )
