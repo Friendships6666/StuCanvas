@@ -3,19 +3,20 @@
 #include "../../include/plot/plotCall.h"
 #include "../../include/graph/GeoGraph.h"
 #include "../../include/grids/grids.h"
+#include "../../include/plot/plotSegment.h"
 #include <vector>
 #include <set>
 #include <string>
 #include <cmath>
 
-uint32_t AddPoint_Interact(GeometryGraph& graph, double screen_x, double screen_y) {
+uint32_t AddPoint_Interact(GeometryGraph& graph) {
 
 
     const auto& view = graph.view;
     const auto& points = graph.final_points_buffer;
     
     // 2. 将鼠标屏幕位置映射到 int16 剪裁空间 (仅转换一次)
-    Vec2i target_clip = view.ScreenToClip(screen_x, screen_y);
+    Vec2i target_clip = view.ScreenToClip(graph.mouse_position.x,graph.mouse_position.y);
     
     // 3. 计算剪裁空间下的阈值平方 (将 5 像素阈值转为剪裁空间单位)
     // 根据 ViewState 定义: s2c_scale 决定了像素到 int16 的映射比例
@@ -56,7 +57,7 @@ uint32_t AddPoint_Interact(GeometryGraph& graph, double screen_x, double screen_
     }
 
     // 5. 转换点击位置为世界坐标，生成公式字符串
-    Vec2 world_pos = view.ScreenToWorld(screen_x, screen_y);
+    Vec2 world_pos = view.ScreenToWorld(graph.mouse_position.x,graph.mouse_position.y);
     std::string x_str = std::to_string(world_pos.x);
     std::string y_str = std::to_string(world_pos.y);
 
@@ -72,7 +73,7 @@ uint32_t AddPoint_Interact(GeometryGraph& graph, double screen_x, double screen_
     // 情况 C: 命中多个对象
     return GeoFactory::AddGraphicalIntersection(graph, intersection_candidates_ids, x_str, y_str);
 }
-uint32_t TrySelect_Interact(GeometryGraph& graph, double screen_x, double screen_y, bool is_multi_select) {
+uint32_t TrySelect_Interact(GeometryGraph& graph, bool is_multi_select) {
     // 1. 如果不是多选模式，清除所有节点的选中状态
     if (!is_multi_select) {
         for (auto& node : graph.node_pool) {
@@ -86,7 +87,7 @@ uint32_t TrySelect_Interact(GeometryGraph& graph, double screen_x, double screen
     const auto& points_buffer = graph.final_points_buffer;
 
     // 2. 将鼠标屏幕位置映射到 int16 剪裁空间
-    Vec2i target_clip = view.ScreenToClip(screen_x, screen_y);
+    Vec2i target_clip = view.ScreenToClip(graph.mouse_position.x, graph.mouse_position.y);
 
     uint32_t nearest_id = 0;
     int64_t min_dist_sq = std::numeric_limits<int64_t>::max();
@@ -141,10 +142,10 @@ uint32_t TrySelect_Interact(GeometryGraph& graph, double screen_x, double screen
     return nearest_id;
 }
 
-uint32_t InitSegment_Interact(GeometryGraph& graph, double screen_x, double screen_y) {
+uint32_t InitSegment_Interact(GeometryGraph& graph) {
     // 1. 尝试选择已有的点
     // 假设 TrySelect_Interact 会处理 IS_SELECTED 掩码的设置
-    uint32_t selected_id = TrySelect_Interact(graph, screen_x, screen_y, false); // 非多选模式
+    uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
 
 
 
@@ -154,7 +155,9 @@ uint32_t InitSegment_Interact(GeometryGraph& graph, double screen_x, double scre
             const auto& selected_node = graph.get_node_by_id(selected_id);
             if (GeoType::is_point(selected_node.type)) {
                 graph.get_node_by_id(selected_id).state_mask |= IS_SELECTED;
-                graph.registers[0] = selected_id;
+                graph.preview_func = PreviewSegment_Intertact;
+                graph.preview_type = GeoType::LINE_SEGMENT;
+                graph.preview_registers[0] = selected_id;
                 return selected_id; // 成功选中一个点，返回其ID
             }
         }
@@ -162,9 +165,12 @@ uint32_t InitSegment_Interact(GeometryGraph& graph, double screen_x, double scre
 
     // 3. 如果没有选中有效的点，则创建一个新的点
     // AddPoint_Interact 现在会返回新创建点的ID
-    auto new_point = AddPoint_Interact(graph, screen_x, screen_y);
+    auto new_point = AddPoint_Interact(graph);
     graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
-    graph.registers[0] = selected_id;
+    graph.preview_func = PreviewSegment_Intertact;
+    graph.preview_type = GeoType::LINE_SEGMENT;
+    graph.preview_registers[0] = selected_id;
+
     return new_point;
 
 }
@@ -200,18 +206,41 @@ Vec2 SnapToGrid_Interact(GeometryGraph& graph, Vec2 world_coord) {
 }
 
 
-void PreviewSegment_Intertact(GeometryGraph& graph,uint32_t id,double screen_x,double screen_y)
+void PreviewSegment_Intertact(GeometryGraph& graph)
 {
+    auto id = graph.preview_registers[0];
     auto& node = graph.get_node_by_id(id);
     if (GeoType::is_point(node.type) && node.error_status == GeoErrorStatus::VALID) {
         const auto& view = graph.view;
-        Vec2 mouse_pos = view.ScreenToWorld(screen_x,screen_y);
-        auto mouse_pos_no_offset_x = mouse_pos.x - view.offset_x;
-        auto mouse_pos_no_offset_y = mouse_pos.y - view.offset_y;
+        Vec2 mouse_pos = view.ScreenToWorld(graph.mouse_position.x,graph.mouse_position.y);
+        Vec2 mouse_pos_snapped = SnapToGrid_Interact(graph, mouse_pos);
+        auto mouse_pos_snapped_no_offset_x = mouse_pos_snapped.x - view.offset_x;
+        auto mouse_pos_snapped_no_offset_y = mouse_pos_snapped.y - view.offset_y;
         double point_x = node.result.x_view;
         double point_y = node.result.y_view;
+        tbb::concurrent_bounded_queue<std::vector<PointData>> q;
+        process_two_point_line(q, point_x, point_y,
+                       mouse_pos_snapped_no_offset_x, mouse_pos_snapped_no_offset_y,
+                       true, view);
+
+
+        q.try_pop(graph.preview_points);
+
 
 
 
     }
+}
+
+
+void CancelPreview_Intectact(GeometryGraph& graph) {
+    graph.preview_func = nullptr;
+    graph.preview_type = GeoType::UNKNOWN;
+    graph.preview_registers.clear();
+    graph.preview_points.clear();
+}
+
+
+void UpdateMousePos_Interact(GeometryGraph& graph,double x,double y) {
+    graph.mouse_position = {x,y};
 }

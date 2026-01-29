@@ -222,7 +222,7 @@ void RefreshGridSystem(GeometryGraph& graph) {
     }
 }
 
-#include <oneapi/tbb/parallel_for.h>
+
 
 void calculate_points_core(GeometryGraph& graph) {
     if (!graph.is_healthy()) return;
@@ -256,12 +256,12 @@ void calculate_points_core(GeometryGraph& graph) {
     solver_tasks.reserve(1024);
     plot_tasks.reserve(1024);
 
-    // 3. 拓扑 Rank 大循环
+    // 3. 拓扑 Rank 大循环/**/
     for (size_t w = 0; w < graph.active_ranks_mask.size(); ++w) {
         uint64_t mask = graph.active_ranks_mask[w];
         while (mask > 0) {
             uint32_t r_offset = find_first_set_bit_local(mask);
-            uint32_t r = static_cast<uint32_t>(w * 64 + r_offset);
+            auto r = static_cast<uint32_t>(w * 64 + r_offset);
             mask &= ~(1ULL << r_offset); // 移向下一个 Rank
 
             solver_tasks.clear();
@@ -275,19 +275,20 @@ void calculate_points_core(GeometryGraph& graph) {
                 // 跳过无效节点 (FastScan 已经处理了 link 错误和 parent 错误)
                 if (GeoErrorStatus::ok(node.error_status)) {
                     bool is_dirty = std::ranges::binary_search(affected_ids, node.id);
-                    bool is_graphical = (node.state_mask & (IS_GRAPHICAL | IS_GRAPHICAL_INFECTED));
+                    bool children_has_graphic = std::ranges::any_of(node.children, [&](const auto& child) {
+                        return graph.get_node_by_id(child).state_mask & (IS_GRAPHICAL | IS_GRAPHICAL_INFECTED);
+                    });
 
-                    // Solver 判定条件：脏 || (视图变化 && 图解)
-                    if (is_dirty || (viewport_changed && is_graphical)) {
+
+                    if (is_dirty) {
                         solver_tasks.push_back(&node);
+
+                        if ((node.state_mask & IS_VISIBLE) || children_has_graphic) {
+                            plot_tasks.push_back(&node);
+                        }
                     }
 
-                    // Plot 判定条件：脏 || 视图变化
-                    if ((node.state_mask & IS_VISIBLE) && (is_dirty || viewport_changed)) {
-                        plot_tasks.push_back(&node);
-                    }
 
-                    if (is_dirty) node.state_mask |= IS_DIRTY;
                 }
                 curr_id = node.next_in_bucket;
             }
@@ -320,9 +321,9 @@ void calculate_points_core(GeometryGraph& graph) {
 
             // --- 阶段 C: 执行 Plot ---
             // 过滤掉因为刚刚 Solver 失败而变得无效的 Plot 任务
-            auto it = std::remove_if(plot_tasks.begin(), plot_tasks.end(), [](GeoNode* n) {
+            auto it = std::ranges::remove_if(plot_tasks, [](GeoNode* n) {
                 return !GeoErrorStatus::ok(n->error_status);
-            });
+            }).begin();
             plot_tasks.erase(it, plot_tasks.end());
 
             if (!plot_tasks.empty()) {
@@ -365,8 +366,8 @@ void calculate_points_core(GeometryGraph& graph) {
         });
 
 
-        // 5. 清理临时掩码：脏标记和图解传染标记
-        node.state_mask &= ~(IS_DIRTY | IS_GRAPHICAL_INFECTED);
+        // 5. 清理临时掩码：图解传染标记
+        node.state_mask &= ~(IS_GRAPHICAL_INFECTED);
     }
 
     // 6. 辅助系统刷新
@@ -379,4 +380,9 @@ void calculate_points_core(GeometryGraph& graph) {
     graph.sync_view_snapshot();
     graph.m_pending_seeds.clear();
     std::ranges::fill(graph.m_dirty_mask, 0);
+
+    if (graph.preview_func != nullptr && graph.preview_type != GeoType::UNKNOWN) {
+        graph.preview_points.clear();
+        graph.preview_func(graph);
+    }
 }

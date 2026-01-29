@@ -216,6 +216,7 @@ struct alignas(64) ViewState {
 
 // 统一函数指针签名
 using SolverFunc = void(*)(GeoNode& self, GeometryGraph& graph);
+using PreviewFunc = void(*)(GeometryGraph& graph);
 using RenderTaskFunc = void(*)(
     GeoNode& self,
     GeometryGraph& graph,
@@ -506,11 +507,14 @@ struct AxisIntersectionData {
 
 class GeometryGraph {
 public:
-    std::vector<uint32_t> registers;
+    Vec2 mouse_position;
+
+    std::vector<uint32_t> preview_registers;
 
     std::vector<PointData> preview_points;
     GeoNode::VisualConfig preview_visual_config;
     GeoType::Type preview_type = GeoType::UNKNOWN;
+    PreviewFunc preview_func = nullptr;
 
 
     GridSystemType grid_type = GridSystemType::CARTESIAN; // 默认直角坐标系
