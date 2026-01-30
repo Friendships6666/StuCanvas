@@ -61,6 +61,8 @@ set(SOURCE_FILES
         src/graph/interact/preview/circle/circle_3points.cpp
         include/graph/interact/preview/circle/circle_1point_1radius.h
         src/graph/interact/preview/circle/circle_1point_1radius.cpp
+        include/graph/interact/preview/circle/circle_distance.h
+        src/graph/interact/preview/circle/circle_distance.cpp
 
 
 )

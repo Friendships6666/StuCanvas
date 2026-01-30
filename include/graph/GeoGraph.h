@@ -129,6 +129,13 @@ struct alignas(64) ViewState {
         };
     }
 
+    FORCE_INLINE Vec2 ScreenToWorldNoOffset(double sx, double sy) const noexcept {
+        return {
+            (sx - half_w) * wpp,
+             - (sy - half_h) * wpp
+        };
+    }
+
     // ③ World → Clip (关键转换：由 double 转换为 int16_t 存储)
     FORCE_INLINE Vec2i WorldToClip(double wx, double wy) const noexcept {
         return {
@@ -217,6 +224,7 @@ struct alignas(64) ViewState {
 // 统一函数指针签名
 using SolverFunc = void(*)(GeoNode& self, GeometryGraph& graph);
 using PreviewFunc = void(*)(GeometryGraph& graph);
+using NextInteractFunc = uint32_t(*)(GeometryGraph& graph);
 using RenderTaskFunc = void(*)(
     GeoNode& self,
     GeometryGraph& graph,
@@ -311,12 +319,13 @@ namespace GeoType {
         LINE_VECTOR      = 0x0207,
         LINE_FIXED_DISTANCE = 0x0208,
 
-        // --- 3. 圆锥曲线类 (CAT_CONIC) ---
-        CAT_CONIC        = 0x0300,
+
+        CAT_CIRCLE        = 0x0300,
         CIRCLE_FULL_1POINT_1RADIUS     = 0x0301,
         CIRCLE_FULL_3POINTS  = 0x0302,
         CIRCLE_FULL_2POINTS    = 0x0303,
         CIRCLE_ARC       = 0x0304,
+        CIRCLE_FULL_DISTANCE = 0x0305,
 
         // --- 4. 函数/高级曲线类 (CAT_CURVE) ---
         CAT_CURVE        = 0x0400,
@@ -335,7 +344,7 @@ namespace GeoType {
     // 聚合判断辅助
     FORCE_INLINE inline bool is_point(uint32_t t)  { return (t & MASK_CAT) == CAT_POINT; }
     FORCE_INLINE inline bool is_line(uint32_t t)   { return (t & MASK_CAT) == CAT_LINE; }
-    FORCE_INLINE inline bool is_conic(uint32_t t)  { return (t & MASK_CAT) == CAT_CONIC; }
+    FORCE_INLINE inline bool is_circle(uint32_t t)  { return (t & MASK_CAT) == CAT_CIRCLE; }
     FORCE_INLINE inline bool is_curve(uint32_t t)  { return (t & MASK_CAT) == CAT_CURVE; }
     FORCE_INLINE inline bool is_scalar(uint32_t t) { return (t & MASK_CAT) == CAT_SCALAR; }
 }
@@ -517,6 +526,7 @@ struct AxisIntersectionData {
 class GeometryGraph {
 public:
     static GeoNode NULL_NODE; // 这是一个全局或静态的无效节点
+
     Vec2 mouse_position;
 
     std::vector<uint32_t> preview_registers;
@@ -526,6 +536,8 @@ public:
     GeoNode::VisualConfig preview_visual_config;
     GeoType::Type preview_type = GeoType::UNKNOWN;
     PreviewFunc preview_func = nullptr;
+    NextInteractFunc next_interact_func = nullptr;
+
     uint32_t preview_status = GeoErrorStatus::VALID;
 
 

@@ -17,21 +17,25 @@ uint32_t InitCircle_1Point_1Radius_Interact(GeometryGraph& graph) {
             graph.get_node_by_id(selected_id).state_mask |= IS_SELECTED;
             graph.preview_func = PreviewCircle_1Point_1Radius_Intertact;
             graph.preview_type = GeoType::CIRCLE_FULL_1POINT_1RADIUS;
+            graph.next_interact_func = EndCircle_1Point_1Radius_Interact;
             graph.preview_registers[0] = selected_id;
             return selected_id; // 成功选中一个点，返回其ID
         }
+    } else {
+        // 3. 如果没有选中有效的点，则创建一个新的点
+        // AddPoint_Interact 现在会返回新创建点的ID
+        auto new_point = CreatePoint_Interact(graph);
+        graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
+        graph.preview_func = PreviewCircle_1Point_1Radius_Intertact;
+        graph.preview_type = GeoType::CIRCLE_FULL_1POINT_1RADIUS;
+        graph.next_interact_func = EndCircle_1Point_1Radius_Interact;
+        graph.preview_registers[0] = new_point;
     }
 
 
-    // 3. 如果没有选中有效的点，则创建一个新的点
-    // AddPoint_Interact 现在会返回新创建点的ID
-    auto new_point = CreatePoint_Interact(graph);
-    graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
-    graph.preview_func = PreviewCircle_1Point_1Radius_Intertact;
-    graph.preview_type = GeoType::CIRCLE_FULL_1POINT_1RADIUS;
-    graph.preview_registers[0] = selected_id;
 
-    return new_point;
+
+    return graph.preview_registers[0];
 
 }
 
@@ -73,30 +77,11 @@ void PreviewCircle_1Point_1Radius_Intertact(GeometryGraph& graph)
 }
 
 
-void EndCircle_2Points_Interact(GeometryGraph& graph) {
-    uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
+uint32_t EndCircle_1Point_1Radius_Interact(GeometryGraph& graph) {
 
-
-
-    // 2. 检查选中的节点是否是一个点
-
-    if (graph.is_alive(selected_id)) {
-        const auto& selected_node = graph.get_node_by_id(selected_id);
-        if (GeoType::is_point(selected_node.type)) {
-
-            graph.preview_registers[1] = selected_id;
-
-        }
-    }
-
-
-    // 3. 如果没有选中有效的点，则创建一个新的点
-    // AddPoint_Interact 现在会返回新创建点的ID
-    auto new_point = CreatePoint_Interact(graph);
-
-    graph.preview_registers[1] = new_point;
     GeoFactory::CreateCircle_1Point_1Radius(graph,graph.preview_registers[0],graph.preview_channels[0].original_infix,graph.preview_visual_config);
     CancelPreview_Intectact(graph);
+    return 0;
 
 
 }

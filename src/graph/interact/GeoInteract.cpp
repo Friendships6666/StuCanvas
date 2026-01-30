@@ -183,6 +183,7 @@ Vec2 SnapToGrid_Interact(const GeometryGraph& graph, Vec2 world_coord) {
 
 void CancelPreview_Intectact(GeometryGraph& graph) {
     graph.preview_func = nullptr;
+    graph.next_interact_func = nullptr;
     graph.preview_type = GeoType::UNKNOWN;
     graph.preview_registers.clear();
     graph.preview_points.clear();

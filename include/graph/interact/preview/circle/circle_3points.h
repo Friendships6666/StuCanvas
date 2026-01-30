@@ -9,5 +9,5 @@
 void PreviewCircle_3Points_Intertact(GeometryGraph& graph);
 uint32_t InitCircle_3Points_Interact(GeometryGraph& graph);
 uint32_t InitCircle_3Points_2_Interact(GeometryGraph& graph);
-void EndCircle_3Points_Interact(GeometryGraph& graph);
+uint32_t EndCircle_3Points_Interact(GeometryGraph& graph);
 #endif //DYNAMICGEOENGINE_CIRCLE_3POINTS_H
