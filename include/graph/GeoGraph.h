@@ -357,6 +357,7 @@ namespace GeoErrorStatus {
         ERR_SYNTAX       = 0x1300,     // 公式语法错误
         ERR_CIRCULAR     = 0x1400,     // 循环引用检测
         ERR_EMPTY_FORMULA = 0x1500,
+        ERR_NOT_IMPLEMENT = 0x1600,
 
         // --- 2. 数学错误 (Runtime) ---
         ERR_DIV_ZERO     = 0x2100,     // 除以零
@@ -374,29 +375,34 @@ namespace GeoErrorStatus {
 }
 
 
-struct LogicChannel {
-    std::string original_infix;   // ASCIIMATH 源码
-    RPNToken*   bytecode_ptr = nullptr;
-    RuntimeBindingSlot* patch_ptr = nullptr;
-    uint32_t    bytecode_len = 0;
-    uint32_t    patch_len = 0;
-    double      value = std::numeric_limits<double>::quiet_NaN();      // 计算出的实时数值
+#include <memory> // 必须包含头文件
 
-    // 释放内存
+struct LogicChannel {
+    std::string original_infix;
+
+    // 使用 unique_ptr 管理数组，自动处理 delete[]
+    std::unique_ptr<RPNToken[]> bytecode;
+    std::unique_ptr<RuntimeBindingSlot[]> patches;
+
+    uint32_t bytecode_len = 0;
+    uint32_t patch_len = 0;
+    double   value = std::numeric_limits<double>::quiet_NaN();
+
+    /**
+     * @brief 重置通道状态
+     * 由于使用了 unique_ptr，reset() 会自动释放旧内存
+     */
     FORCE_INLINE void clear() {
-        if (bytecode_ptr) {
-            delete[] bytecode_ptr;
-            bytecode_ptr = nullptr;
-        }
-        if (patch_ptr) {
-            delete[] patch_ptr;
-            patch_ptr = nullptr;
-        }
+        bytecode.reset(); // 释放内存并将指针置为 nullptr
+        patches.reset();
         bytecode_len = 0;
         patch_len = 0;
-        value = 0.0;
-        original_infix.clear(); // string 自带内存管理，这里只是清空内容
+        value = std::numeric_limits<double>::quiet_NaN();
+        original_infix.clear();
     }
+
+    // 注意：LogicChannel 现在是“不可拷贝”但“可移动”的。
+    // 这符合逻辑 ID 管理的节点架构。
 };
 
 struct GeoNode {
@@ -514,11 +520,14 @@ public:
     Vec2 mouse_position;
 
     std::vector<uint32_t> preview_registers;
+    LogicChannel preview_channels[4];
 
     std::vector<PointData> preview_points;
     GeoNode::VisualConfig preview_visual_config;
     GeoType::Type preview_type = GeoType::UNKNOWN;
     PreviewFunc preview_func = nullptr;
+    uint32_t preview_status = GeoErrorStatus::VALID;
+
 
 
     GridSystemType grid_type = GridSystemType::CARTESIAN; // 默认直角坐标系

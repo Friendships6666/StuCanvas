@@ -54,6 +54,8 @@ namespace GeoFactory {
     uint32_t CreateCircle_1Point_1Radius(GeometryGraph &graph,uint32_t center_id,const std::string &r,const GeoNode::VisualConfig &config = {});
     uint32_t CreateCircle_2Points(GeometryGraph &graph,uint32_t id1,uint32_t id2,const GeoNode::VisualConfig &config = {});
     uint32_t CreateCircle_3Points(GeometryGraph &graph,uint32_t id1,uint32_t id2,uint32_t id3,const GeoNode::VisualConfig &config = {});
+    void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_idx,
+                            const std::string &infix_expr, std::vector<uint32_t> &out_parents, bool is_preview);
 
     /**
      * @brief 创建图解交点

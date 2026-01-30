@@ -6,72 +6,63 @@
 #include <limits>
 #include <algorithm>
 
-namespace {
-    /**
-     * @brief 快速获取指定父节点结果引用
-     */
-    FORCE_INLINE const ComputedResult& get_parent_res(const GeometryGraph& graph, uint32_t pid) {
-        return graph.get_node_by_id(pid).result;
-    }
 
-    /**
-     * @brief 数学结果安全性检查
-     */
-    FORCE_INLINE bool validate_math(GeoNode& self, double val) {
-        if (!std::isfinite(val)) {
-            self.error_status = GeoErrorStatus::ERR_OVERFLOW;
-            return false;
-        }
-        return true;
-    }
 
-    /**
-     * @brief [核心辅助] 解算单个逻辑通道
-     * 变量引用永远读取父节点的物理世界坐标
-     */
-    double SolveChannel(GeoNode& self, int idx, const GeometryGraph& graph) {
-        auto& ch = self.channels[idx];
-        if (ch.bytecode_len == 0) return ch.value;
+double SolveChannel(GeoNode& self, int idx, GeometryGraph& graph, bool is_preview) {
+    // 1. 根据是否预览选择目标通道
+    auto& ch = is_preview ? graph.preview_channels[idx] : self.channels[idx];
 
-        for (uint32_t k = 0; k < ch.patch_len; ++k) {
-            auto& p = ch.patch_ptr[k];
-            const auto& parent_res = get_parent_res(graph, p.dependency_ids[0]);
-            double val = 0.0;
+    // 2. 如果没有字节码，直接返回缓存的常数值
+    if (ch.bytecode_len == 0) return ch.value;
 
-            switch (p.func_type) {
-                case CAS::Parser::CustomFunctionType::NONE:
-                    val = parent_res.s0;
-                    break;
-                case CAS::Parser::CustomFunctionType::EXTRACT_VALUE_X:
-                    val = parent_res.x;
-                    break;
-                case CAS::Parser::CustomFunctionType::EXTRACT_VALUE_Y:
-                    val = parent_res.y;
-                    break;
-                case CAS::Parser::CustomFunctionType::LENGTH: {
-                    const auto& r2 = get_parent_res(graph, p.dependency_ids[1]);
-                    val = std::hypot(parent_res.x - r2.x, parent_res.y - r2.y);
-                    break;
-                }
-                default: break;
+    // 3. 运行时绑定 (Patching)：将依赖的对象属性填入 RPN 指令流中
+    for (uint32_t k = 0; k < ch.patch_len; ++k) {
+        // 使用智能指针 patches (std::unique_ptr<RuntimeBindingSlot[]>)
+        auto& p = ch.patches[k];
+
+        // 获取父节点结果 (dependency_ids[0] 存储了变量对应的逻辑 ID)
+        const auto& parent_res = get_parent_res(graph, p.dependency_ids[0]);
+        double val = 0.0;
+
+        // 根据绑定类型提取具体数值
+        switch (p.func_type) {
+            case CAS::Parser::CustomFunctionType::NONE:
+                val = parent_res.s0; // 纯标量
+                break;
+            case CAS::Parser::CustomFunctionType::EXTRACT_VALUE_X:
+                val = parent_res.x;  // 提取点/对象的 X
+                break;
+            case CAS::Parser::CustomFunctionType::EXTRACT_VALUE_Y:
+                val = parent_res.y;  // 提取点/对象的 Y
+                break;
+            case CAS::Parser::CustomFunctionType::LENGTH: {
+                // 长度函数依赖两个点
+                const auto& r2 = get_parent_res(graph, p.dependency_ids[1]);
+                val = std::hypot(parent_res.x - r2.x, parent_res.y - r2.y);
+                break;
             }
-            ch.bytecode_ptr[p.rpn_index].type = RPNTokenType::PUSH_CONST;
-            ch.bytecode_ptr[p.rpn_index].value = val;
+            default: break;
         }
 
-        ch.value = evaluate_rpn<double>(ch.bytecode_ptr, ch.bytecode_len);
-        return ch.value;
+        // 修改字节码：将对应的 PUSH 操作改为最新的常数值 PUSH_CONST
+        // 使用智能指针 bytecode (std::unique_ptr<RPNToken[]>)
+        ch.bytecode[p.rpn_index].type = RPNTokenType::PUSH_CONST;
+        ch.bytecode[p.rpn_index].value = val;
     }
+
+    // 4. 执行 RPN 虚拟机解算
+    // 使用 .get() 传递原始指针给 evaluate_rpn 函数
+    ch.value = evaluate_rpn<double>(ch.bytecode.get(), ch.bytecode_len);
+
+    return ch.value;
 }
 
-// =========================================================
-// 1. RPN 通用解算器 (标量)
-// =========================================================
+
 void Solver_ScalarRPN(GeoNode& self, GeometryGraph& graph) {
     auto& res = self.result;
     for (int i = 0; i < 4; ++i) {
         if (self.channels[i].bytecode_len == 0 && i > 0) continue;
-        double abs_val = SolveChannel(self, i, graph);
+        double abs_val = SolveChannel(self, i, graph,false);
         if (!std::isfinite(abs_val)) {
             self.error_status = GeoErrorStatus::ERR_OVERFLOW;
             return;
@@ -86,8 +77,8 @@ void Solver_ScalarRPN(GeoNode& self, GeometryGraph& graph) {
 // =========================================================
 void Solver_StandardPoint(GeoNode& self, GeometryGraph& graph) {
     const auto& v = graph.view;
-    double abs_x = SolveChannel(self, 0, graph);
-    double abs_y = SolveChannel(self, 1, graph);
+    double abs_x = SolveChannel(self, 0, graph,false);
+    double abs_y = SolveChannel(self, 1, graph,false);
 
     if (std::isfinite(abs_x) && std::isfinite(abs_y)) {
         self.result.x = abs_x;
@@ -125,7 +116,7 @@ void Solver_Midpoint(GeoNode& self, GeometryGraph& graph) {
 }
 void Solver_Circle_1Point_1Radius(GeoNode& self, GeometryGraph& graph) {
     // 1. 核心计算：解算半径通道
-    double radius = SolveChannel(self, 0, graph);
+    double radius = SolveChannel(self, 0, graph,false);
 
     // 2. 健壮性检查：半径必须有效且通常应为非负
     if (!std::isfinite(radius)) {
@@ -245,8 +236,8 @@ void Solver_Circle_3Points(GeoNode& self, GeometryGraph& graph) {
     self.error_status = GeoErrorStatus::VALID;
 }
 void Solver_ConstrainedPoint(GeoNode& self, GeometryGraph& graph) {
-    double anchor_w_x = std::isfinite(self.channels[0].value) ? self.channels[0].value : SolveChannel(self, 0, graph);
-    double anchor_w_y = std::isfinite(self.channels[1].value) ? self.channels[1].value : SolveChannel(self, 1, graph);
+    double anchor_w_x = std::isfinite(self.channels[0].value) ? self.channels[0].value : SolveChannel(self, 0, graph,false);
+    double anchor_w_y = std::isfinite(self.channels[1].value) ? self.channels[1].value : SolveChannel(self, 1, graph,false);
 
     // 2. 统一检查
     if (!std::isfinite(anchor_w_x) || !std::isfinite(anchor_w_y)) {
@@ -386,8 +377,8 @@ namespace {
 }
 
 void Solver_GraphicalIntersectionPoint(GeoNode& self, GeometryGraph& graph) {
-    double anchor_w_x = std::isfinite(self.channels[0].value) ? self.channels[0].value : SolveChannel(self, 0, graph);
-    double anchor_w_y = std::isfinite(self.channels[1].value) ? self.channels[1].value : SolveChannel(self, 1, graph);
+    double anchor_w_x = std::isfinite(self.channels[0].value) ? self.channels[0].value : SolveChannel(self, 0, graph,false);
+    double anchor_w_y = std::isfinite(self.channels[1].value) ? self.channels[1].value : SolveChannel(self, 1, graph,false);
 
     // 2. 统一检查
     if (!std::isfinite(anchor_w_x) || !std::isfinite(anchor_w_y)) {

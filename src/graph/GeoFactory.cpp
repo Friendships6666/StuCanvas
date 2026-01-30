@@ -76,54 +76,7 @@ namespace GeoFactory {
 
         }
 
-        /**
-         * @brief 内部辅助：编译指定的逻辑通道 (公式解析与 JIT 准备)
-         */
-        void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_idx,
-                                   const std::string &infix_expr, std::vector<uint32_t> &out_parents) {
 
-            auto &node = graph.get_node_by_id(node_id);
-            auto &channel = node.channels[channel_idx];
-
-            channel.original_infix = infix_expr;
-            if (infix_expr.empty()) {
-                node.error_status = GeoErrorStatus::ERR_EMPTY_FORMULA;
-            }
-
-            auto compile_res = CAS::Parser::compile_infix_to_rpn(infix_expr);
-            if (!compile_res.success) {
-                node.error_status = GeoErrorStatus::ERR_SYNTAX;
-                return;
-            }
-
-            uint32_t b_len = static_cast<uint32_t>(compile_res.bytecode.size());
-            channel.bytecode_len = b_len;
-            channel.bytecode_ptr = new RPNToken[b_len];
-            std::memcpy(channel.bytecode_ptr, compile_res.bytecode.data(), b_len * sizeof(RPNToken));
-
-            uint32_t p_len = static_cast<uint32_t>(compile_res.binding_slots.size());
-            channel.patch_len = p_len;
-            channel.patch_ptr = new RuntimeBindingSlot[p_len];
-
-            for (uint32_t k = 0; k < p_len; ++k) {
-                const auto &raw = compile_res.binding_slots[k];
-                auto &rt_slot = channel.patch_ptr[k];
-                rt_slot.rpn_index = raw.rpn_index;
-                rt_slot.func_type = raw.func_type;
-
-                if (raw.type == CAS::Parser::RPNBindingSlot::SlotType::VARIABLE) {
-                    uint32_t target_id = graph.GetNodeID(raw.source_name);
-                    rt_slot.dependency_ids.push_back(target_id);
-                    out_parents.push_back(target_id);
-                } else {
-                    for (const auto &arg_name : raw.args) {
-                        uint32_t target_id = graph.GetNodeID(arg_name);
-                        rt_slot.dependency_ids.push_back(target_id);
-                        out_parents.push_back(target_id);
-                    }
-                }
-            }
-        }
 
         void SetupNodeBase(GeometryGraph &graph, uint32_t id, const GeoNode::VisualConfig &config,
                            GeoType::Type g_type, SolverFunc s_func, RenderTaskFunc t_func) {
@@ -156,7 +109,78 @@ namespace GeoFactory {
             graph.mark_as_seed(id);
         }
     }
+        /**
+         * @brief 内部辅助：编译指定的逻辑通道 (公式解析与 JIT 准备)
+         */
+void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_idx,
+                            const std::string &infix_expr, std::vector<uint32_t> &out_parents, bool is_preview) {
 
+    // --- 1. 目标重定向 (三元表达式的高级应用) ---
+    // 获取错误状态码和逻辑通道的引用，预览模式下完全跳过节点池查找
+    uint32_t& error_status = is_preview ?
+                             graph.preview_status :
+                             graph.get_node_by_id(node_id).error_status;
+
+    LogicChannel& channel = is_preview ?
+                            graph.preview_channels[channel_idx] :
+                            graph.get_node_by_id(node_id).channels[channel_idx];
+
+    // --- 2. 安全清理 ---
+    // 智能指针的 reset() 会在 clear() 中自动释放旧的内存
+    channel.clear();
+    channel.original_infix = infix_expr;
+
+    if (infix_expr.empty()) {
+        error_status = GeoErrorStatus::ERR_EMPTY_FORMULA;
+        return;
+    }
+
+    // --- 3. 语法解析 ---
+    auto compile_res = CAS::Parser::compile_infix_to_rpn(infix_expr);
+    if (!compile_res.success) {
+        error_status = GeoErrorStatus::ERR_SYNTAX;
+        return;
+    }
+
+    // --- 4. 字节码分配 (智能指针版) ---
+    uint32_t b_len = static_cast<uint32_t>(compile_res.bytecode.size());
+    channel.bytecode_len = b_len;
+    if (b_len > 0) {
+        // 使用 std::make_unique 分配内存，自动管理声明周期
+        channel.bytecode = std::make_unique<RPNToken[]>(b_len);
+        std::memcpy(channel.bytecode.get(), compile_res.bytecode.data(), b_len * sizeof(RPNToken));
+    }
+
+    // --- 5. 绑定槽位分配 (智能指针版) ---
+    uint32_t p_len = static_cast<uint32_t>(compile_res.binding_slots.size());
+    channel.patch_len = p_len;
+    if (p_len > 0) {
+        channel.patches = std::make_unique<RuntimeBindingSlot[]>(p_len);
+
+        for (uint32_t k = 0; k < p_len; ++k) {
+            const auto &raw = compile_res.binding_slots[k];
+            auto &rt_slot = channel.patches[k];
+            rt_slot.rpn_index = raw.rpn_index;
+            rt_slot.func_type = raw.func_type;
+
+            // 依赖收集：无论是否预览，都需要解析变量名对应的 ID
+            if (raw.type == CAS::Parser::RPNBindingSlot::SlotType::VARIABLE) {
+                uint32_t target_id = graph.GetNodeID(raw.source_name);
+                rt_slot.dependency_ids.push_back(target_id);
+                out_parents.push_back(target_id);
+            } else {
+                for (const auto &arg_name : raw.args) {
+                    uint32_t target_id = graph.GetNodeID(arg_name);
+                    rt_slot.dependency_ids.push_back(target_id);
+                    out_parents.push_back(target_id);
+                }
+            }
+        }
+    }
+
+    // 编译成功，标记状态为有效
+    error_status = GeoErrorStatus::VALID;
+}
     // =========================================================
     // 公开工厂方法
     // =========================================================
@@ -164,7 +188,7 @@ namespace GeoFactory {
     uint32_t CreateInternalScalar(GeometryGraph &graph, const std::string &infix_expr, const GeoNode::VisualConfig &config) {
         uint32_t id = graph.allocate_node();
         std::vector<uint32_t> parents;
-        CompileChannelInternal(graph, id, 0, infix_expr, parents);
+        CompileChannelInternal(graph, id, 0, infix_expr, parents, false);
         SetupNodeBase(graph, id, config, GeoType::SCALAR_INTERNAL, Solver_ScalarRPN, nullptr);
         graph.LinkAndRank(id, parents);
         return id;
@@ -173,8 +197,8 @@ namespace GeoFactory {
     uint32_t CreateFreePoint(GeometryGraph &graph, const std::string &x_expr, const std::string &y_expr, const GeoNode::VisualConfig &config) {
         uint32_t id = graph.allocate_node();
         std::vector<uint32_t> combined_parents;
-        CompileChannelInternal(graph, id, 0, x_expr, combined_parents);
-        CompileChannelInternal(graph, id, 1, y_expr, combined_parents);
+        CompileChannelInternal(graph, id, 0, x_expr, combined_parents, false);
+        CompileChannelInternal(graph, id, 1, y_expr, combined_parents, false);
 
         std::ranges::sort(combined_parents);
         auto [first, last] = std::ranges::unique(combined_parents);
@@ -225,7 +249,7 @@ namespace GeoFactory {
         }
         uint32_t id = graph.allocate_node();
         std::vector<uint32_t> combined_parents;
-        CompileChannelInternal(graph, id, 0, r, combined_parents);
+        CompileChannelInternal(graph, id, 0, r, combined_parents, false);
         SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_1POINT_1RADIUS, Solver_Circle_1Point_1Radius,
                       Render_Circle);
         graph.LinkAndRank(id, combined_parents);
@@ -266,8 +290,8 @@ namespace GeoFactory {
         std::vector<uint32_t> combined_parents = { target_id };
         node.target_ids.emplace_back(target_id);
 
-        CompileChannelInternal(graph, id, 0, x_expr, combined_parents);
-        CompileChannelInternal(graph, id, 1, y_expr, combined_parents);
+        CompileChannelInternal(graph, id, 0, x_expr, combined_parents, false);
+        CompileChannelInternal(graph, id, 1, y_expr, combined_parents, false);
 
         std::ranges::sort(combined_parents);
         auto [first, last] = std::ranges::unique(combined_parents);
@@ -305,7 +329,7 @@ namespace GeoFactory {
         auto &node = graph.get_node_by_id(scalar_id);
         node.channels[0].clear();
         std::vector<uint32_t> new_parents;
-        CompileChannelInternal(graph, scalar_id, 0, new_infix, new_parents);
+        CompileChannelInternal(graph, scalar_id, 0, new_infix, new_parents, false);
         if (node.error_status == GeoErrorStatus::ERR_SYNTAX || node.error_status == GeoErrorStatus::ERR_ID_NOT_FOUND) {
             node.error_status = GeoErrorStatus::VALID;
         }
@@ -321,8 +345,8 @@ namespace GeoFactory {
         node.channels[0].clear();
         node.channels[1].clear();
         std::vector<uint32_t> combined_parents;
-        CompileChannelInternal(graph, point_id, 0, new_x_expr, combined_parents);
-        CompileChannelInternal(graph, point_id, 1, new_y_expr, combined_parents);
+        CompileChannelInternal(graph, point_id, 0, new_x_expr, combined_parents, false);
+        CompileChannelInternal(graph, point_id, 1, new_y_expr, combined_parents, false);
 
         std::ranges::sort(combined_parents);
         auto [first, last] = std::ranges::unique(combined_parents);
@@ -390,11 +414,11 @@ namespace GeoFactory {
         node.target_ids = target_ids;
 
         // 编译 X 表达式
-        CompileChannelInternal(graph, id, 0, x_expr, combined_parents);
+        CompileChannelInternal(graph, id, 0, x_expr, combined_parents, false);
         if (!GeoErrorStatus::ok(node.error_status)) return id; // 检查X表达式编译错误
 
         // 编译 Y 表达式
-        CompileChannelInternal(graph, id, 1, y_expr, combined_parents);
+        CompileChannelInternal(graph, id, 1, y_expr, combined_parents, false);
         if (!GeoErrorStatus::ok(node.error_status)) return id; // 检查Y表达式编译错误
 
         // 去重并排序父节点ID

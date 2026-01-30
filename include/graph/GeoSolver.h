@@ -28,9 +28,12 @@ void Solver_Midpoint(GeoNode& self, GeometryGraph& graph);
 void Solver_Circle_1Point_1Radius(GeoNode& self, GeometryGraph& graph);
 void Solver_Circle_2Points(GeoNode& self, GeometryGraph& graph);
 void Solver_Circle_3Points(GeoNode& self, GeometryGraph& graph);
-
+double SolveChannel(GeoNode& self, int idx,GeometryGraph& graph,bool is_preview);
 // 约束点求解器 (执行裁剪空间投影与吸附算法)
 void Solver_ConstrainedPoint(GeoNode& self, GeometryGraph& graph);
+inline const ComputedResult& get_parent_res(const GeometryGraph& graph, uint32_t pid) {
+    return graph.get_node_by_id(pid).result;
+}
 
 // 图解交点求解器
 void Solver_GraphicalIntersectionPoint(GeoNode& self, GeometryGraph& graph);

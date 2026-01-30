@@ -189,9 +189,20 @@ void CancelPreview_Intectact(GeometryGraph& graph) {
     for (auto& node : graph.node_pool) {
         node.state_mask &= ~IS_SELECTED;
     }
+    graph.preview_status = GeoErrorStatus::VALID;
+    for (auto& ch : graph.preview_channels) {
+        ch.clear();
+    }
 }
 
 
 void UpdateMousePos_Interact(GeometryGraph& graph,double x,double y) {
     graph.mouse_position = {x,y};
 }
+
+
+
+void UpdatePreviewFormula_Interact(GeometryGraph& graph,std::string& r,int32_t idx) {
+    graph.preview_channels[idx].original_infix = r;
+}
+

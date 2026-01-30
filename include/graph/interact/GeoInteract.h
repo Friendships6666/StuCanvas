@@ -6,6 +6,8 @@
 #include "../../../include/plot/plotCall.h"
 #include "../../../include/graph/GeoGraph.h"
 #include "../../../include/grids/grids.h"
+#include "../../../include/graph/GeoSolver.h"
+#include "../../../include/graph/GeoFactory.h"
 #include <vector>
 #include <set>
 #include <string>
@@ -23,4 +25,5 @@ Vec2 SnapToGrid_Interact(const GeometryGraph& graph, Vec2 world_coord);
 
 void CancelPreview_Intectact(GeometryGraph& graph);
 void UpdateMousePos_Interact(GeometryGraph& graph,double x,double y);
+void UpdatePreviewFormula_Interact(GeometryGraph& graph,std::string& r,int32_t idx);
 #endif // GEO_INTERACT_H

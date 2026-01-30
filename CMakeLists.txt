@@ -59,6 +59,8 @@ set(SOURCE_FILES
         include/graph/interact/preview/circle/circle_2points.h
         include/graph/interact/preview/circle/circle_3points.h
         src/graph/interact/preview/circle/circle_3points.cpp
+        include/graph/interact/preview/circle/circle_1point_1radius.h
+        src/graph/interact/preview/circle/circle_1point_1radius.cpp
 
 
 )
