@@ -79,7 +79,7 @@ struct LabelConfig {
     FontType font = FontType::SANS_SERIF;
 };
 
-// 假设项目中定义的类型
+
 
 
 
