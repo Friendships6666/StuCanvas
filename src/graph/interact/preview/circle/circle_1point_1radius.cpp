@@ -68,7 +68,7 @@ void PreviewCircle_1Point_1Radius_Intertact(GeometryGraph& graph)
     tbb::concurrent_bounded_queue<std::vector<PointData>> q;
 
     // 直接调用你定义的特化圆绘制器
-    PlotCircle(&q, cx_view, cy_view, r_world, view);
+    PlotCircle(&q, cx_view, cy_view, r_world, view,0,0,true);
 
 
     // 5. 提取结果到预览缓冲区

@@ -268,9 +268,8 @@ struct ComputedResult {
 
         // --- 语义层 3：圆与圆锥曲线 ---
         struct {
-            double cx, cy, cr, angle; // 世界空间
+            double cx, cy, cr, t_start,t_end; // 世界空间
             double cx_view, cy_view;  // 视口空间
-            double spare_conic_0;
         };
 
         // --- 语义层 4：线段与向量 ---

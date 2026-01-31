@@ -151,7 +151,7 @@ void PreviewCircle_3Points_Intertact(GeometryGraph& graph) {
 
 
 
-    PlotCircle(&q, cx_v, cy_v, r, view);
+    PlotCircle(&q, cx_v, cy_v, r, view,0,0,true);
 
     // 5. 提取结果
     q.try_pop(graph.preview_points);

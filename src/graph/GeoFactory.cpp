@@ -98,13 +98,24 @@ namespace GeoFactory {
 
 
 
-        void Render_Circle(GeoNode &self, GeometryGraph &graph, const ViewState &view,
+        void Render_Circle_Delegate(GeoNode &self, GeometryGraph &graph, const ViewState &view,
                           oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
             if (!GeoErrorStatus::ok(self.error_status)) return;
 
 
 
-            PlotCircle(&q, self.result.x_view, self.result.x_view,self.result.cr,view);
+            PlotCircle(&q, self.result.x_view, self.result.x_view,self.result.cr,view,0,0,true);
+
+
+        }
+
+        void Render_Arc_Delegate(GeoNode &self, GeometryGraph &graph, const ViewState &view,
+                  oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
+            if (!GeoErrorStatus::ok(self.error_status)) return;
+
+
+
+            PlotCircle(&q, self.result.x_view, self.result.x_view,self.result.cr,view,self.result.t_start,self.result.t_end,false);
 
 
         }
@@ -308,7 +319,7 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
         std::vector<uint32_t> combined_parents;
         CompileChannelInternal(graph, id, 0, r, combined_parents, false);
         SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_1POINT_1RADIUS, Solver_Circle_1Point_1Radius,
-                      Render_Circle);
+                      Render_Circle_Delegate);
         graph.LinkAndRank(id, combined_parents);
         return id;
     }
@@ -319,7 +330,7 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
             return 0;
         }
         uint32_t id = graph.allocate_node();
-        SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_3POINTS, Solver_Circle_3Points, Render_Circle);
+        SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_3POINTS, Solver_Circle_3Points, Render_Circle_Delegate);
         graph.LinkAndRank(id, {id1,id2,id3});
         return id;
     }
@@ -329,7 +340,7 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
             return 0;
         }
         uint32_t id = graph.allocate_node();
-        SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_2POINTS, Solver_Circle_2Points, Render_Circle);
+        SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_2POINTS, Solver_Circle_2Points, Render_Circle_Delegate);
         graph.LinkAndRank(id, {id1,id2});
         return id;
 

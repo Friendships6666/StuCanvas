@@ -21,8 +21,11 @@
  */
 void PlotCircle(
     oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>>* results_queue,
-    double cx, double cy, double r, // 世界坐标圆心与半径
-    const ViewState& view
+    double cx, double cy, double r,
+    const ViewState& view,
+    double start_t,
+    double end_t,
+    bool is_full_circle
 );
 
 #endif // PLOTCIRCLE_H

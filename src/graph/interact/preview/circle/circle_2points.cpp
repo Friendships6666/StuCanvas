@@ -96,7 +96,7 @@ void PreviewCircle_2Points_Intertact(GeometryGraph& graph)
     tbb::concurrent_bounded_queue<std::vector<PointData>> q;
 
     // 直接调用你定义的特化圆绘制器
-    PlotCircle(&q, cx_world - view.offset_x, cy_world - view.offset_y, r_world, view);
+    PlotCircle(&q, cx_world - view.offset_x, cy_world - view.offset_y, r_world, view,0,0,true);
 
 
     // 5. 提取结果到预览缓冲区

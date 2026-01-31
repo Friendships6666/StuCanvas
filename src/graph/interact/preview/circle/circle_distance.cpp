@@ -83,7 +83,7 @@ void PreviewCircle_Distance_Intertact(GeometryGraph& graph) {
     const auto& view = graph.view;
     tbb::concurrent_bounded_queue<std::vector<PointData>> q;
     Vec2 mouse_pos = view.ScreenToWorldNoOffset(graph.mouse_position.x, graph.mouse_position.y);
-    PlotCircle(&q,mouse_pos.x,mouse_pos.y,radius,view);
+    PlotCircle(&q,mouse_pos.x,mouse_pos.y,radius,view,0,0,true);
     q.try_pop(graph.preview_points);
 
 
