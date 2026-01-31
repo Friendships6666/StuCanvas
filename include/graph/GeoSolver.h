@@ -37,5 +37,6 @@ inline const ComputedResult& get_parent_res(const GeometryGraph& graph, uint32_t
 
 // 图解交点求解器
 void Solver_GraphicalIntersectionPoint(GeoNode& self, GeometryGraph& graph);
+void Solver_IntersectionPoint(GeoNode& self, GeometryGraph& graph);
 
 #endif // GEOSOLVER_H

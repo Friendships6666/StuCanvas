@@ -4,7 +4,7 @@
 #include "../../include/graph/GeoGraph.h"
 #include "../../include/CAS/RPN/ShuntingYard.h"
 #include "../../include/graph/GeoSolver.h"
-#include "../../include/plot/plotSegment.h"
+#include "../../include/plot/plotLine.h"
 #include "../../include/plot/plotCircle.h"
 
 #include <algorithm>
@@ -60,7 +60,40 @@ namespace GeoFactory {
             // 调用极致优化的 DDA 补点算法
             process_two_point_line(q, p1.result.x_view, p1.result.y_view,
                                    p2.result.x_view, p2.result.y_view,
-                                   true, view);
+                                   LinePlotType::SEGMENT, view);
+        }
+
+        void Render_Line_Delegate(GeoNode &self, GeometryGraph &graph, const ViewState &view,
+                          oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
+            if (!GeoErrorStatus::ok(self.error_status) || self.parents.size() < 2) return;
+
+            // 获取父点（点已经完成了双轨坐标解算）
+            const auto& p1 = graph.get_node_by_id(self.parents[0]);
+            const auto& p2 = graph.get_node_by_id(self.parents[1]);
+
+
+
+            // 调用极致优化的 DDA 补点算法
+            process_two_point_line(q, p1.result.x_view, p1.result.y_view,
+                                   p2.result.x_view, p2.result.y_view,
+                                   LinePlotType::LINE, view);
+        }
+
+
+        void Render_Ray_Delegate(GeoNode &self, GeometryGraph &graph, const ViewState &view,
+                  oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
+            if (!GeoErrorStatus::ok(self.error_status) || self.parents.size() < 2) return;
+
+            // 获取父点（点已经完成了双轨坐标解算）
+            const auto& p1 = graph.get_node_by_id(self.parents[0]);
+            const auto& p2 = graph.get_node_by_id(self.parents[1]);
+
+
+
+            // 调用极致优化的 DDA 补点算法
+            process_two_point_line(q, p1.result.x_view, p1.result.y_view,
+                                   p2.result.x_view, p2.result.y_view,
+                                   LinePlotType::RAY, view);
         }
 
 
@@ -93,18 +126,7 @@ namespace GeoFactory {
             node.solver = s_func;
             node.render_task = t_func;
             node.state_mask |= IS_VISIBLE;
-            if (!node.parents.empty()) {
-                // 语义：如果在 node.parents 中，“存在任意一个”父节点满足“有 IS_HEURISTIC 标记”
-                bool has_heuristic_parent = std::ranges::any_of(node.parents, [&](const auto& parent_id) {
-                    return graph.get_node_by_id(parent_id).state_mask & IS_GRAPHICAL;
-                });
 
-                if (has_heuristic_parent) {
-                    node.state_mask |= IS_GRAPHICAL; // 属性传染
-                } else {
-                    node.state_mask &= ~IS_GRAPHICAL;
-                }
-            }
 
             graph.mark_as_seed(id);
         }
@@ -222,6 +244,41 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
         }
 
         SetupNodeBase(graph, id, config, GeoType::LINE_SEGMENT, Solver_StandardLine, Render_Segment_Delegate);
+        graph.LinkAndRank(id, {p1_id, p2_id});
+        return id;
+    }
+
+
+    uint32_t CreateLine(GeometryGraph &graph, uint32_t p1_id, uint32_t p2_id, const GeoNode::VisualConfig &config) {
+        if (!is_point(graph.get_node_by_id(p1_id).type) || !is_point(graph.get_node_by_id(p2_id).type)) {
+            return 0;
+        }
+
+
+        uint32_t id = graph.allocate_node();
+        auto &node = graph.get_node_by_id(id);
+        if (!graph.is_alive(p1_id) || !graph.is_alive(p2_id)) {
+            node.error_status = GeoErrorStatus::ERR_ID_NOT_FOUND;
+        }
+
+        SetupNodeBase(graph, id, config, GeoType::LINE_STRAIGHT, Solver_StandardLine, Render_Line_Delegate);
+        graph.LinkAndRank(id, {p1_id, p2_id});
+        return id;
+    }
+
+    uint32_t CreateRay(GeometryGraph &graph, uint32_t p1_id, uint32_t p2_id, const GeoNode::VisualConfig &config) {
+        if (!is_point(graph.get_node_by_id(p1_id).type) || !is_point(graph.get_node_by_id(p2_id).type)) {
+            return 0;
+        }
+
+
+        uint32_t id = graph.allocate_node();
+        auto &node = graph.get_node_by_id(id);
+        if (!graph.is_alive(p1_id) || !graph.is_alive(p2_id)) {
+            node.error_status = GeoErrorStatus::ERR_ID_NOT_FOUND;
+        }
+
+        SetupNodeBase(graph, id, config, GeoType::LINE_RAY, Solver_StandardLine, Render_Ray_Delegate);
         graph.LinkAndRank(id, {p1_id, p2_id});
         return id;
     }
@@ -429,6 +486,49 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
         // 设置节点基础属性和行为
         SetupNodeBase(graph, id, config, GeoType::POINT_INTERSECT_GRAPHICAL, Solver_GraphicalIntersectionPoint, Render_Point_Delegate);
         graph.LinkAndRank(id, combined_parents);
+        node.state_mask |= IS_GRAPHICAL;
+        return id;
+    }
+
+
+
+        uint32_t CreateIntersection(GeometryGraph &graph,
+                                      const uint32_t target_id1,
+                                      const uint32_t target_id2,
+                                      const std::string &x_expr,
+                                      const std::string &y_expr,
+                                      const GeoNode::VisualConfig &config) {
+        uint32_t id = graph.allocate_node();
+        auto &node = graph.get_node_by_id(id);
+
+        if (GeoType::is_point(graph.get_node_by_id(target_id1).type || GeoType::is_point(graph.get_node_by_id(target_id2).type))) {
+            return 0;
+        }
+
+
+
+        std::vector<uint32_t> combined_parents;
+
+        node.target_ids.emplace_back(target_id1);
+        node.target_ids.emplace_back(target_id2);
+
+        // 编译 X 表达式
+        CompileChannelInternal(graph, id, 0, x_expr, combined_parents, false);
+        if (!GeoErrorStatus::ok(node.error_status)) return id; // 检查X表达式编译错误
+
+        // 编译 Y 表达式
+        CompileChannelInternal(graph, id, 1, y_expr, combined_parents, false);
+        if (!GeoErrorStatus::ok(node.error_status)) return id; // 检查Y表达式编译错误
+
+        // 去重并排序父节点ID
+        std::ranges::sort(combined_parents);
+        auto [first, last] = std::ranges::unique(combined_parents);
+        combined_parents.erase(first, last);
+
+        // 设置节点基础属性和行为
+        SetupNodeBase(graph, id, config, GeoType::POINT_INTERSECT, Solver_IntersectionPoint, Render_Point_Delegate);
+        graph.LinkAndRank(id, combined_parents);
+
         return id;
     }
 

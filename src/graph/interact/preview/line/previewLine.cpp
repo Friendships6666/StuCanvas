@@ -1,8 +1,8 @@
 //
 // Created by hp on 2026/1/29.
 //
-#include "../include/graph/interact/preview/line/previewSegment.h"
-void PreviewSegment_Intertact(GeometryGraph& graph)
+#include "../include/graph/interact/preview/line/previewLine.h"
+void PreviewLine_Intertact(GeometryGraph& graph)
 {
     auto id = graph.preview_registers[0];
 
@@ -52,7 +52,7 @@ void PreviewSegment_Intertact(GeometryGraph& graph)
         tbb::concurrent_bounded_queue<std::vector<PointData>> q;
         process_two_point_line(q, point_x, point_y,
                        point2_x, point2_y,
-                       LinePlotType::SEGMENT, view);
+                       LinePlotType::LINE, view);
 
 
         q.try_pop(graph.preview_points);
@@ -63,7 +63,7 @@ void PreviewSegment_Intertact(GeometryGraph& graph)
     }
 }
 
-uint32_t EndSegment_Interact(GeometryGraph& graph) {
+uint32_t EndLine_Interact(GeometryGraph& graph) {
     uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
 
 
@@ -82,7 +82,7 @@ uint32_t EndSegment_Interact(GeometryGraph& graph) {
     // 3. 如果没有选中有效的点，则创建一个新的点
     // AddPoint_Interact 现在会返回新创建点的ID
 
-    GeoFactory::CreateSegment(graph,graph.preview_registers[0],graph.preview_registers[1],graph.preview_visual_config);
+    GeoFactory::CreateLine(graph,graph.preview_registers[0],graph.preview_registers[1],graph.preview_visual_config);
     CancelPreview_Intectact(graph);
     return 0;
 
@@ -90,7 +90,7 @@ uint32_t EndSegment_Interact(GeometryGraph& graph) {
 }
 
 
-uint32_t InitSegment_Interact(GeometryGraph& graph) {
+uint32_t InitLine_Interact(GeometryGraph& graph) {
     // 1. 尝试选择已有的点
     // 假设 TrySelect_Interact 会处理 IS_SELECTED 掩码的设置
     uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
@@ -103,10 +103,10 @@ uint32_t InitSegment_Interact(GeometryGraph& graph) {
         auto &selected_node = graph.get_node_by_id(selected_id);
         if (GeoType::is_point(selected_node.type)) {
             selected_node.state_mask |= IS_SELECTED;
-            graph.preview_func = PreviewSegment_Intertact;
-            graph.preview_type = GeoType::LINE_SEGMENT;
+            graph.preview_func = PreviewLine_Intertact;
+            graph.preview_type = GeoType::LINE_STRAIGHT;
             graph.preview_registers[0] = selected_id;
-            graph.next_interact_func = EndSegment_Interact;
+            graph.next_interact_func = EndLine_Interact;
             return selected_id; // 成功选中一个点，返回其ID
         }
     } else {
@@ -114,10 +114,10 @@ uint32_t InitSegment_Interact(GeometryGraph& graph) {
         // AddPoint_Interact 现在会返回新创建点的ID
         auto new_point = CreatePoint_Interact(graph);
         graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
-        graph.preview_func = PreviewSegment_Intertact;
-        graph.preview_type = GeoType::LINE_SEGMENT;
+        graph.preview_func = PreviewLine_Intertact;
+        graph.preview_type = GeoType::LINE_STRAIGHT;
         graph.preview_registers[0] = new_point;
-        graph.next_interact_func = EndSegment_Interact;
+        graph.next_interact_func = EndLine_Interact;
     }
 
 

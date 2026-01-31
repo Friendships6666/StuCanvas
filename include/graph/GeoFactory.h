@@ -35,7 +35,15 @@ namespace GeoFactory {
                         uint32_t p1_id,
                         uint32_t p2_id,
                         const GeoNode::VisualConfig &config = {});
+    uint32_t CreateLine(GeometryGraph &graph,
+                        uint32_t p1_id,
+                        uint32_t p2_id,
+                        const GeoNode::VisualConfig &config = {});
 
+    uint32_t CreateRay(GeometryGraph &graph,
+                    uint32_t p1_id,
+                    uint32_t p2_id,
+                    const GeoNode::VisualConfig &config = {});
     uint32_t CreateMidPoint(GeometryGraph &graph,
                          uint32_t p1_id,
                          uint32_t p2_id,
@@ -77,6 +85,12 @@ namespace GeoFactory {
     void RefreshViewState(GeometryGraph& graph);
     void UpdateViewTransform(GeometryGraph& graph, double ox, double oy, double zoom);
     void UpdateViewSize(GeometryGraph& graph, double w, double h);
+    uint32_t CreateIntersection(GeometryGraph &graph,
+                                     const uint32_t target_id1,
+                                     const uint32_t target_id2,
+                                     const std::string &x_expr,
+                                     const std::string &y_expr,
+                                     const GeoNode::VisualConfig &config);
 } // namespace GeoFactory
 
 #endif

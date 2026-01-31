@@ -308,13 +308,9 @@ void Solver_StandardLine(GeoNode& self, GeometryGraph& graph) {
     self.result.x1 = p1.x; self.result.y1 = p1.y;
     self.result.x2 = p2.x; self.result.y2 = p2.y;
 
-    double dx = p1.x - p2.x;
-    double dy = p1.y - p2.y;
-    if ((dx * dx + dy * dy) < 1e-15) {
-        self.error_status = GeoErrorStatus::ERR_EMPTY_RESULT;
-    } else {
-        self.error_status = GeoErrorStatus::VALID;
-    }
+
+    self.error_status = GeoErrorStatus::VALID;
+
 }
 
 // =========================================================

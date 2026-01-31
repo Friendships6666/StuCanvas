@@ -30,8 +30,8 @@ set(SOURCE_FILES
         include/plot/plotImplicit.h
         src/plot/plotImplicit.cpp
 
-        include/plot/plotSegment.h
-        src/plot/plotSegment.cpp
+        include/plot/plotLine.h
+        src/plot/plotLine.cpp
         include/plot/plotCircle.h
         src/plot/plotCircle.cpp
 
@@ -54,7 +54,7 @@ set(SOURCE_FILES
         src/grids/grids.cpp
         include/grids/grids.h
         src/graph/interact/preview/line/previewSegment.cpp
-        include/graph/interact/preview/line/previewLine.h
+        include/graph/interact/preview/line/previewSegment.h
         src/graph/interact/preview/circle/circle_2points.cpp
         include/graph/interact/preview/circle/circle_2points.h
         include/graph/interact/preview/circle/circle_3points.h
@@ -63,6 +63,10 @@ set(SOURCE_FILES
         src/graph/interact/preview/circle/circle_1point_1radius.cpp
         include/graph/interact/preview/circle/circle_distance.h
         src/graph/interact/preview/circle/circle_distance.cpp
+        include/graph/interact/preview/line/previewLine.h
+        src/graph/interact/preview/line/previewLine.cpp
+        include/graph/interact/preview/line/previewRay.h
+        src/graph/interact/preview/line/previewRay.cpp
 
 
 )
