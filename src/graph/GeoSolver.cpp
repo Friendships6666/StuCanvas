@@ -375,46 +375,13 @@ namespace {
 }
 
 void Solver_GraphicalIntersectionPoint(GeoNode& self, GeometryGraph& graph) {
-    double anchor_w_x = std::isfinite(self.channels[0].value) ? self.channels[0].value : SolveChannel(self, 0, graph,false);
-    double anchor_w_y = std::isfinite(self.channels[1].value) ? self.channels[1].value : SolveChannel(self, 1, graph,false);
+    // 1. 获取锚点 (初始位置猜测)
+    double anchor_w_x = std::isfinite(self.channels[0].value) ? self.channels[0].value : SolveChannel(self, 0, graph, false);
+    double anchor_w_y = std::isfinite(self.channels[1].value) ? self.channels[1].value : SolveChannel(self, 1, graph, false);
 
-    // 2. 统一检查
     if (!std::isfinite(anchor_w_x) || !std::isfinite(anchor_w_y)) {
         self.error_status = GeoErrorStatus::ERR_OVERFLOW;
         return;
-    }
-
-
-
-    // 2. 将锚点世界坐标转换为 Clip 坐标
-    const auto& v = graph.view;
-    Vec2i anchor_clip = v.WorldToClip(anchor_w_x, anchor_w_y);
-    PointData anchor_pt_data = {anchor_clip.x, anchor_clip.y};
-
-    // 收集所有父节点的点数据和偏移量
-    std::vector<PointData> all_parent_points;
-    std::vector<size_t> parent_offsets;
-    uint16_t current_obj_idx = 0; // 用于FlatIntersectionMap的投票计数
-
-    for (uint32_t parent_id : self.parents) {
-        if (!graph.is_alive(parent_id)) {
-            self.error_status = GeoErrorStatus::ERR_PARENT_INVALID;
-            return;
-        }
-        const auto& parent_node = graph.get_node_by_id(parent_id);
-        if (parent_node.current_point_count == 0) {
-            // 如果任何一个父节点没有点，则无法求交
-            self.error_status = GeoErrorStatus::ERR_EMPTY_RESULT;
-            return;
-        }
-        // 记录当前父节点点数据在 all_parent_points 中的起始偏移
-        parent_offsets.push_back(all_parent_points.size());
-        
-        uint32_t start_idx = parent_node.buffer_offset;
-        uint32_t end_idx = start_idx + parent_node.current_point_count;
-        for (uint32_t i = start_idx; i < end_idx; ++i) {
-            all_parent_points.push_back(graph.final_points_buffer[i]);
-        }
     }
 
     if (self.parents.empty()) {
@@ -422,36 +389,49 @@ void Solver_GraphicalIntersectionPoint(GeoNode& self, GeometryGraph& graph) {
         return;
     }
 
-    // 3. 使用优化的哈希表算法寻找交点
-    // 预估哈希表大小，以第一个父节点的点数作为基准，或者一个合理的小值
-    size_t estimated_points = (parent_offsets.empty() || all_parent_points.empty()) ? 10 : 
-                              (parent_offsets.size() > 1 ? parent_offsets[1] : all_parent_points.size()) - parent_offsets[0];
-    
-    FlatIntersectionMap hit_map(estimated_points);
+    const auto& v = graph.view;
+    Vec2i anchor_clip = v.WorldToClip(anchor_w_x, anchor_w_y);
 
-    // 投票阶段
-    for (uint16_t i = 0; i < self.parents.size(); ++i) {
-        size_t start = parent_offsets[i];
-        size_t end = (i + 1 < self.parents.size()) ? parent_offsets[i + 1] : all_parent_points.size();
-        //auto segment = std::span(all_parent_points.data() + start, end - start);
+    // 预估哈希表大小（以第一个父节点的点数为基准，防止频繁扩容）
+    uint32_t first_parent_count = graph.get_node_by_id(self.parents[0]).current_point_count;
+    FlatIntersectionMap hit_map(std::max(first_parent_count, 64u));
 
-        // 为每个段的每个点投票
-        for (size_t k = start; k < end; ++k) {
-            hit_map.vote(pack_point_data(all_parent_points[k]), i);
+    // 2. 核心逻辑：遍历父节点并投票
+    // 直接在遍历父节点时投票，省去了存储 all_parent_points 的内存开销
+    for (uint16_t i = 0; i < static_cast<uint16_t>(self.parents.size()); ++i) {
+        uint32_t parent_id = self.parents[i];
+        if (!graph.is_alive(parent_id)) {
+            self.error_status = GeoErrorStatus::ERR_PARENT_INVALID;
+            return;
+        }
+
+        const auto& parent_node = graph.get_node_by_id(parent_id);
+        if (parent_node.current_point_count == 0) {
+            self.error_status = GeoErrorStatus::ERR_EMPTY_RESULT;
+            return;
+        }
+
+        uint32_t start_idx = parent_node.buffer_offset;
+        uint32_t end_idx = start_idx + parent_node.current_point_count;
+
+        // 为该对象的每个采样点投票
+        for (uint32_t k = start_idx; k < end_idx; ++k) {
+            // 使用 i 作为 current_obj_idx
+            hit_map.vote(pack_point_data(graph.final_points_buffer[k]), i);
         }
     }
 
-    // 距离筛选阶段
+    // 3. 距离筛选阶段：寻找距离锚点最近的“满票”交点
     PointData best_point_clip = {0, 0};
     int64_t min_dist_sq = std::numeric_limits<int64_t>::max();
     bool found_intersection = false;
 
     for (const auto& entry : hit_map.table) {
-        // 如果这个Entry是有效的（非EMPTY_KEY），并且投票计数等于父节点数量，说明它是一个交点
+        // 票数等于父节点总数，说明所有对象在该像素点均有采样
         if (entry.key != FlatIntersectionMap::EMPTY_KEY && entry.count == self.parents.size()) {
             PointData p = unpack_point_data(entry.key);
-            int64_t dx = static_cast<int64_t>(p.x) - anchor_pt_data.x;
-            int64_t dy = static_cast<int64_t>(p.y) - anchor_pt_data.y;
+            int64_t dx = static_cast<int64_t>(p.x) - anchor_clip.x;
+            int64_t dy = static_cast<int64_t>(p.y) - anchor_clip.y;
             int64_t d2 = dx * dx + dy * dy;
 
             if (d2 < min_dist_sq) {
@@ -463,18 +443,18 @@ void Solver_GraphicalIntersectionPoint(GeoNode& self, GeometryGraph& graph) {
     }
 
     if (found_intersection) {
-        // 4. 将找到的最佳 Clip 坐标逆向转换回世界坐标
         Vec2 best_world = v.ClipToWorld(best_point_clip.x, best_point_clip.y);
-
         self.result.x = best_world.x;
         self.result.y = best_world.y;
         self.result.x_view = best_world.x - v.offset_x;
         self.result.y_view = best_world.y - v.offset_y;
+
+        // 更新缓存值
         self.channels[0].value = best_world.x;
         self.channels[1].value = best_world.y;
         self.error_status = GeoErrorStatus::VALID;
     } else {
-        self.error_status = GeoErrorStatus::ERR_EMPTY_RESULT; // 没有找到交点
+        self.error_status = GeoErrorStatus::ERR_EMPTY_RESULT;
     }
 }
 
