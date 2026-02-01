@@ -49,6 +49,10 @@ enum NodeMask : uint64_t {
     IS_DIRTY = 1ULL << 2,
     IS_SELECTED = 1ULL << 3,
     IS_GRAPHICAL_INFECTED = 1ULL << 4,
+    INTERSECTION_0 = 1ULL << 5,
+    INTERSECTION_1 = 1ULL << 6,
+    INTERSECTION_3 = 1ULL << 7,
+    INTERSECTION_4 = 1ULL << 8,
 };
 enum class GridSystemType : uint8_t {
     CARTESIAN = 0, // 直角坐标系
@@ -263,7 +267,7 @@ struct ComputedResult {
             double x_view, y_view;
 
             // C. 几何备用槽位 1
-            double spare_geo_0;
+            double t;
         };
 
         // --- 语义层 3：圆与圆锥曲线 ---
@@ -275,7 +279,7 @@ struct ComputedResult {
         // --- 语义层 4：线段与向量 ---
         struct {
             double x1, y1, x2, y2;    // 世界空间
-            double x1_view, y1_view;  // 视口空间
+            double x1_view, y1_view,x2_view,y2_view;  // 视口空间
             double spare_line_0;
         };
         double _raw_data[7];
@@ -303,6 +307,7 @@ namespace GeoType {
         CAT_POINT        = 0x0100,
         POINT_FREE       = 0x0101,
         POINT_CONSTRAINED= 0x0102,
+        POINT_CONSTRAINED_ANALYTIC= 0x0102,
         POINT_INTERSECT  = 0x0103,
         POINT_INTERSECT_GRAPHICAL  = 0x0104,
         POINT_MID        = 0x0105,

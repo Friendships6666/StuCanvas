@@ -307,6 +307,8 @@ void Solver_StandardLine(GeoNode& self, GeometryGraph& graph) {
 
     self.result.x1 = p1.x; self.result.y1 = p1.y;
     self.result.x2 = p2.x; self.result.y2 = p2.y;
+    self.result.x1_view = p1.x_view; self.result.y1_view = p1.y_view;
+    self.result.x2_view = p2.x_view; self.result.y2_view = p2.y_view;
 
 
     self.error_status = GeoErrorStatus::VALID;
@@ -557,7 +559,7 @@ void Solver_Arc_2Points_1Radius(GeoNode& self, GeometryGraph& graph) {
 
 
 void Solver_Arc_3Points(GeoNode& self, GeometryGraph& graph) {
-    const auto& v = graph.view;
+
 
     // 语义约定：
     // parents[0]: 圆心 (Center)
@@ -601,6 +603,8 @@ void Solver_Arc_3Points(GeoNode& self, GeometryGraph& graph) {
     // 世界空间数据
     res.cx = p0.x;
     res.cy = p0.y;
+    res.cx_view = p0.x_view;
+    res.cy_view = p0.y_view;
     res.cr = r;
     res.t_start = t_start;
     res.t_end = t_end;
@@ -697,6 +701,374 @@ void Solver_Arc_3Points_Circumarc(GeoNode& self, GeometryGraph& graph) {
     res.cy = cy_v + v.offset_y;
     res.t_start = final_t_start;
     res.t_end = final_t_end;
+
+    self.error_status = GeoErrorStatus::VALID;
+}
+
+
+
+
+
+
+namespace {
+    // 几何约束检查辅助函数 (用于范围过滤)
+    bool IsOnLinearSubset(GeoType::Type type, double t) {
+        if (type == GeoType::LINE_SEGMENT) return t >= -1e-9 && t <= 1.0 + 1e-9;
+        if (type == GeoType::LINE_RAY) return t >= -1e-9;
+        return true;
+    }
+
+    bool IsOnArcSubset(GeoType::Type type, double px, double py, double cx, double cy, double start, double end) {
+        if (type == GeoType::CIRCLE_2POINTS || type == GeoType::CIRCLE_1POINT_1RADIUS ||
+            type == GeoType::CIRCLE_3POINTS) {
+            return true;
+        }
+
+        double angle = std::atan2(py - cy, px - cx);
+
+        const double TWO_PI = 6.283185307179586;
+        auto norm = [&](double a) {
+            double r = std::fmod(a, TWO_PI);
+            if (r < 0) r += TWO_PI;
+            return r;
+        };
+
+        double a_norm = norm(angle);
+        double s_norm = norm(start);
+        double e_norm = norm(end);
+
+        if (s_norm <= e_norm) {
+            return a_norm >= s_norm - 1e-5 && a_norm <= e_norm + 1e-5;
+        }
+        return a_norm >= s_norm - 1e-5 || a_norm <= e_norm + 1e-5;
+    }
+
+    struct IntersectionSolution {
+        double x, y;   // View Space 坐标
+        int root_idx;  // 0 或 1，对应方程的两个根（拓扑指纹）
+    };
+}
+
+void Solver_Intersection(GeoNode& self, GeometryGraph& graph) {
+    if (self.target_ids.size() < 2) {
+        self.error_status = GeoErrorStatus::ERR_ID_NOT_FOUND;
+        return;
+    }
+
+    const auto& n1 = graph.get_node_by_id(self.target_ids[0]);
+    const auto& n2 = graph.get_node_by_id(self.target_ids[1]);
+
+    if (!GeoErrorStatus::ok(n1.error_status) || !GeoErrorStatus::ok(n2.error_status)) {
+        self.error_status = GeoErrorStatus::ERR_PARENT_INVALID;
+        return;
+    }
+
+    std::vector<IntersectionSolution> valid_solutions;
+
+    bool is_line1 = GeoType::is_line(n1.type);
+    bool is_line2 = GeoType::is_line(n2.type);
+    bool is_circ1 = GeoType::is_circle(n1.type);
+    bool is_circ2 = GeoType::is_circle(n2.type);
+
+    // =================================================
+    // 计算核心 (View Space)
+    // =================================================
+
+    // Case 1: 线 - 线
+    if (is_line1 && is_line2) {
+        double x1 = n1.result.x1_view, y1 = n1.result.y1_view;
+        double x2 = n1.result.x2_view, y2 = n1.result.y2_view;
+        double x3 = n2.result.x1_view, y3 = n2.result.y1_view;
+        double x4 = n2.result.x2_view, y4 = n2.result.y2_view;
+
+        double denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+
+        if (std::abs(denom) > 1e-12) {
+            double ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom;
+            double ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denom;
+
+            if (IsOnLinearSubset(n1.type, ua) && IsOnLinearSubset(n2.type, ub)) {
+                valid_solutions.push_back({x1 + ua * (x2 - x1), y1 + ua * (y2 - y1), 0});
+            }
+        }
+    }
+    // Case 2: 线 - 圆
+    else if ((is_line1 && is_circ2) || (is_circ1 && is_line2)) {
+        const auto& L_node = is_line1 ? n1 : n2;
+        const auto& C_node = is_line1 ? n2 : n1;
+
+        double lx1 = L_node.result.x1_view, ly1 = L_node.result.y1_view;
+        double lx2 = L_node.result.x2_view, ly2 = L_node.result.y2_view;
+        double cx = C_node.result.cx_view;
+        double cy = C_node.result.cy_view;
+        double r = C_node.result.cr;
+
+        double dx = lx2 - lx1;
+        double dy = ly2 - ly1;
+        double fx = lx1 - cx;
+        double fy = ly1 - cy;
+
+        double a = dx * dx + dy * dy;
+        double b = 2 * (fx * dx + fy * dy);
+        double c = (fx * fx + fy * fy) - r * r;
+
+        double delta = b * b - 4 * a * c;
+
+        if (delta >= -1e-9 && a > 1e-12) {
+            double sqrt_delta = std::sqrt(std::max(0.0, delta));
+
+            double t_candidates[2];
+            t_candidates[0] = (-b - sqrt_delta) / (2 * a);
+            t_candidates[1] = (-b + sqrt_delta) / (2 * a);
+
+            for (int i = 0; i < 2; ++i) {
+                // 范围检查
+                if (!IsOnLinearSubset(L_node.type, t_candidates[i])) continue;
+
+                double px = lx1 + t_candidates[i] * dx;
+                double py = ly1 + t_candidates[i] * dy;
+
+                if (IsOnArcSubset(C_node.type, px, py, cx, cy, C_node.result.t_start, C_node.result.t_end)) {
+                    valid_solutions.push_back({px, py, i}); // i 就是 root_idx (0 或 1)
+                }
+            }
+        }
+    }
+    // Case 3: 圆 - 圆
+    else if (is_circ1 && is_circ2) {
+        double c1x = n1.result.cx_view, c1y = n1.result.cy_view, r1 = n1.result.cr;
+        double c2x = n2.result.cx_view, c2y = n2.result.cy_view, r2 = n2.result.cr;
+
+        double d2 = (c1x - c2x) * (c1x - c2x) + (c1y - c2y) * (c1y - c2y);
+        double d = std::sqrt(d2);
+
+        if (d > 1e-9 && d <= r1 + r2 + 1e-9 && d >= std::abs(r1 - r2) - 1e-9) {
+            double a = (r1 * r1 - r2 * r2 + d2) / (2 * d);
+            double h = std::sqrt(std::max(0.0, r1 * r1 - a * a));
+
+            double x2 = c1x + a * (c2x - c1x) / d;
+            double y2 = c1y + a * (c2y - c1y) / d;
+
+            // Root 0: "右手"侧解
+            // Root 1: "左手"侧解
+            double pts[2][2] = {
+                {x2 + h * (c2y - c1y) / d, y2 - h * (c2x - c1x) / d},
+                {x2 - h * (c2y - c1y) / d, y2 + h * (c2x - c1x) / d}
+            };
+
+            for (int i = 0; i < 2; ++i) {
+                double px = pts[i][0];
+                double py = pts[i][1];
+
+                if (IsOnArcSubset(n1.type, px, py, c1x, c1y, n1.result.t_start, n1.result.t_end) &&
+                    IsOnArcSubset(n2.type, px, py, c2x, c2y, n2.result.t_start, n2.result.t_end)) {
+                    valid_solutions.push_back({px, py, i}); // i 就是 root_idx (0 或 1)
+                }
+            }
+        }
+    }
+
+    // =================================================
+    // 决策逻辑：Mask锁定 > 距离猜测
+    // =================================================
+    if (valid_solutions.empty()) {
+        self.error_status = GeoErrorStatus::ERR_EMPTY_RESULT;
+        self.state_mask &= ~(INTERSECTION_0 | INTERSECTION_1 | INTERSECTION_3 | INTERSECTION_4);
+        return;
+    }
+
+    int best_index = -1;
+
+    // 1. 检查 state_mask 中的锁定状态
+    int locked_root_idx = -1;
+    if (self.state_mask & INTERSECTION_0) locked_root_idx = 0;
+    else if (self.state_mask & INTERSECTION_1) locked_root_idx = 1;
+
+    if (locked_root_idx != -1) {
+        for (int i = 0; i < valid_solutions.size(); ++i) {
+            if (valid_solutions[i].root_idx == locked_root_idx) {
+                best_index = i;
+                break;
+            }
+        }
+    }
+
+    // 2. 如果未锁定或锁定失效，使用初始猜测值 (Nearest Neighbor)
+    if (best_index == -1) {
+        double guess_x = std::isnan(self.channels[0].value) ? SolveChannel(self, 0, graph, false) : self.channels[0].value;
+        double guess_y = std::isnan(self.channels[1].value) ? SolveChannel(self, 1, graph, false) : self.channels[1].value;
+
+        if (std::isfinite(guess_x) && std::isfinite(guess_y)) {
+            double min_dist = std::numeric_limits<double>::max();
+            const auto& v = graph.view;
+
+            for (int i = 0; i < valid_solutions.size(); ++i) {
+                double wx = valid_solutions[i].x + v.offset_x;
+                double wy = valid_solutions[i].y + v.offset_y;
+                double d2 = (wx - guess_x) * (wx - guess_x) + (wy - guess_y) * (wy - guess_y);
+
+                if (d2 < min_dist) {
+                    min_dist = d2;
+                    best_index = i;
+                }
+            }
+        } else {
+            best_index = 0;
+        }
+    }
+
+    // =================================================
+    // 结果回写与状态锁定
+    // =================================================
+    const auto& final_sol = valid_solutions[best_index];
+    const auto& v = graph.view;
+
+    self.result.x_view = final_sol.x;
+    self.result.y_view = final_sol.y;
+    self.result.x = final_sol.x + v.offset_x;
+    self.result.y = final_sol.y + v.offset_y;
+
+    // 更新锁定状态到 state_mask
+    self.state_mask &= ~(INTERSECTION_0 | INTERSECTION_1 | INTERSECTION_3 | INTERSECTION_4);
+    if (final_sol.root_idx == 0) {
+        self.state_mask |= INTERSECTION_0;
+    } else if (final_sol.root_idx == 1) {
+        self.state_mask |= INTERSECTION_1;
+    }
+
+    // 更新通道缓存
+    self.channels[0].value = self.result.x;
+    self.channels[1].value = self.result.y;
+
+    self.error_status = GeoErrorStatus::VALID;
+}
+
+
+
+
+
+namespace {
+    const double TWO_PI = 6.283185307179586;
+
+    // 辅助：归一化角度到 [0, 2PI)
+    inline double norm_angle(double a) {
+        double res = std::fmod(a, TWO_PI);
+        if (res < 0) res += TWO_PI;
+        return res;
+    }
+
+    // 判定角度是否在圆弧扫描范围内
+    inline bool is_ang_in_arc(double a, double s, double e) {
+        a = norm_angle(a);
+        s = norm_angle(s);
+        e = norm_angle(e);
+        if (s <= e) return a >= s && a <= e;
+        return a >= s || a <= e;
+    }
+
+    // 计算两个角度之间的最短弧长距离（用于吸附最近端点）
+    inline double ang_dist(double a, double b) {
+        double d = std::abs(norm_angle(a) - norm_angle(b));
+        return (d > 3.141592653589793) ? TWO_PI - d : d;
+    }
+}
+
+void Solver_ConstrainedPoint_Analytic(GeoNode& self, GeometryGraph& graph) {
+    const uint32_t target_id = self.target_ids[0];
+    const auto& target = graph.get_node_by_id(target_id);
+    const auto& v = graph.view;
+
+    // 1. 获取锚点 (如果是第一次运行，计算公式；否则使用保存的参数 t)
+    double anchor_x = 0, anchor_y = 0;
+    bool is_first_run =! std::isfinite(self.result.t);
+
+    if (is_first_run) {
+        anchor_x = SolveChannel(self, 0, graph, false);
+        anchor_y = SolveChannel(self, 1, graph, false);
+        if (!std::isfinite(anchor_x) || !std::isfinite(anchor_y)) {
+            self.error_status = GeoErrorStatus::ERR_OVERFLOW;
+            return;
+        }
+    }
+
+    // 2. 核心计算
+    double final_x, final_y, final_t;
+
+    if (GeoType::is_line(target.type)) {
+        // --- 线性对象处理 ---
+        double x1 = target.result.x1; double y1 = target.result.y1;
+        double dx = target.result.x2 - x1; double dy = target.result.y2 - y1;
+        double len_sq = dx * dx + dy * dy;
+
+        if (len_sq < 1e-12) { self.error_status = GeoErrorStatus::ERR_MATH_DOMAIN; return; }
+
+        if (is_first_run) {
+            final_t = ((anchor_x - x1) * dx + (anchor_y - y1) * dy) / len_sq;
+
+            // 【范围限制】
+            if (target.type == GeoType::LINE_SEGMENT) {
+                final_t = std::clamp(final_t, 0.0, 1.0);
+            } else if (target.type == GeoType::LINE_RAY) {
+                final_t = std::max(0.0, final_t);
+            }
+            self.result.t = final_t;
+        } else {
+            final_t = self.result.t;
+        }
+
+        final_x = x1 + final_t * dx;
+        final_y = y1 + final_t * dy;
+    }
+    else if (GeoType::is_circle(target.type)) {
+        // --- 圆/圆弧对象处理 ---
+        double cx = target.result.cx; double cy = target.result.cy;
+        double r  = target.result.cr;
+
+        if (is_first_run) {
+            // 计算投射到圆上的极角
+            double current_ang = std::atan2(anchor_y - cy, anchor_x - cx);
+
+            // 【范围限制】判断是否为圆弧 (通过检查 type 或是否有 t_start)
+            bool is_arc = (target.type == GeoType::ARC_2POINTS_1RADIUS ||
+                           target.type == GeoType::ARC_3POINTS ||
+                           target.type == GeoType::ARC_3POINTS_CIRCUMARC);
+
+            if (is_arc) {
+                double s = target.result.t_start;
+                double e = target.result.t_end;
+
+                if (!is_ang_in_arc(current_ang, s, e)) {
+                    // 如果不在范围内，吸附到最近的端点
+                    if (ang_dist(current_ang, s) < ang_dist(current_ang, e)) {
+                        current_ang = s;
+                    } else {
+                        current_ang = e;
+                    }
+                }
+            }
+            final_t = current_ang;
+            self.result.t = final_t;
+        } else {
+            final_t = self.result.t;
+        }
+
+        final_x = cx + r * std::cos(final_t);
+        final_y = cy + r * std::sin(final_t);
+    }
+    else {
+        self.error_status = GeoErrorStatus::ERR_TYPE_MISMATCH;
+        return;
+    }
+
+    // 3. 结果写入
+    self.result.x = final_x;
+    self.result.y = final_y;
+    self.result.x_view = final_x - v.offset_x;
+    self.result.y_view = final_y - v.offset_y;
+
+    // 通道缓存更新（用于后续依赖）
+    self.channels[0].value = final_x;
+    self.channels[1].value = final_y;
 
     self.error_status = GeoErrorStatus::VALID;
 }

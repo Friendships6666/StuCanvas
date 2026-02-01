@@ -41,4 +41,5 @@ void Solver_Intersection(GeoNode& self, GeometryGraph& graph);
 void Solver_Arc_2Points_1Radius(GeoNode& self, GeometryGraph& graph);
 void Solver_Arc_3Points(GeoNode& self, GeometryGraph& graph);
 void Solver_Arc_3Points_Circumarc(GeoNode& self, GeometryGraph& graph);
+void Solver_ConstrainedPoint_Analytic(GeoNode& self, GeometryGraph& graph);
 #endif // GEOSOLVER_H

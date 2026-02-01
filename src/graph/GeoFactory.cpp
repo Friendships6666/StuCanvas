@@ -410,7 +410,7 @@ namespace GeoFactory {
 
     uint32_t CreateConstrainedPoint(GeometryGraph &graph, uint32_t target_id, const std::string &x_expr,
                                     const std::string &y_expr, const GeoNode::VisualConfig &config) {
-        if (!is_point(graph.get_node_by_id(target_id).type)) {
+        if (is_point(graph.get_node_by_id(target_id).type)) {
             return 0;
         }
         uint32_t id = graph.allocate_node();
@@ -429,6 +429,33 @@ namespace GeoFactory {
 
         SetupNodeBase(graph, id, config, GeoType::POINT_CONSTRAINED, Solver_ConstrainedPoint, Render_Point_Delegate);
         node.state_mask |= IS_GRAPHICAL;
+
+        graph.LinkAndRank(id, combined_parents);
+        return id;
+    }
+
+    uint32_t CreateConstrainedPoint_Analytic(GeometryGraph &graph, uint32_t target_id, const std::string &x_expr,
+                                const std::string &y_expr, const GeoNode::VisualConfig &config) {
+        if (is_point(graph.get_node_by_id(target_id).type)) {
+            return 0;
+        }
+        uint32_t id = graph.allocate_node();
+        auto &node = graph.get_node_by_id(id);
+
+
+        std::vector<uint32_t> combined_parents = {target_id};
+        node.target_ids.emplace_back(target_id);
+
+        CompileChannelInternal(graph, id, 0, x_expr, combined_parents, false);
+        CompileChannelInternal(graph, id, 1, y_expr, combined_parents, false);
+
+        std::ranges::sort(combined_parents);
+        auto [first, last] = std::ranges::unique(combined_parents);
+        combined_parents.erase(first, last);
+        node.result.t = std::numeric_limits<double>::quiet_NaN();
+
+        SetupNodeBase(graph, id, config, GeoType::POINT_CONSTRAINED_ANALYTIC, Solver_ConstrainedPoint_Analytic, Render_Point_Delegate);
+
 
         graph.LinkAndRank(id, combined_parents);
         return id;
@@ -475,6 +502,8 @@ namespace GeoFactory {
 
         node.channels[0].clear();
         node.channels[1].clear();
+
+
         std::vector<uint32_t> combined_parents;
         CompileChannelInternal(graph, point_id, 0, new_x_expr, combined_parents, false);
         CompileChannelInternal(graph, point_id, 1, new_y_expr, combined_parents, false);
