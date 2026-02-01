@@ -73,6 +73,8 @@ set(SOURCE_FILES
         include/graph/interact/preview/circle/arc_3points.h
         src/graph/interact/preview/circle/arc_3points_circumarc.cpp
         include/graph/interact/preview/circle/arc_3points_circumarc.h
+        include/graph/interact/preview/line/line_vertical.h
+        src/graph/interact/preview/line/line_vertical.cpp
 
 
 )

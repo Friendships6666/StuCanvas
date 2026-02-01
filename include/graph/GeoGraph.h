@@ -322,6 +322,7 @@ namespace GeoType {
         LINE_PARALLEL    = 0x0206,
         LINE_VECTOR      = 0x0207,
         LINE_FIXED_DISTANCE = 0x0208,
+        LINE_VERTICAL = 0x0209,
 
 
         CAT_CIRCLE        = 0x0300,

@@ -133,9 +133,7 @@ namespace GeoFactory {
         }
     }
 
-    /**
-     * @brief 内部辅助：编译指定的逻辑通道 (公式解析与 JIT 准备)
-     */
+
     void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_idx,
                                 const std::string &infix_expr, std::vector<uint32_t> &out_parents, bool is_preview) {
         // --- 1. 目标重定向 (三元表达式的高级应用) ---
@@ -203,9 +201,7 @@ namespace GeoFactory {
         error_status = GeoErrorStatus::VALID;
     }
 
-    // =========================================================
-    // 公开工厂方法
-    // =========================================================
+
 
     uint32_t CreateInternalScalar(GeometryGraph &graph, const std::string &infix_expr,
                                   const GeoNode::VisualConfig &config) {
@@ -264,6 +260,23 @@ namespace GeoFactory {
         }
 
         SetupNodeBase(graph, id, config, GeoType::LINE_STRAIGHT, Solver_StandardLine, Render_Line_Delegate);
+        graph.LinkAndRank(id, {p1_id, p2_id});
+        return id;
+    }
+
+    uint32_t CreateVerticalLine(GeometryGraph &graph, uint32_t p1_id, uint32_t p2_id, const GeoNode::VisualConfig &config) {
+        if (!is_point(graph.get_node_by_id(p1_id).type) || !is_line(graph.get_node_by_id(p2_id).type)) {
+            return 0;
+        }
+
+
+        uint32_t id = graph.allocate_node();
+        auto &node = graph.get_node_by_id(id);
+        if (!graph.is_alive(p1_id) || !graph.is_alive(p2_id)) {
+            node.error_status = GeoErrorStatus::ERR_ID_NOT_FOUND;
+        }
+
+        SetupNodeBase(graph, id, config, GeoType::LINE_VERTICAL, Solver_VerticalLine, Render_Line_Delegate);
         graph.LinkAndRank(id, {p1_id, p2_id});
         return id;
     }

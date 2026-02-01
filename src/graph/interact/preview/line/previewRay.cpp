@@ -21,7 +21,7 @@ void PreviewRay_Intertact(GeometryGraph& graph) {
     double p2x_v, p2y_v;
 
     // A. 尝试对象吸附
-    uint32_t sel_id = TrySelect_Interact(graph, false);
+    uint32_t sel_id = TrySelect_Interact(graph, true);
     if (sel_id != 0 && sel_id != id1 && graph.is_alive(sel_id) &&
         GeoType::is_point(graph.get_node_by_id(sel_id).type))
     {

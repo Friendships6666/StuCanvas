@@ -36,23 +36,20 @@ uint32_t InitCircle_Distance_Interact(GeometryGraph& graph) {
     return id;
 }
 void PreviewCircle_Distance_Intertact(GeometryGraph& graph) {
-    // 1. 获取核心参考对象
+    // 1. 获取核心参考对象（用于计算半径）
     const auto& node0 = graph.get_node_by_id(graph.preview_registers[0]);
     double radius = 0.0;
 
-    // 2. 多模态半径解算 (Strategy-based radius derivation)
+    // 2. 多模态半径解算 (保持原有逻辑)
     if (GeoType::is_circle(node0.type)) {
-        // 模式 A: 直接提取圆半径
         radius = node0.result.cr;
     }
     else if (node0.type == GeoType::LINE_SEGMENT) {
-        // 模式 B: 计算线段长度作为半径
         const auto& p1 = graph.get_node_by_id(node0.parents[0]).result;
         const auto& p2 = graph.get_node_by_id(node0.parents[1]).result;
         radius = std::hypot(p1.x_view - p2.x_view, p1.y_view - p2.y_view);
     }
     else if (GeoType::is_point(node0.type)) {
-        // 模式 C: 点对点距离 (需要检查第二个寄存器)
         const auto& node1 = graph.get_node_by_id(graph.preview_registers[1]);
         if (graph.is_alive(node1.id) && GeoType::is_point(node1.type)) {
             radius = std::hypot(node0.result.x_view - node1.result.x_view,
@@ -60,27 +57,47 @@ void PreviewCircle_Distance_Intertact(GeometryGraph& graph) {
         }
     }
 
-    // 安全检查：半径过小或无效时不进行渲染
+    // 安全检查
     if (radius < 1e-7 || !std::isfinite(radius)) {
         graph.preview_points.clear();
         return;
     }
 
-    // 3. 渲染预览圆 (跟随鼠标)
+    // ==========================================================
+    // 3. 核心改进：确定预览圆心的位置 (带吸附逻辑)
+    // ==========================================================
     const auto& view = graph.view;
+    double cx_v, cy_v; // 最终确定的视口空间圆心坐标
+
+    // A. 尝试对象吸附：检查鼠标是否悬停在某个点上
+    uint32_t hovered_id = TrySelect_Interact(graph, false);
+    if (graph.is_alive(hovered_id) && GeoType::is_point(graph.get_node_by_id(hovered_id).type)) {
+        // 命中现有点，强制吸附
+        const auto& p_res = graph.get_node_by_id(hovered_id).result;
+        cx_v = p_res.x_view;
+        cy_v = p_res.y_view;
+    }
+    else {
+        // B. 尝试网格吸附：将鼠标屏幕坐标转为世界坐标进行吸附
+        Vec2 world_pos = view.ScreenToWorld(graph.mouse_position.x, graph.mouse_position.y);
+        Vec2 snapped_w = SnapToGrid_Interact(graph, world_pos);
+
+        // 转回视口空间坐标 (World - Offset)
+        cx_v = snapped_w.x - view.offset_x;
+        cy_v = snapped_w.y - view.offset_y;
+    }
+
+    // ==========================================================
+    // 4. 渲染预览圆
+    // ==========================================================
     tbb::concurrent_bounded_queue<std::vector<PointData>> q;
 
-    // 将屏幕鼠标位置转为视口相对坐标 (View Space)
-    Vec2 mouse_v = view.ScreenToWorldNoOffset(graph.mouse_position.x, graph.mouse_position.y);
+    // 执行绘图 (使用计算出的吸附坐标 cx_v, cy_v)
+    PlotCircle(&q, cx_v, cy_v, radius, view, 0, 0, true);
 
-    // 执行绘图
-    PlotCircle(&q, mouse_v.x, mouse_v.y, radius, view, 0, 0, true);
-
-    // 4. 结果收割
+    // 5. 结果收割
     graph.preview_points.clear();
-
     q.try_pop(graph.preview_points);
-
 }
 
 

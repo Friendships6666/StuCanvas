@@ -96,6 +96,7 @@ namespace GeoFactory {
                               const GeoNode::VisualConfig &config);
     uint32_t CreateArc_3Points_Circumarc(GeometryGraph &graph, uint32_t id1, uint32_t id2, uint32_t id3,
                                      const GeoNode::VisualConfig &config);
+    uint32_t CreateVerticalLine(GeometryGraph &graph, uint32_t p1_id, uint32_t p2_id, const GeoNode::VisualConfig &config);
 
 } // namespace GeoFactory
 

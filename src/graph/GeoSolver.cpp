@@ -1052,3 +1052,75 @@ void Solver_ConstrainedPoint_Analytic(GeoNode& self, GeometryGraph& graph) {
 
     self.error_status = GeoErrorStatus::VALID;
 }
+
+void Solver_VerticalLine(GeoNode& self, GeometryGraph& graph) {
+    // parents[0] 是点 P，parents[1] 是目标直线 L
+    const auto& p_node = graph.get_node_by_id(self.parents[0]);
+    const auto& l_node = graph.get_node_by_id(self.parents[1]);
+    const auto& v = graph.view;
+
+    // 1. 安全检查
+    if (!GeoErrorStatus::ok(p_node.error_status) || !GeoErrorStatus::ok(l_node.error_status)) {
+        self.error_status = GeoErrorStatus::ERR_PARENT_INVALID;
+        return;
+    }
+
+    // 2. 提取基础几何数据
+    // 点 P
+    double px = p_node.result.x;
+    double py = p_node.result.y;
+
+    // 目标直线 L (通过两个定义点 A, B)
+    double x1 = l_node.result.x1;
+    double y1 = l_node.result.y1;
+    double x2 = l_node.result.x2;
+    double y2 = l_node.result.y2;
+
+    // 3. 计算投影点 (垂足 H)
+    // 向量 AB = (dx, dy)
+    double dx = x2 - x1;
+    double dy = y2 - y1;
+    double len_sq = dx * dx + dy * dy;
+
+    // 如果定义直线的两点重合，无法计算垂线
+    if (len_sq < 1e-12) {
+        self.error_status = GeoErrorStatus::ERR_MATH_DOMAIN;
+        return;
+    }
+
+    // 计算投影参数 t = (PA · AB) / |AB|^2
+    // 其中 PA = (px - x1, py - y1)
+    double t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
+
+    // 垂足 H = A + t * AB
+    double hx = x1 + t * dx;
+    double hy = y1 + t * dy;
+
+    // 4. 特殊情况：如果点 P 就在直线上，垂足 H 会与 P 重合，无法定义唯一垂线方向
+    // 此时我们需要构造一个法向量来确定方向
+    if (std::abs(px - hx) < 1e-10 && std::abs(py - hy) < 1e-10) {
+        // 构造垂直于 (dx, dy) 的法向量 (-dy, dx)
+        hx = px - dy;
+        hy = py + dx;
+    }
+
+    // 5. 填充结果槽位
+    // 定义垂线的两点：P (原点) 和 H (辅助垂足点)
+    self.result.x1 = px;
+    self.result.y1 = py;
+    self.result.x2 = hx;
+    self.result.y2 = hy;
+
+    // 计算视口相对坐标 (View Space) 用于渲染
+    self.result.x1_view = px - v.offset_x;
+    self.result.y1_view = py - v.offset_y;
+    self.result.x2_view = hx - v.offset_x;
+    self.result.y2_view = hy - v.offset_y;
+
+    // 6. 最终校验
+    if (!std::isfinite(hx) || !std::isfinite(hy)) {
+        self.error_status = GeoErrorStatus::ERR_OVERFLOW;
+    } else {
+        self.error_status = GeoErrorStatus::VALID;
+    }
+}

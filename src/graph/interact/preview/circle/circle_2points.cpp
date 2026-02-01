@@ -44,7 +44,7 @@ void PreviewCircle_2Points_Intertact(GeometryGraph& graph)
     double cy_world = node.result.y;
 
     // 2. 确定圆周上的参考点 (Point on Circumference)
-    uint32_t selected_id = TrySelect_Interact(graph,false);
+    uint32_t selected_id = TrySelect_Interact(graph,true);
 
     double p2_x_world{};
     double p2_y_world{};
