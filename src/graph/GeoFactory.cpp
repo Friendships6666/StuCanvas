@@ -18,7 +18,7 @@ namespace GeoFactory {
         void CollectDescendants(GeometryGraph &graph, uint32_t id, std::vector<uint32_t> &out_list) {
             if (!graph.is_alive(id)) return;
             auto &node = graph.get_node_by_id(id);
-            for (uint32_t child_id : node.children) {
+            for (uint32_t child_id: node.children) {
                 CollectDescendants(graph, child_id, out_list);
             }
             out_list.push_back(id);
@@ -29,7 +29,7 @@ namespace GeoFactory {
          * 产出：1个 int16 压缩坐标点
          */
         void Render_Point_Delegate(GeoNode &self, GeometryGraph &graph, const ViewState &view,
-                                   oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
+                                   oneapi::tbb::concurrent_bounded_queue<std::vector<PointData> > &q) {
             if (!GeoErrorStatus::ok(self.error_status)) return;
 
             // 1. 获取压缩坐标
@@ -37,7 +37,7 @@ namespace GeoFactory {
 
             // 2. 构造包含单点的 vector
             // 使用初始化列表直接构造，编译器通常能优化掉多余的拷贝
-            std::vector<PointData> pts = { { pd.x, pd.y } };
+            std::vector<PointData> pts = {{pd.x, pd.y}};
 
             // 3. 压入队列
             q.push(std::move(pts));
@@ -48,13 +48,12 @@ namespace GeoFactory {
          * 产出：通过 DDA 算法插值出的 int16 点集
          */
         void Render_Segment_Delegate(GeoNode &self, GeometryGraph &graph, const ViewState &view,
-                                  oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
+                                     oneapi::tbb::concurrent_bounded_queue<std::vector<PointData> > &q) {
             if (!GeoErrorStatus::ok(self.error_status) || self.parents.size() < 2) return;
 
             // 获取父点（点已经完成了双轨坐标解算）
-            const auto& p1 = graph.get_node_by_id(self.parents[0]);
-            const auto& p2 = graph.get_node_by_id(self.parents[1]);
-
+            const auto &p1 = graph.get_node_by_id(self.parents[0]);
+            const auto &p2 = graph.get_node_by_id(self.parents[1]);
 
 
             // 调用极致优化的 DDA 补点算法
@@ -64,13 +63,12 @@ namespace GeoFactory {
         }
 
         void Render_Line_Delegate(GeoNode &self, GeometryGraph &graph, const ViewState &view,
-                          oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
+                                  oneapi::tbb::concurrent_bounded_queue<std::vector<PointData> > &q) {
             if (!GeoErrorStatus::ok(self.error_status) || self.parents.size() < 2) return;
 
             // 获取父点（点已经完成了双轨坐标解算）
-            const auto& p1 = graph.get_node_by_id(self.parents[0]);
-            const auto& p2 = graph.get_node_by_id(self.parents[1]);
-
+            const auto &p1 = graph.get_node_by_id(self.parents[0]);
+            const auto &p2 = graph.get_node_by_id(self.parents[1]);
 
 
             // 调用极致优化的 DDA 补点算法
@@ -81,13 +79,12 @@ namespace GeoFactory {
 
 
         void Render_Ray_Delegate(GeoNode &self, GeometryGraph &graph, const ViewState &view,
-                  oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
+                                 oneapi::tbb::concurrent_bounded_queue<std::vector<PointData> > &q) {
             if (!GeoErrorStatus::ok(self.error_status) || self.parents.size() < 2) return;
 
             // 获取父点（点已经完成了双轨坐标解算）
-            const auto& p1 = graph.get_node_by_id(self.parents[0]);
-            const auto& p2 = graph.get_node_by_id(self.parents[1]);
-
+            const auto &p1 = graph.get_node_by_id(self.parents[0]);
+            const auto &p2 = graph.get_node_by_id(self.parents[1]);
 
 
             // 调用极致优化的 DDA 补点算法
@@ -97,29 +94,22 @@ namespace GeoFactory {
         }
 
 
-
         void Render_Circle_Delegate(GeoNode &self, GeometryGraph &graph, const ViewState &view,
-                          oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
+                                    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData> > &q) {
             if (!GeoErrorStatus::ok(self.error_status)) return;
 
 
-
-            PlotCircle(&q, self.result.x_view, self.result.x_view,self.result.cr,view,0,0,true);
-
-
+            PlotCircle(&q, self.result.x_view, self.result.x_view, self.result.cr, view, 0, 0, true);
         }
 
         void Render_Arc_Delegate(GeoNode &self, GeometryGraph &graph, const ViewState &view,
-                  oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>> &q) {
+                                 oneapi::tbb::concurrent_bounded_queue<std::vector<PointData> > &q) {
             if (!GeoErrorStatus::ok(self.error_status)) return;
 
 
-
-            PlotCircle(&q, self.result.x_view, self.result.x_view,self.result.cr,view,self.result.t_start,self.result.t_end,false);
-
-
+            PlotCircle(&q, self.result.x_view, self.result.x_view, self.result.cr, view, self.result.t_start,
+                       self.result.t_end, false);
         }
-
 
 
         void SetupNodeBase(GeometryGraph &graph, uint32_t id, const GeoNode::VisualConfig &config,
@@ -142,83 +132,83 @@ namespace GeoFactory {
             graph.mark_as_seed(id);
         }
     }
-        /**
-         * @brief 内部辅助：编译指定的逻辑通道 (公式解析与 JIT 准备)
-         */
-void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_idx,
-                            const std::string &infix_expr, std::vector<uint32_t> &out_parents, bool is_preview) {
 
-    // --- 1. 目标重定向 (三元表达式的高级应用) ---
-    // 获取错误状态码和逻辑通道的引用，预览模式下完全跳过节点池查找
-    uint32_t& error_status = is_preview ?
-                             graph.preview_status :
-                             graph.get_node_by_id(node_id).error_status;
+    /**
+     * @brief 内部辅助：编译指定的逻辑通道 (公式解析与 JIT 准备)
+     */
+    void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_idx,
+                                const std::string &infix_expr, std::vector<uint32_t> &out_parents, bool is_preview) {
+        // --- 1. 目标重定向 (三元表达式的高级应用) ---
+        // 获取错误状态码和逻辑通道的引用，预览模式下完全跳过节点池查找
+        uint32_t &error_status = is_preview ? graph.preview_status : graph.get_node_by_id(node_id).error_status;
 
-    LogicChannel& channel = is_preview ?
-                            graph.preview_channels[channel_idx] :
-                            graph.get_node_by_id(node_id).channels[channel_idx];
+        LogicChannel &channel = is_preview
+                                    ? graph.preview_channels[channel_idx]
+                                    : graph.get_node_by_id(node_id).channels[channel_idx];
 
-    // --- 2. 安全清理 ---
-    // 智能指针的 reset() 会在 clear() 中自动释放旧的内存
-    channel.clear();
-    channel.original_infix = infix_expr;
+        // --- 2. 安全清理 ---
+        // 智能指针的 reset() 会在 clear() 中自动释放旧的内存
+        channel.clear();
+        channel.original_infix = infix_expr;
 
-    if (infix_expr.empty()) {
-        error_status = GeoErrorStatus::ERR_EMPTY_FORMULA;
-        return;
-    }
+        if (infix_expr.empty()) {
+            error_status = GeoErrorStatus::ERR_EMPTY_FORMULA;
+            return;
+        }
 
-    // --- 3. 语法解析 ---
-    auto compile_res = CAS::Parser::compile_infix_to_rpn(infix_expr);
-    if (!compile_res.success) {
-        error_status = GeoErrorStatus::ERR_SYNTAX;
-        return;
-    }
+        // --- 3. 语法解析 ---
+        auto compile_res = CAS::Parser::compile_infix_to_rpn(infix_expr);
+        if (!compile_res.success) {
+            error_status = GeoErrorStatus::ERR_SYNTAX;
+            return;
+        }
 
-    // --- 4. 字节码分配 (智能指针版) ---
-    uint32_t b_len = static_cast<uint32_t>(compile_res.bytecode.size());
-    channel.bytecode_len = b_len;
-    if (b_len > 0) {
-        // 使用 std::make_unique 分配内存，自动管理声明周期
-        channel.bytecode = std::make_unique<RPNToken[]>(b_len);
-        std::memcpy(channel.bytecode.get(), compile_res.bytecode.data(), b_len * sizeof(RPNToken));
-    }
+        // --- 4. 字节码分配 (智能指针版) ---
+        uint32_t b_len = static_cast<uint32_t>(compile_res.bytecode.size());
+        channel.bytecode_len = b_len;
+        if (b_len > 0) {
+            // 使用 std::make_unique 分配内存，自动管理声明周期
+            channel.bytecode = std::make_unique<RPNToken[]>(b_len);
+            std::memcpy(channel.bytecode.get(), compile_res.bytecode.data(), b_len * sizeof(RPNToken));
+        }
 
-    // --- 5. 绑定槽位分配 (智能指针版) ---
-    uint32_t p_len = static_cast<uint32_t>(compile_res.binding_slots.size());
-    channel.patch_len = p_len;
-    if (p_len > 0) {
-        channel.patches = std::make_unique<RuntimeBindingSlot[]>(p_len);
+        // --- 5. 绑定槽位分配 (智能指针版) ---
+        uint32_t p_len = static_cast<uint32_t>(compile_res.binding_slots.size());
+        channel.patch_len = p_len;
+        if (p_len > 0) {
+            channel.patches = std::make_unique<RuntimeBindingSlot[]>(p_len);
 
-        for (uint32_t k = 0; k < p_len; ++k) {
-            const auto &raw = compile_res.binding_slots[k];
-            auto &rt_slot = channel.patches[k];
-            rt_slot.rpn_index = raw.rpn_index;
-            rt_slot.func_type = raw.func_type;
+            for (uint32_t k = 0; k < p_len; ++k) {
+                const auto &raw = compile_res.binding_slots[k];
+                auto &rt_slot = channel.patches[k];
+                rt_slot.rpn_index = raw.rpn_index;
+                rt_slot.func_type = raw.func_type;
 
-            // 依赖收集：无论是否预览，都需要解析变量名对应的 ID
-            if (raw.type == CAS::Parser::RPNBindingSlot::SlotType::VARIABLE) {
-                uint32_t target_id = graph.GetNodeID(raw.source_name);
-                rt_slot.dependency_ids.push_back(target_id);
-                out_parents.push_back(target_id);
-            } else {
-                for (const auto &arg_name : raw.args) {
-                    uint32_t target_id = graph.GetNodeID(arg_name);
+                // 依赖收集：无论是否预览，都需要解析变量名对应的 ID
+                if (raw.type == CAS::Parser::RPNBindingSlot::SlotType::VARIABLE) {
+                    uint32_t target_id = graph.GetNodeID(raw.source_name);
                     rt_slot.dependency_ids.push_back(target_id);
                     out_parents.push_back(target_id);
+                } else {
+                    for (const auto &arg_name: raw.args) {
+                        uint32_t target_id = graph.GetNodeID(arg_name);
+                        rt_slot.dependency_ids.push_back(target_id);
+                        out_parents.push_back(target_id);
+                    }
                 }
             }
         }
+
+        // 编译成功，标记状态为有效
+        error_status = GeoErrorStatus::VALID;
     }
 
-    // 编译成功，标记状态为有效
-    error_status = GeoErrorStatus::VALID;
-}
     // =========================================================
     // 公开工厂方法
     // =========================================================
 
-    uint32_t CreateInternalScalar(GeometryGraph &graph, const std::string &infix_expr, const GeoNode::VisualConfig &config) {
+    uint32_t CreateInternalScalar(GeometryGraph &graph, const std::string &infix_expr,
+                                  const GeoNode::VisualConfig &config) {
         uint32_t id = graph.allocate_node();
         std::vector<uint32_t> parents;
         CompileChannelInternal(graph, id, 0, infix_expr, parents, false);
@@ -227,7 +217,8 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
         return id;
     }
 
-    uint32_t CreateFreePoint(GeometryGraph &graph, const std::string &x_expr, const std::string &y_expr, const GeoNode::VisualConfig &config) {
+    uint32_t CreateFreePoint(GeometryGraph &graph, const std::string &x_expr, const std::string &y_expr,
+                             const GeoNode::VisualConfig &config) {
         uint32_t id = graph.allocate_node();
         std::vector<uint32_t> combined_parents;
         CompileChannelInternal(graph, id, 0, x_expr, combined_parents, false);
@@ -310,52 +301,110 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
     }
 
 
-
-    uint32_t CreateCircle_1Point_1Radius(GeometryGraph &graph,uint32_t center_id,const std::string &r,const GeoNode::VisualConfig &config) {
-        if (is_point(graph.get_node_by_id(center_id).type)) {
+    uint32_t CreateCircle_1Point_1Radius(GeometryGraph &graph, uint32_t center_id, const std::string &r,
+                                         const GeoNode::VisualConfig &config) {
+        if (!is_point(graph.get_node_by_id(center_id).type)) {
             return 0;
         }
         uint32_t id = graph.allocate_node();
         std::vector<uint32_t> combined_parents;
         CompileChannelInternal(graph, id, 0, r, combined_parents, false);
-        SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_1POINT_1RADIUS, Solver_Circle_1Point_1Radius,
+        SetupNodeBase(graph, id, config, GeoType::CIRCLE_1POINT_1RADIUS, Solver_Circle_1Point_1Radius,
                       Render_Circle_Delegate);
         graph.LinkAndRank(id, combined_parents);
         return id;
     }
 
 
-    uint32_t CreateCircle_3Points(GeometryGraph &graph,uint32_t id1,uint32_t id2,uint32_t id3,const GeoNode::VisualConfig &config) {
-        if (is_point(graph.get_node_by_id(id1).type) && is_point(graph.get_node_by_id(id2).type) && is_point(graph.get_node_by_id(id3).type)) {
+    uint32_t CreateArc_2Points_1Radius(GeometryGraph &graph, uint32_t id1, uint32_t id2, const std::string &r,
+                                       const GeoNode::VisualConfig &config) {
+        // 1. 类型安全检查
+        if (!GeoType::is_point(graph.get_node_by_id(id1).type) ||
+            !GeoType::is_point(graph.get_node_by_id(id2).type)) {
             return 0;
         }
+
         uint32_t id = graph.allocate_node();
-        SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_3POINTS, Solver_Circle_3Points, Render_Circle_Delegate);
-        graph.LinkAndRank(id, {id1,id2,id3});
+
+        // 2. 准备父节点容器，预留前两个位置给语义点
+        std::vector<uint32_t> parents;
+        parents.push_back(id1);
+        parents.push_back(id2);
+
+        // 3. 编译半径通道 (将公式依赖放入 parents)
+        CompileChannelInternal(graph, id, 0, r, parents, false);
+
+        // 4. 正确去重（保持语义顺序）
+        // 我们需要保证 parents[0] 和 parents[1] 依然是 id1 和 id2
+        // 从索引 2 开始排序去重，或者全量去重但手动处理头部
+        if (parents.size() > 2) {
+            // 全量排序去重前，先记录 id1, id2 顺序
+            std::ranges::sort(parents);
+            auto [first, last] = std::ranges::unique(parents);
+            parents.erase(first, last);
+
+            // 确保 id1, id2 在最前面（这是你的 Solver 约定的取值方式）
+            // 先移除已存在的 id1, id2，再压入头部
+            std::erase(parents, id1);
+            std::erase(parents, id2);
+            parents.insert(parents.begin(), id1);
+            parents.insert(parents.begin() + 1, id2);
+        }
+
+        // 5. 节点初始化
+        SetupNodeBase(graph, id, config, GeoType::ARC_2POINTS_1RADIUS, Solver_Arc_2Points_1Radius, Render_Arc_Delegate);
+
+        // 6. 拓扑链接
+        graph.LinkAndRank(id, parents);
         return id;
     }
 
-    uint32_t CreateCircle_2Points(GeometryGraph &graph,uint32_t id1,uint32_t id2,const GeoNode::VisualConfig &config) {
-        if (is_point(graph.get_node_by_id(id1).type) && is_point(graph.get_node_by_id(id2).type)) {
+
+    uint32_t CreateCircle_3Points(GeometryGraph &graph, uint32_t id1, uint32_t id2, uint32_t id3,
+                                  const GeoNode::VisualConfig &config) {
+        if (!is_point(graph.get_node_by_id(id1).type) || !is_point(graph.get_node_by_id(id2).type) || !is_point(
+                graph.get_node_by_id(id3).type)) {
             return 0;
         }
         uint32_t id = graph.allocate_node();
-        SetupNodeBase(graph, id, config, GeoType::CIRCLE_FULL_2POINTS, Solver_Circle_2Points, Render_Circle_Delegate);
-        graph.LinkAndRank(id, {id1,id2});
+        SetupNodeBase(graph, id, config, GeoType::CIRCLE_3POINTS, Solver_Circle_3Points, Render_Circle_Delegate);
+        graph.LinkAndRank(id, {id1, id2, id3});
         return id;
-
     }
 
-    uint32_t CreateConstrainedPoint(GeometryGraph &graph, uint32_t target_id, const std::string &x_expr, const std::string &y_expr, const GeoNode::VisualConfig &config) {
-        if (is_point(graph.get_node_by_id(target_id).type)) {
+    uint32_t CreateArc_3Points(GeometryGraph &graph, uint32_t id1, uint32_t id2, uint32_t id3,
+                              const GeoNode::VisualConfig &config) {
+        if (!is_point(graph.get_node_by_id(id1).type) || !is_point(graph.get_node_by_id(id2).type) || !is_point(
+                graph.get_node_by_id(id3).type)) {
+            return 0;
+                }
+        uint32_t id = graph.allocate_node();
+        SetupNodeBase(graph, id, config, GeoType::ARC_3POINTS, Solver_Arc_3Points, Render_Arc_Delegate);
+        graph.LinkAndRank(id, {id1, id2, id3});
+        return id;
+    }
+
+    uint32_t CreateCircle_2Points(GeometryGraph &graph, uint32_t id1, uint32_t id2,
+                                  const GeoNode::VisualConfig &config) {
+        if (!is_point(graph.get_node_by_id(id1).type) || !is_point(graph.get_node_by_id(id2).type)) {
+            return 0;
+        }
+        uint32_t id = graph.allocate_node();
+        SetupNodeBase(graph, id, config, GeoType::CIRCLE_2POINTS, Solver_Circle_2Points, Render_Circle_Delegate);
+        graph.LinkAndRank(id, {id1, id2});
+        return id;
+    }
+
+    uint32_t CreateConstrainedPoint(GeometryGraph &graph, uint32_t target_id, const std::string &x_expr,
+                                    const std::string &y_expr, const GeoNode::VisualConfig &config) {
+        if (!is_point(graph.get_node_by_id(target_id).type)) {
             return 0;
         }
         uint32_t id = graph.allocate_node();
         auto &node = graph.get_node_by_id(id);
 
 
-
-        std::vector<uint32_t> combined_parents = { target_id };
+        std::vector<uint32_t> combined_parents = {target_id};
         node.target_ids.emplace_back(target_id);
 
         CompileChannelInternal(graph, id, 0, x_expr, combined_parents, false);
@@ -379,11 +428,11 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
         std::ranges::sort(targets);
         targets.erase(std::ranges::unique(targets).begin(), targets.end());
 
-        for (uint32_t id : targets) {
+        for (uint32_t id: targets) {
             if (!graph.is_alive(id)) continue;
             auto &node = graph.get_node_by_id(id);
             for (int i = 0; i < 4; ++i) node.channels[i].clear();
-            for (uint32_t pid : node.parents) {
+            for (uint32_t pid: node.parents) {
                 if (graph.is_alive(pid)) {
                     auto &p_kids = graph.get_node_by_id(pid).children;
                     std::erase(p_kids, id);
@@ -405,7 +454,8 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
         graph.mark_as_seed(scalar_id);
     }
 
-    void UpdatePointScalar(GeometryGraph &graph, uint32_t point_id, const std::string &new_x_expr, const std::string &new_y_expr) {
+    void UpdatePointScalar(GeometryGraph &graph, uint32_t point_id, const std::string &new_x_expr,
+                           const std::string &new_y_expr) {
         if (!graph.is_alive(point_id)) return;
         auto &node = graph.get_node_by_id(point_id);
         if (!GeoType::is_point(node.type)) return;
@@ -433,28 +483,31 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
      * @brief 极致优化的视口同步逻辑
      * 严格遵循 $M=32767$ 的推导公式
      */
-    void RefreshViewState(GeometryGraph& graph) {
+    void RefreshViewState(GeometryGraph &graph) {
         graph.view.Refresh(); // 调用 ViewState 内部的高效计算逻辑
     }
 
-    void UpdateViewTransform(GeometryGraph& graph, double ox, double oy, double zoom) {
-        graph.view.offset_x = ox; graph.view.offset_y = oy; graph.view.zoom = zoom;
+    void UpdateViewTransform(GeometryGraph &graph, double ox, double oy, double zoom) {
+        graph.view.offset_x = ox;
+        graph.view.offset_y = oy;
+        graph.view.zoom = zoom;
         RefreshViewState(graph);
     }
 
-    void UpdateViewSize(GeometryGraph& graph, double w, double h) {
-        graph.view.screen_width = w; graph.view.screen_height = h;
+    void UpdateViewSize(GeometryGraph &graph, double w, double h) {
+        graph.view.screen_width = w;
+        graph.view.screen_height = h;
         RefreshViewState(graph);
     }
 
     uint32_t CreateGraphicalIntersection(GeometryGraph &graph,
-                                      const std::vector<uint32_t> &target_ids,
-                                      const std::string &x_expr,
-                                      const std::string &y_expr,
-                                      const GeoNode::VisualConfig &config) {
+                                         const std::vector<uint32_t> &target_ids,
+                                         const std::string &x_expr,
+                                         const std::string &y_expr,
+                                         const GeoNode::VisualConfig &config) {
         uint32_t id = graph.allocate_node();
         auto &node = graph.get_node_by_id(id);
-        for (const auto &target_id : target_ids) {
+        for (const auto &target_id: target_ids) {
             if (is_point(graph.get_node_by_id(target_id).type)) {
                 return 0;
             }
@@ -468,7 +521,7 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
         std::vector<uint32_t> combined_parents = target_ids;
 
         // 检查所有目标ID的有效性和类型
-        for (uint32_t target_id : target_ids) {
+        for (uint32_t target_id: target_ids) {
             if (!graph.is_alive(target_id)) {
                 node.error_status = GeoErrorStatus::ERR_ID_NOT_FOUND; // 找不到指定父节点ID
                 return id;
@@ -495,27 +548,27 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
         combined_parents.erase(first, last);
 
         // 设置节点基础属性和行为
-        SetupNodeBase(graph, id, config, GeoType::POINT_INTERSECT_GRAPHICAL, Solver_GraphicalIntersectionPoint, Render_Point_Delegate);
+        SetupNodeBase(graph, id, config, GeoType::POINT_INTERSECT_GRAPHICAL, Solver_GraphicalIntersectionPoint,
+                      Render_Point_Delegate);
         graph.LinkAndRank(id, combined_parents);
         node.state_mask |= IS_GRAPHICAL;
         return id;
     }
 
 
-
-        uint32_t CreateIntersection(GeometryGraph &graph,
-                                      const uint32_t target_id1,
-                                      const uint32_t target_id2,
-                                      const std::string &x_expr,
-                                      const std::string &y_expr,
-                                      const GeoNode::VisualConfig &config) {
+    uint32_t CreateIntersection(GeometryGraph &graph,
+                                uint32_t target_id1,
+                                uint32_t target_id2,
+                                const std::string &x_expr,
+                                const std::string &y_expr,
+                                const GeoNode::VisualConfig &config) {
         uint32_t id = graph.allocate_node();
         auto &node = graph.get_node_by_id(id);
 
-        if (GeoType::is_point(graph.get_node_by_id(target_id1).type || GeoType::is_point(graph.get_node_by_id(target_id2).type))) {
+        if (GeoType::is_point(
+            graph.get_node_by_id(target_id1).type || GeoType::is_point(graph.get_node_by_id(target_id2).type))) {
             return 0;
         }
-
 
 
         std::vector<uint32_t> combined_parents;
@@ -537,10 +590,9 @@ void CompileChannelInternal(GeometryGraph &graph, uint32_t node_id, int channel_
         combined_parents.erase(first, last);
 
         // 设置节点基础属性和行为
-        SetupNodeBase(graph, id, config, GeoType::POINT_INTERSECT, Solver_IntersectionPoint, Render_Point_Delegate);
+        SetupNodeBase(graph, id, config, GeoType::POINT_INTERSECT, Solver_Intersection, Render_Point_Delegate);
         graph.LinkAndRank(id, combined_parents);
 
         return id;
     }
-
 } // namespace GeoFactory

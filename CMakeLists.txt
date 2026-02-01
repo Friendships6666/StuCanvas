@@ -67,6 +67,10 @@ set(SOURCE_FILES
         src/graph/interact/preview/line/previewLine.cpp
         include/graph/interact/preview/line/previewRay.h
         src/graph/interact/preview/line/previewRay.cpp
+        src/graph/interact/preview/circle/arc_2points_1radius.cpp
+        include/graph/interact/preview/circle/arc_2points_1radius.h
+        src/graph/interact/preview/circle/arc_3points.cpp
+        include/graph/interact/preview/circle/arc_3points.h
 
 
 )

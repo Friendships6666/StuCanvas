@@ -15,14 +15,14 @@ uint32_t InitCircle_Distance_Interact(GeometryGraph& graph) {
         auto& selected_node = graph.get_node_by_id(selected_id);
         if (GeoType::is_point(selected_node.type)) {
             selected_node.state_mask |= IS_SELECTED;
-            graph.preview_type = GeoType::CIRCLE_FULL_DISTANCE;
+            graph.preview_type = GeoType::CIRCLE_DISTANCE;
             graph.next_interact_func = InitCircle_Distance_2_Interact;
             graph.preview_registers[0] = selected_id;
             return selected_id; // 成功选中一个点，返回其ID
         }
         if (GeoType::is_circle(selected_node.type)) {
             selected_node.state_mask |= IS_SELECTED;
-            graph.preview_type = GeoType::CIRCLE_FULL_DISTANCE;
+            graph.preview_type = GeoType::CIRCLE_DISTANCE;
             graph.preview_func = PreviewCircle_Distance_Intertact;
             graph.next_interact_func = EndCircle_Distance_Interact;
             graph.preview_registers[0] = selected_id;
@@ -30,7 +30,7 @@ uint32_t InitCircle_Distance_Interact(GeometryGraph& graph) {
         }
         if (selected_node.type == GeoType::LINE_SEGMENT) {
             selected_node.state_mask |= IS_SELECTED;
-            graph.preview_type = GeoType::CIRCLE_FULL_DISTANCE;
+            graph.preview_type = GeoType::CIRCLE_DISTANCE;
             graph.preview_func = PreviewCircle_Distance_Intertact;
             graph.next_interact_func = EndCircle_Distance_Interact;
             graph.preview_registers[0] = selected_id;
@@ -39,7 +39,7 @@ uint32_t InitCircle_Distance_Interact(GeometryGraph& graph) {
     } else {
         auto new_point = CreatePoint_Interact(graph);
         graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
-        graph.preview_type = GeoType::CIRCLE_FULL_DISTANCE;
+        graph.preview_type = GeoType::CIRCLE_DISTANCE;
         graph.next_interact_func = InitCircle_Distance_2_Interact;
         graph.preview_registers[0] = selected_id;
     }
@@ -108,7 +108,7 @@ uint32_t InitCircle_Distance_2_Interact(GeometryGraph& graph) {
         if (GeoType::is_point(selected_node.type)) {
             selected_node.state_mask |= IS_SELECTED;
             graph.preview_func = PreviewCircle_Distance_Intertact;
-            graph.preview_type = GeoType::CIRCLE_FULL_DISTANCE;
+            graph.preview_type = GeoType::CIRCLE_DISTANCE;
             graph.preview_registers[1] = selected_id;
             graph.next_interact_func = EndCircle_Distance_Interact;
             return selected_id; // 成功选中一个点，返回其ID
@@ -119,7 +119,7 @@ uint32_t InitCircle_Distance_2_Interact(GeometryGraph& graph) {
         auto new_point = CreatePoint_Interact(graph);
         graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
         graph.preview_func = PreviewCircle_Distance_Intertact;
-        graph.preview_type = GeoType::CIRCLE_FULL_DISTANCE;
+        graph.preview_type = GeoType::CIRCLE_DISTANCE;
         graph.preview_registers[1] = new_point;
         graph.next_interact_func = EndCircle_Distance_Interact;
     }

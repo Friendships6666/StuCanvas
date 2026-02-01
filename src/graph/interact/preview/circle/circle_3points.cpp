@@ -51,7 +51,7 @@ uint32_t InitCircle_3Points_2_Interact(GeometryGraph& graph) {
         if (GeoType::is_point(selected_node.type)) {
             selected_node.state_mask |= IS_SELECTED;
             graph.preview_func = PreviewCircle_3Points_Intertact;
-            graph.preview_type = GeoType::CIRCLE_FULL_3POINTS;
+            graph.preview_type = GeoType::CIRCLE_3POINTS;
             graph.preview_registers[1] = selected_id;
             graph.next_interact_func = EndCircle_3Points_Interact;
             return selected_id; // 成功选中一个点，返回其ID
@@ -63,7 +63,7 @@ uint32_t InitCircle_3Points_2_Interact(GeometryGraph& graph) {
         graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
         graph.preview_func = PreviewCircle_3Points_Intertact;
         graph.next_interact_func = EndCircle_3Points_Interact;
-        graph.preview_type = GeoType::CIRCLE_FULL_2POINTS;
+        graph.preview_type = GeoType::CIRCLE_2POINTS;
         graph.preview_registers[1] = new_point;
     }
 

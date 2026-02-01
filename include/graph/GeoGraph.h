@@ -320,11 +320,14 @@ namespace GeoType {
 
 
         CAT_CIRCLE        = 0x0300,
-        CIRCLE_FULL_1POINT_1RADIUS     = 0x0301,
-        CIRCLE_FULL_3POINTS  = 0x0302,
-        CIRCLE_FULL_2POINTS    = 0x0303,
-        CIRCLE_ARC       = 0x0304,
-        CIRCLE_FULL_DISTANCE = 0x0305,
+        CIRCLE_1POINT_1RADIUS     = 0x0301,
+        CIRCLE_3POINTS  = 0x0302,
+        CIRCLE_2POINTS    = 0x0303,
+        CIRCLE_DISTANCE = 0x0304,
+        ARC_2POINTS_1RADIUS = 0x0305,
+        ARC_3POINTS = 0x0306,
+        ARC_3POINTS_CIRCUMARC = 0x0307,
+
 
         // --- 4. 函数/高级曲线类 (CAT_CURVE) ---
         CAT_CURVE        = 0x0400,

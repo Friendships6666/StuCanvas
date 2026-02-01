@@ -86,11 +86,15 @@ namespace GeoFactory {
     void UpdateViewTransform(GeometryGraph& graph, double ox, double oy, double zoom);
     void UpdateViewSize(GeometryGraph& graph, double w, double h);
     uint32_t CreateIntersection(GeometryGraph &graph,
-                                     const uint32_t target_id1,
-                                     const uint32_t target_id2,
+                                     uint32_t target_id1,
+                                     uint32_t target_id2,
                                      const std::string &x_expr,
                                      const std::string &y_expr,
                                      const GeoNode::VisualConfig &config);
+    uint32_t CreateArc_2Points_1Radius(GeometryGraph &graph, uint32_t id1, uint32_t id2, const std::string &r, const GeoNode::VisualConfig &config);
+    uint32_t CreateArc_3Points(GeometryGraph &graph, uint32_t id1, uint32_t id2, uint32_t id3,
+                              const GeoNode::VisualConfig &config);
+
 } // namespace GeoFactory
 
 #endif

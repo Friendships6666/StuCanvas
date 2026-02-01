@@ -475,3 +475,144 @@ void Solver_GraphicalIntersectionPoint(GeoNode& self, GeometryGraph& graph) {
         self.error_status = GeoErrorStatus::ERR_EMPTY_RESULT; // 没有找到交点
     }
 }
+
+
+void Solver_Arc_2Points_1Radius(GeoNode& self, GeometryGraph& graph) {
+    // 1. 获取输入数据
+    const auto& v = graph.view;
+    const auto& p1 = get_parent_res(graph, self.parents[0]); // 起点 P1
+    const auto& p2 = get_parent_res(graph, self.parents[1]); // 终点 P2
+
+    // 解算半径（从通道 0 获取用户输入的公式结果）
+    double r_input = SolveChannel(self, 0, graph, false);
+
+    // 2. 基础健壮性检查
+    if (!std::isfinite(r_input)) {
+        self.error_status = GeoErrorStatus::ERR_OVERFLOW;
+        return;
+    }
+
+    // 计算两点间距 L
+    double dx = p2.x - p1.x;
+    double dy = p2.y - p1.y;
+    double L_sq = dx * dx + dy * dy;
+    double L = std::sqrt(L_sq);
+
+    // 几何检查：半径必须大于等于两点距离的一半
+    if (std::abs(r_input) < L / 2.0) {
+        self.error_status = GeoErrorStatus::ERR_INVALID_RADIUS;
+        return;
+    }
+
+    // 3. 计算圆心 C
+    // 中点 M
+    double mx = (p1.x + p2.x) * 0.5;
+    double my = (p1.y + p2.y) * 0.5;
+
+    // 半径绝对值
+    double abs_r = std::abs(r_input);
+
+    // 计算中点到圆心的距离 h (勾股定理: h^2 + (L/2)^2 = r^2)
+    double h = std::sqrt(abs_r * abs_r - L_sq / 4.0);
+
+    // 计算单位垂直向量 (垂直于 P1->P2)
+    // 向量 V = (dx, dy), 垂直向量 U = (-dy, dx)
+    double ux = -dy / L;
+    double uy = dx / L;
+
+    // 确定圆心坐标
+    // 约定：r_input > 0 时圆心偏向一边，r_input < 0 时偏向另一边
+    // 这决定了它是优弧还是劣弧（因为 P1->P2 始终逆时针绘制）
+    double cx, cy;
+    if (r_input > 0) {
+        cx = mx + h * ux;
+        cy = my + h * uy;
+    } else {
+        cx = mx - h * ux;
+        cy = my - h * uy;
+    }
+
+    // 4. 计算极角 (Angles)
+    // 利用 atan2 计算 P1 和 P2 相对于圆心的角度
+    double t_start = std::atan2(p1.y - cy, p1.x - cx);
+    double t_end = std::atan2(p2.y - cy, p2.x - cx);
+
+    // 5. 更新结果槽位
+    auto& res = self.result;
+    res.cr = abs_r;
+    res.cx = cx;
+    res.cy = cy;
+
+    // 同步视口空间坐标（用于渲染精度）
+    res.cx_view = cx - v.offset_x;
+    res.cy_view = cy - v.offset_y;
+
+    // 设置弧度范围
+    // 注意：PlotCircle 逻辑中，圆弧是从 t_start 逆时针画到 t_end
+    res.t_start = t_start;
+    res.t_end = t_end;
+
+    self.error_status = GeoErrorStatus::VALID;
+}
+
+
+void Solver_Arc_3Points(GeoNode& self, GeometryGraph& graph) {
+    const auto& v = graph.view;
+
+    // 语义约定：
+    // parents[0]: 圆心 (Center)
+    // parents[1]: 起点 (Start Point) -> 决定半径和起始角度
+    // parents[2]: 终点指示器 (End Indicator) -> 决定终止角度的方向
+
+    const auto& p0 = get_parent_res(graph, self.parents[0]);
+    const auto& p1 = get_parent_res(graph, self.parents[1]);
+    const auto& p2 = get_parent_res(graph, self.parents[2]);
+
+    // 1. 计算半径 (严格以圆心到起点的距离为准)
+    double dx1 = p1.x - p0.x;
+    double dy1 = p1.y - p0.y;
+    double r = std::hypot(dx1, dy1);
+
+    // 健壮性检查：半径不能为 0
+    if (!std::isfinite(r) || r < 1e-10) {
+        self.error_status = GeoErrorStatus::ERR_INVALID_RADIUS;
+        return;
+    }
+
+    // 2. 计算终止方向的有效性
+    double dx2 = p2.x - p0.x;
+    double dy2 = p2.y - p0.y;
+    double dist2 = std::hypot(dx2, dy2);
+
+    // 健壮性检查：指示点不能与圆心重合
+    if (!std::isfinite(dist2) || dist2 < 1e-10) {
+        self.error_status = GeoErrorStatus::ERR_MATH_DOMAIN;
+        return;
+    }
+
+    // 3. 计算起始和终止弧度
+    // atan2 返回 (-PI, PI]，完美处理所有象限
+    double t_start = std::atan2(dy1, dx1);
+    double t_end = std::atan2(dy2, dx2);
+
+    // 4. 填充结果槽位 (ComputedResult)
+    auto& res = self.result;
+
+    // 世界空间数据
+    res.cx = p0.x;
+    res.cy = p0.y;
+    res.cr = r;
+    res.t_start = t_start;
+    res.t_end = t_end;
+
+    // 视口空间数据 (用于渲染器 PlotCircle 补点，防止大坐标抖动)
+    res.cx_view = p0.x_view;
+    res.cy_view = p0.y_view;
+
+    // 5. 状态更新
+    // 逻辑提示：底层 PlotCircle 的 is_angle_in_arc 会处理跨越 PI 的回绕。
+    // 如果 t_start 逆时针到 t_end 的距离小于 PI，则表现为劣弧。
+    // 如果距离大于 PI，则表现为优弧。
+    // 用户只需调整 P2 的位置，即可覆盖 [0, 2PI] 全范围。
+    self.error_status = GeoErrorStatus::VALID;
+}
