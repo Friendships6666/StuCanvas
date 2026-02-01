@@ -1124,3 +1124,57 @@ void Solver_VerticalLine(GeoNode& self, GeometryGraph& graph) {
         self.error_status = GeoErrorStatus::VALID;
     }
 }
+
+
+void Solver_ParalellLine(GeoNode& self, GeometryGraph& graph) {
+    // parents[0]: 过点 P, parents[1]: 目标参考线 L
+    const auto& p_node = graph.get_node_by_id(self.parents[0]);
+    const auto& l_node = graph.get_node_by_id(self.parents[1]);
+    const auto& v = graph.view;
+
+    if (!GeoErrorStatus::ok(p_node.error_status) || !GeoErrorStatus::ok(l_node.error_status)) {
+        self.error_status = GeoErrorStatus::ERR_PARENT_INVALID;
+        return;
+    }
+
+    // 1. 提取参考点 P
+    double px = p_node.result.x;
+    double py = p_node.result.y;
+
+    // 2. 提取参考线 L 的方向向量
+    double x1 = l_node.result.x1;
+    double y1 = l_node.result.y1;
+    double x2 = l_node.result.x2;
+    double y2 = l_node.result.y2;
+
+    double dx = x2 - x1;
+    double dy = y2 - y1;
+
+    // 3. 安全检查：如果参考线退化为点
+    if (std::abs(dx) < 1e-12 && std::abs(dy) < 1e-12) {
+        self.error_status = GeoErrorStatus::ERR_MATH_DOMAIN;
+        return;
+    }
+
+    // 4. 构造平行线
+    // 平行线过 P，方向向量与 L 一致，所以第二个点为 P + (dx, dy)
+    double p2x = px + dx;
+    double p2y = py + dy;
+
+    // 5. 写入结果槽位
+    self.result.x1 = px;
+    self.result.y1 = py;
+    self.result.x2 = p2x;
+    self.result.y2 = p2y;
+
+    self.result.x1_view = px - v.offset_x;
+    self.result.y1_view = py - v.offset_y;
+    self.result.x2_view = p2x - v.offset_x;
+    self.result.y2_view = p2y - v.offset_y;
+
+    if (!std::isfinite(p2x) || !std::isfinite(p2y)) {
+        self.error_status = GeoErrorStatus::ERR_OVERFLOW;
+    } else {
+        self.error_status = GeoErrorStatus::VALID;
+    }
+}

@@ -281,6 +281,24 @@ namespace GeoFactory {
         return id;
     }
 
+
+    uint32_t CreateParallelLine(GeometryGraph &graph, uint32_t p1_id, uint32_t p2_id, const GeoNode::VisualConfig &config) {
+        if (!is_point(graph.get_node_by_id(p1_id).type) || !is_line(graph.get_node_by_id(p2_id).type)) {
+            return 0;
+        }
+
+
+        uint32_t id = graph.allocate_node();
+        auto &node = graph.get_node_by_id(id);
+        if (!graph.is_alive(p1_id) || !graph.is_alive(p2_id)) {
+            node.error_status = GeoErrorStatus::ERR_ID_NOT_FOUND;
+        }
+
+        SetupNodeBase(graph, id, config, GeoType::LINE_PARALLEL, Solver_ParallelLine, Render_Line_Delegate);
+        graph.LinkAndRank(id, {p1_id, p2_id});
+        return id;
+    }
+
     uint32_t CreateRay(GeometryGraph &graph, uint32_t p1_id, uint32_t p2_id, const GeoNode::VisualConfig &config) {
         if (!is_point(graph.get_node_by_id(p1_id).type) || !is_point(graph.get_node_by_id(p2_id).type)) {
             return 0;
