@@ -5,73 +5,45 @@
 //
 #include "../include/graph/interact/preview/circle/circle_3points.h"
 uint32_t InitCircle_3Points_Interact(GeometryGraph& graph) {
-    // 1. 尝试选择已有的点
-    // 假设 TrySelect_Interact 会处理 IS_SELECTED 掩码的设置
-    uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
+    // 1. 确定第一个点 ID (优先选择已有，否则创建)
+    uint32_t p1_id = TrySelect_Interact(graph, false);
 
-
-
-    // 2. 检查选中的节点是否是一个点
-
-    if (graph.is_alive(selected_id)) {
-        auto &selected_node = graph.get_node_by_id(selected_id);
-        if (GeoType::is_point(selected_node.type)) {
-            selected_node.state_mask |= IS_SELECTED;
-            graph.preview_registers[0] = selected_id;
-            graph.next_interact_func = InitCircle_3Points_2_Interact;
-            return selected_id; // 成功选中一个点，返回其ID
-        }
-    } else {
-        // 3. 如果没有选中有效的点，则创建一个新的点
-        // AddPoint_Interact 现在会返回新创建点的ID
-        auto new_point = CreatePoint_Interact(graph);
-        graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
-        graph.preview_registers[0] = new_point;
+    if (!graph.is_alive(p1_id) || !GeoType::is_point(graph.get_node_by_id(p1_id).type)) {
+        p1_id = CreatePoint_Interact(graph);
     }
 
+    // 2. 统一配置选中状态
+    graph.get_node_by_id(p1_id).state_mask |= IS_SELECTED;
 
+    // 3. 初始化三点圆交互上下文
+    graph.preview_registers.resize(3); // 三点定圆，预留三个寄存器
+    graph.preview_registers[0] = p1_id;
 
+    // 无论点是选取的还是新建的，都必须指向第二步
+    graph.next_interact_func = InitCircle_3Points_2_Interact;
 
-    return graph.preview_registers[0];
-
+    return p1_id;
 }
 
 
 uint32_t InitCircle_3Points_2_Interact(GeometryGraph& graph) {
-    // 1. 尝试选择已有的点
-    // 假设 TrySelect_Interact 会处理 IS_SELECTED 掩码的设置
-    uint32_t selected_id = TrySelect_Interact(graph,  true); // 多选模式
+    // 1. 确定第二个点 ID (优先选择已有，若选中的不是点则创建)
+    uint32_t p2_id = TrySelect_Interact(graph, true); // 3点圆通常需要高亮前两个点，故用多选
 
-
-
-    // 2. 检查选中的节点是否是一个点
-
-    if (graph.is_alive(selected_id)) {
-        auto& selected_node = graph.get_node_by_id(selected_id);
-        if (GeoType::is_point(selected_node.type)) {
-            selected_node.state_mask |= IS_SELECTED;
-            graph.preview_func = PreviewCircle_3Points_Intertact;
-            graph.preview_type = GeoType::CIRCLE_3POINTS;
-            graph.preview_registers[1] = selected_id;
-            graph.next_interact_func = EndCircle_3Points_Interact;
-            return selected_id; // 成功选中一个点，返回其ID
-        }
-    } else {
-        // 3. 如果没有选中有效的点，则创建一个新的点
-        // AddPoint_Interact 现在会返回新创建点的ID
-        auto new_point = CreatePoint_Interact(graph);
-        graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
-        graph.preview_func = PreviewCircle_3Points_Intertact;
-        graph.next_interact_func = EndCircle_3Points_Interact;
-        graph.preview_type = GeoType::CIRCLE_2POINTS;
-        graph.preview_registers[1] = new_point;
+    if (!graph.is_alive(p2_id) || !GeoType::is_point(graph.get_node_by_id(p2_id).type)) {
+        p2_id = CreatePoint_Interact(graph);
     }
 
+    // 2. 统一配置选中状态
+    graph.get_node_by_id(p2_id).state_mask |= IS_SELECTED;
 
+    // 3. 配置三点圆的实时预览上下文
+    graph.preview_registers[1] = p2_id;
+    graph.preview_type         = GeoType::CIRCLE_3POINTS;
+    graph.preview_func         = PreviewCircle_3Points_Intertact; // 开启实时预览
+    graph.next_interact_func   = EndCircle_3Points_Interact;      // 指向最后一步
 
-
-    return graph.preview_registers[1];
-
+    return p2_id;
 }
 
 void PreviewCircle_3Points_Intertact(GeometryGraph& graph) {
@@ -162,29 +134,25 @@ void PreviewCircle_3Points_Intertact(GeometryGraph& graph) {
 
 
 uint32_t EndCircle_3Points_Interact(GeometryGraph& graph) {
-    uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
+    // 1. 确定第三个点 ID (优先选择已有，若选中的不是点则创建)
+    uint32_t p3_id = TrySelect_Interact(graph, false);
 
-
-
-    // 2. 检查选中的节点是否是一个点
-    if (graph.is_alive(selected_id)) {
-        const auto &selected_node = graph.get_node_by_id(selected_id);
-        if (GeoType::is_point(selected_node.type)) {
-            graph.preview_registers[2] = selected_id;
-        }
-    } else {
-        auto new_point = CreatePoint_Interact(graph);
-        graph.preview_registers[2] = new_point;
+    if (!graph.is_alive(p3_id) || !GeoType::is_point(graph.get_node_by_id(p3_id).type)) {
+        p3_id = CreatePoint_Interact(graph);
     }
 
+    // 2. 调用工厂函数创建三点圆
+    // 直接使用 p3_id 传参，逻辑更直观
+    GeoFactory::CreateCircle_3Points(
+        graph,
+        graph.preview_registers[0],
+        graph.preview_registers[1],
+        p3_id,
+        graph.preview_visual_config
+    );
 
-
-
-
-
-    GeoFactory::CreateCircle_3Points(graph,graph.preview_registers[0],graph.preview_registers[1],graph.preview_registers[2],graph.preview_visual_config);
+    // 3. 统一清理预览与交互状态
     CancelPreview_Intectact(graph);
+
     return 0;
-
-
 }

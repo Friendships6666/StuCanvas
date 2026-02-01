@@ -2,127 +2,101 @@
 // Created by hp on 2026/1/29.
 //
 #include "../include/graph/interact/preview/line/previewSegment.h"
-void PreviewSegment_Intertact(GeometryGraph& graph)
-{
-    auto id = graph.preview_registers[0];
+void PreviewSegment_Intertact(GeometryGraph& graph) {
+    uint32_t id1 = graph.preview_registers[0];
 
-    if (!graph.is_alive(id) ) {
+    // 1. 基础校验
+    if (!graph.is_alive(id1)) {
         graph.preview_points.clear();
         return;
     }
-    auto& node = graph.get_node_by_id(id);
-    if (GeoType::is_point(node.type) && node.error_status == GeoErrorStatus::VALID) {
-        const auto& view = graph.view;
-
-        uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
-        double point2_x{};
-        double point2_y{};
-        bool need_snap = true;
-
-
-
-
-
-        if (graph.is_alive(id) && selected_id != id) {
-            if (graph.is_alive(selected_id)) {
-                const auto& selected_node = graph.get_node_by_id(selected_id);
-                if (GeoType::is_point(selected_node.type)) {
-                    double temp_point2_x = selected_node.result.x_view;
-                    double temp_point2_y = selected_node.result.y_view;
-                    point2_x = temp_point2_x;
-                    point2_y = temp_point2_y;
-                    need_snap = false;
-                }
-            }
-        }
-
-        if (need_snap) {
-            Vec2 WorldMousePostion = view.ScreenToWorld(graph.mouse_position.x, graph.mouse_position.y);
-
-            Vec2 SnappedMousePostion = SnapToGrid_Interact(graph,WorldMousePostion);
-            point2_x = SnappedMousePostion.x - view.offset_x;
-            point2_y = SnappedMousePostion.y - view.offset_y;
-        }
-
-
-
-
-        double point_x = node.result.x_view;
-        double point_y = node.result.y_view;
-        tbb::concurrent_bounded_queue<std::vector<PointData>> q;
-        process_two_point_line(q, point_x, point_y,
-                       point2_x, point2_y,
-                       LinePlotType::SEGMENT, view);
-
-
-        q.try_pop(graph.preview_points);
-
-
-
-
+    const auto& node1 = graph.get_node_by_id(id1);
+    if (!GeoType::is_point(node1.type) || node1.error_status != GeoErrorStatus::VALID) {
+        graph.preview_points.clear();
+        return;
     }
+
+    // 2. 确定终点(P2)的视口坐标 (View Space)
+    const auto& view = graph.view;
+    double p2x_v, p2y_v;
+
+    // A. 尝试对象吸附 (Snap to Point)
+    uint32_t sel_id = TrySelect_Interact(graph, false);
+    if (sel_id != 0 && sel_id != id1 && graph.is_alive(sel_id) &&
+        GeoType::is_point(graph.get_node_by_id(sel_id).type))
+    {
+        const auto& node2 = graph.get_node_by_id(sel_id);
+        p2x_v = node2.result.x_view;
+        p2y_v = node2.result.y_view;
+    }
+    else
+    {
+        // B. 网格吸附/自由跟随 (Snap to Grid / Mouse)
+        Vec2 world_pos = view.ScreenToWorld(graph.mouse_position.x, graph.mouse_position.y);
+        Vec2 snapped   = SnapToGrid_Interact(graph, world_pos);
+        p2x_v = snapped.x - view.offset_x;
+        p2y_v = snapped.y - view.offset_y;
+    }
+
+    // 3. 执行线段渲染 (使用 SEGMENT 枚举，只画 P1-P2 之间)
+    tbb::concurrent_bounded_queue<std::vector<PointData>> q;
+
+    process_two_point_line(
+        q,
+        node1.result.x_view, node1.result.y_view,
+        p2x_v, p2y_v,
+        LinePlotType::SEGMENT, // <--- 关键区别：线段类型
+        view
+    );
+
+    // 4. 收割结果
+    graph.preview_points.clear();
+    q.try_pop(graph.preview_points);
+
 }
 
 uint32_t EndSegment_Interact(GeometryGraph& graph) {
-    uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
+    // 1. 确定终点 ID (优先选择已有，否则创建)
+    uint32_t p2_id = TrySelect_Interact(graph, false);
 
-
-    if (graph.is_alive(selected_id)) {
-        const auto &selected_node = graph.get_node_by_id(selected_id);
-        if (GeoType::is_point(selected_node.type)) {
-            graph.preview_registers[1] = selected_id;
-        }
-    } else {
-        auto new_point = CreatePoint_Interact(graph);
-
-        graph.preview_registers[1] = new_point;
+    if (!graph.is_alive(p2_id) || !GeoType::is_point(graph.get_node_by_id(p2_id).type)) {
+        p2_id = CreatePoint_Interact(graph);
     }
 
+    // 2. 调用工厂函数创建物理线段
+    GeoFactory::CreateSegment(
+        graph,
+        graph.preview_registers[0],
+        p2_id,
+        graph.preview_visual_config
+    );
 
-    // 3. 如果没有选中有效的点，则创建一个新的点
-    // AddPoint_Interact 现在会返回新创建点的ID
-
-    GeoFactory::CreateSegment(graph,graph.preview_registers[0],graph.preview_registers[1],graph.preview_visual_config);
+    // 3. 清理状态
     CancelPreview_Intectact(graph);
+
     return 0;
-
-
 }
 
 
 uint32_t InitSegment_Interact(GeometryGraph& graph) {
-    // 1. 尝试选择已有的点
-    // 假设 TrySelect_Interact 会处理 IS_SELECTED 掩码的设置
-    uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
+    // 1. 确定起点 ID (优先选择已有，若不符合条件则创建)
+    uint32_t p1_id = TrySelect_Interact(graph, false);
 
-
-
-    // 2. 检查选中的节点是否是一个点
-
-    if (graph.is_alive(selected_id)) {
-        auto &selected_node = graph.get_node_by_id(selected_id);
-        if (GeoType::is_point(selected_node.type)) {
-            selected_node.state_mask |= IS_SELECTED;
-            graph.preview_func = PreviewSegment_Intertact;
-            graph.preview_type = GeoType::LINE_SEGMENT;
-            graph.preview_registers[0] = selected_id;
-            graph.next_interact_func = EndSegment_Interact;
-            return selected_id; // 成功选中一个点，返回其ID
-        }
-    } else {
-        // 3. 如果没有选中有效的点，则创建一个新的点
-        // AddPoint_Interact 现在会返回新创建点的ID
-        auto new_point = CreatePoint_Interact(graph);
-        graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
-        graph.preview_func = PreviewSegment_Intertact;
-        graph.preview_type = GeoType::LINE_SEGMENT;
-        graph.preview_registers[0] = new_point;
-        graph.next_interact_func = EndSegment_Interact;
+    if (!graph.is_alive(p1_id) || !GeoType::is_point(graph.get_node_by_id(p1_id).type)) {
+        p1_id = CreatePoint_Interact(graph);
     }
 
+    // 2. 统一配置选中状态
+    graph.get_node_by_id(p1_id).state_mask |= IS_SELECTED;
 
+    // 3. 配置交互上下文
+    graph.preview_registers.resize(2);
+    graph.preview_registers[0] = p1_id;
 
+    // 4. 挂载预览与下一步
+    graph.preview_type       = GeoType::LINE_SEGMENT;      // 标记为线段
+    graph.preview_func       = PreviewSegment_Intertact;   // 开启预览
+    graph.next_interact_func = EndSegment_Interact;        // 终结函数
 
-    return graph.preview_registers[0];
-
+    return p1_id;
 }

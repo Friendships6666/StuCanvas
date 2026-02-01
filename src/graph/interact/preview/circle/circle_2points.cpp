@@ -3,40 +3,25 @@
 //
 #include "../include/graph/interact/preview/circle/circle_2points.h"
 uint32_t InitCircle_2Points_Interact(GeometryGraph& graph) {
-    // 1. 尝试选择已有的点
-    // 假设 TrySelect_Interact 会处理 IS_SELECTED 掩码的设置
-    uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
+    // 1. 获取中心点 ID (利用 EnsurePoint 逻辑：优先选择，否则创建)
+    uint32_t center_id = TrySelect_Interact(graph, false);
 
-
-
-    // 2. 检查选中的节点是否是一个点
-
-    if (graph.is_alive(selected_id)) {
-        auto& selected_node = graph.get_node_by_id(selected_id);
-        if (GeoType::is_point(selected_node.type)) {
-            selected_node.state_mask |= IS_SELECTED;
-            graph.preview_func = PreviewCircle_2Points_Intertact;
-            graph.preview_type = GeoType::CIRCLE_2POINTS;
-            graph.preview_registers[0] = selected_id;
-            graph.next_interact_func = EndCircle_2Points_Interact;
-            return selected_id; // 成功选中一个点，返回其ID
-        }
-    } else {
-        // 3. 如果没有选中有效的点，则创建一个新的点
-        // AddPoint_Interact 现在会返回新创建点的ID
-        auto new_point = CreatePoint_Interact(graph);
-        graph.get_node_by_id(new_point).state_mask |= IS_SELECTED;
-        graph.preview_func = PreviewCircle_2Points_Intertact;
-        graph.preview_type = GeoType::CIRCLE_2POINTS;
-        graph.next_interact_func = EndCircle_2Points_Interact;
-        graph.preview_registers[0] = new_point;
+    if (!graph.is_alive(center_id) || !GeoType::is_point(graph.get_node_by_id(center_id).type)) {
+        center_id = CreatePoint_Interact(graph);
     }
 
+    // 2. 统一配置选中状态
+    graph.get_node_by_id(center_id).state_mask |= IS_SELECTED;
 
+    // 3. 配置交互上下文
+    graph.preview_registers.resize(2); // 两点定圆，预留两个寄存器位置
+    graph.preview_registers[0] = center_id;
 
+    graph.preview_type      = GeoType::CIRCLE_2POINTS;
+    graph.preview_func      = PreviewCircle_2Points_Intertact;
+    graph.next_interact_func = EndCircle_2Points_Interact;
 
-    return graph.preview_registers[0];
-
+    return center_id;
 }
 
 
@@ -106,30 +91,24 @@ void PreviewCircle_2Points_Intertact(GeometryGraph& graph)
 
 
 uint32_t EndCircle_2Points_Interact(GeometryGraph& graph) {
-    uint32_t selected_id = TrySelect_Interact(graph,  false); // 非多选模式
+    // 1. 确定第二个点 ID (优先选择已有，否则创建)
+    uint32_t point2_id = TrySelect_Interact(graph, false);
 
-
-
-    // 2. 检查选中的节点是否是一个点
-
-    if (graph.is_alive(selected_id)) {
-        const auto &selected_node = graph.get_node_by_id(selected_id);
-        if (GeoType::is_point(selected_node.type)) {
-            graph.preview_registers[1] = selected_id;
-        }
-    } else {
-        // AddPoint_Interact 现在会返回新创建点的ID
-        auto new_point = CreatePoint_Interact(graph);
-
-        graph.preview_registers[1] = new_point;
+    if (!graph.is_alive(point2_id) || !GeoType::is_point(graph.get_node_by_id(point2_id).type)) {
+        point2_id = CreatePoint_Interact(graph);
     }
 
+    // 2. 调用工厂函数创建物理节点
+    // 直接使用 point2_id，语义更清晰（此时不必非要写回 registers[1]）
+    GeoFactory::CreateCircle_2Points(
+        graph,
+        graph.preview_registers[0],
+        point2_id,
+        graph.preview_visual_config
+    );
 
-    // 3. 如果没有选中有效的点，则创建一个新的点
-
-    GeoFactory::CreateCircle_2Points(graph,graph.preview_registers[0],graph.preview_registers[1],graph.preview_visual_config);
+    // 3. 统一清理预览状态
     CancelPreview_Intectact(graph);
+
     return 0;
-
-
 }
