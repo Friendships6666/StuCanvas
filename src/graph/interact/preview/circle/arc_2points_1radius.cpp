@@ -102,10 +102,8 @@ void PreviewArc_2Points_1Radius_Intertact(GeometryGraph& graph) {
 
     // 提取结果到预览缓冲区
     graph.preview_points.clear();
-    std::vector<PointData> temp_pts;
-    while (q.try_pop(temp_pts)) {
-        graph.preview_points.insert(graph.preview_points.end(), temp_pts.begin(), temp_pts.end());
-    }
+    q.try_pop(graph.preview_points);
+
 }
 
 

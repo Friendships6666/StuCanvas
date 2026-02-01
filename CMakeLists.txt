@@ -71,6 +71,8 @@ set(SOURCE_FILES
         include/graph/interact/preview/circle/arc_2points_1radius.h
         src/graph/interact/preview/circle/arc_3points.cpp
         include/graph/interact/preview/circle/arc_3points.h
+        src/graph/interact/preview/circle/arc_3points_circumarc.cpp
+        include/graph/interact/preview/circle/arc_3points_circumarc.h
 
 
 )

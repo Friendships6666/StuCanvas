@@ -94,6 +94,8 @@ namespace GeoFactory {
     uint32_t CreateArc_2Points_1Radius(GeometryGraph &graph, uint32_t id1, uint32_t id2, const std::string &r, const GeoNode::VisualConfig &config);
     uint32_t CreateArc_3Points(GeometryGraph &graph, uint32_t id1, uint32_t id2, uint32_t id3,
                               const GeoNode::VisualConfig &config);
+    uint32_t CreateArc_3Points_Circumarc(GeometryGraph &graph, uint32_t id1, uint32_t id2, uint32_t id3,
+                                     const GeoNode::VisualConfig &config);
 
 } // namespace GeoFactory
 

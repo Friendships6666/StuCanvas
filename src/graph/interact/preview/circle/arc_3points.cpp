@@ -37,7 +37,7 @@ uint32_t PreviewInitArc_3Points_2_Interact(GeometryGraph& graph) {
         // 核心：设置预览状态
         graph.preview_type = GeoType::ARC_3POINTS;
         graph.preview_func = PreviewArc_3Points_Interact;     // 每帧执行绘图
-        graph.next_interact_func = EndArc_3Points_Interact;  // 点击后终结
+        graph.next_interact_func = EndArc_3Points_Circumarc_Interact;  // 点击后终结
     }
     return selected_id;
 }
@@ -98,14 +98,13 @@ void PreviewArc_3Points_Interact(GeometryGraph& graph) {
     PlotCircle(&q, p0.x_view, p0.y_view, r, view, t_start, t_end, false);
 
     graph.preview_points.clear();
-    std::vector<PointData> temp_pts;
-    while (q.try_pop(temp_pts)) {
-        graph.preview_points.insert(graph.preview_points.end(), temp_pts.begin(), temp_pts.end());
-    }
+    q.try_pop(graph.preview_points);
+
+
 }
 
 
-uint32_t EndArc_3Points_Interact(GeometryGraph& graph) {
+uint32_t EndArc_3Points_Circumarc_Interact(GeometryGraph& graph) {
     uint32_t id_center = graph.preview_registers[0];
     uint32_t id_start = graph.preview_registers[1];
 

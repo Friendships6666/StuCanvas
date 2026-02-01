@@ -616,3 +616,87 @@ void Solver_Arc_3Points(GeoNode& self, GeometryGraph& graph) {
     // 用户只需调整 P2 的位置，即可覆盖 [0, 2PI] 全范围。
     self.error_status = GeoErrorStatus::VALID;
 }
+
+
+void Solver_Arc_3Points_Circumarc(GeoNode& self, GeometryGraph& graph) {
+    const auto& v = graph.view;
+
+    // 1. 获取三点父节点的结果
+    const auto& p1 = get_parent_res(graph, self.parents[0]);
+    const auto& p2 = get_parent_res(graph, self.parents[1]);
+    const auto& p3 = get_parent_res(graph, self.parents[2]);
+
+    // 使用视口相对坐标 (View Space) 防止大数值导致的行列式精度崩坏
+    double x1 = p1.x_view, y1 = p1.y_view;
+    double x2 = p2.x_view, y2 = p2.y_view;
+    double x3 = p3.x_view, y3 = p3.y_view;
+
+    // 2. 三点定圆算法计算圆心 (cx, cy)
+    // 行列式 D = 2 * (x1(y2 - y3) + x2(y3 - y1) + x3(y1 - y2))
+    double D = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
+
+    if (std::abs(D) < 1e-12) {
+        self.error_status = GeoErrorStatus::ERR_EMPTY_RESULT; // 三点共线，无法成弧
+        return;
+    }
+
+    double s1 = x1 * x1 + y1 * y1;
+    double s2 = x2 * x2 + y2 * y2;
+    double s3 = x3 * x3 + y3 * y3;
+
+    double cx_v = (s1 * (y2 - y3) + s2 * (y3 - y1) + s3 * (y1 - y2)) / D;
+    double cy_v = (s1 * (x3 - x2) + s2 * (x1 - x3) + s3 * (x2 - x1)) / D;
+    double r = std::hypot(cx_v - x1, cy_v - y1);
+
+    if (!std::isfinite(cx_v) || !std::isfinite(cy_v) || !std::isfinite(r)) {
+        self.error_status = GeoErrorStatus::ERR_OVERFLOW;
+        return;
+    }
+
+    // 3. 计算三点的极角
+    double t1 = std::atan2(y1 - cy_v, x1 - cx_v);
+    double t2 = std::atan2(y2 - cy_v, x2 - cx_v);
+    double t3 = std::atan2(y3 - cy_v, x3 - cx_v);
+
+    // 4. 方向判定与扫描区间映射
+    // 我们需要判断 t2 是否在 [t1 -> t3] 的逆时针扫描范围内
+    auto is_ccw_between = [](double a, double start, double end) {
+        const double TWO_PI = 6.283185307179586;
+        auto norm = [&](double angle) {
+            double res = std::fmod(angle, TWO_PI);
+            if (res < 0) res += TWO_PI;
+            return res;
+        };
+        a = norm(a);
+        start = norm(start);
+        end = norm(end);
+
+        if (start <= end) return a >= start && a <= end;
+        return a >= start || a <= end; // 跨越 PI 边界的情况
+    };
+
+    double final_t_start, final_t_end;
+
+    if (is_ccw_between(t2, t1, t3)) {
+        // P1 -> P2 -> P3 是逆时针走向
+        final_t_start = t1;
+        final_t_end = t3;
+    } else {
+        // P1 -> P2 -> P3 是顺时针走向
+        // 在仅支持 CCW 的渲染器中，顺时针的 P1->P3 表现为逆时针的 P3->P1
+        final_t_start = t3;
+        final_t_end = t1;
+    }
+
+    // 5. 写入大一统结果槽位
+    auto& res = self.result;
+    res.cr = r;
+    res.cx_view = cx_v;
+    res.cy_view = cy_v;
+    res.cx = cx_v + v.offset_x;
+    res.cy = cy_v + v.offset_y;
+    res.t_start = final_t_start;
+    res.t_end = final_t_end;
+
+    self.error_status = GeoErrorStatus::VALID;
+}

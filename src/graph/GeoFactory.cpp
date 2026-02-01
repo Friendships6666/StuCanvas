@@ -384,6 +384,19 @@ namespace GeoFactory {
         return id;
     }
 
+
+    uint32_t CreateArc_3Points_Circumarc(GeometryGraph &graph, uint32_t id1, uint32_t id2, uint32_t id3,
+                                         const GeoNode::VisualConfig &config) {
+        if (!is_point(graph.get_node_by_id(id1).type) || !is_point(graph.get_node_by_id(id2).type) || !is_point(
+                graph.get_node_by_id(id3).type)) {
+            return 0;
+        }
+        uint32_t id = graph.allocate_node();
+        SetupNodeBase(graph, id, config, GeoType::ARC_3POINTS_CIRCUMARC, Solver_Arc_3Points_Circumarc, Render_Arc_Delegate);
+        graph.LinkAndRank(id, {id1, id2, id3});
+        return id;
+    }
+
     uint32_t CreateCircle_2Points(GeometryGraph &graph, uint32_t id1, uint32_t id2,
                                   const GeoNode::VisualConfig &config) {
         if (!is_point(graph.get_node_by_id(id1).type) || !is_point(graph.get_node_by_id(id2).type)) {

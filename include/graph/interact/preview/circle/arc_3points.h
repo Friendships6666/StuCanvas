@@ -15,6 +15,6 @@ uint32_t PreviewInitArc_3Points_2_Interact(GeometryGraph& graph);
 
 void PreviewArc_3Points_Interact(GeometryGraph& graph);
 
-uint32_t EndArc_3Points_Interact(GeometryGraph& graph);
+uint32_t EndArc_3Points_Circumarc_Interact(GeometryGraph& graph);
 
 #endif //DYNAMICGEOENGINE_ARC_3POINTS_H
