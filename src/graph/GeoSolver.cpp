@@ -146,6 +146,7 @@ void Solver_Circle_1Point_1Radius(GeoNode& self, GeometryGraph& graph) {
     // 5. 最后更新状态
     self.error_status = GeoErrorStatus::VALID;
 }
+
 void Solver_Circle_2Points(GeoNode& self, GeometryGraph& graph) {
     // 1. 一次性获取两个父节点的引用，避免后续重复查表
     // 假设 parents[0] 是圆心，parents[1] 是圆周上的一点
@@ -1126,7 +1127,7 @@ void Solver_VerticalLine(GeoNode& self, GeometryGraph& graph) {
 }
 
 
-void Solver_ParalellLine(GeoNode& self, GeometryGraph& graph) {
+void Solver_ParallelLine(GeoNode& self, GeometryGraph& graph) {
     // parents[0]: 过点 P, parents[1]: 目标参考线 L
     const auto& p_node = graph.get_node_by_id(self.parents[0]);
     const auto& l_node = graph.get_node_by_id(self.parents[1]);
