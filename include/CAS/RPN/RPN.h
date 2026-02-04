@@ -23,7 +23,7 @@ enum class RPNTokenType {
     // Trigonometric
     SIN, COS, TAN,
     // Other
-    SIGN, ABS, CUSTOM_FUNCTION
+    SIGN, ABS, CUSTOM_FUNCTION,STOP
 };
 
 struct RPNToken {

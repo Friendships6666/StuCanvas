@@ -7,6 +7,7 @@ project(GeoEngine LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libstdc++ -static-libgcc")
 
 # ---------------------------------------------------------
 # 2. 显式定义源文件列表 (基于你提供的列表)
@@ -17,66 +18,66 @@ set(SOURCE_FILES
         src/main.cpp
         include/graph/GeoGraph.h
         src/graph/GeoGraph.cpp
-        include/graph/GeoFactory.h
-        src/graph/GeoFactory.cpp
-        include/graph/GeoSolver.h
-        src/graph/GeoSolver.cpp
+#        include/graph/GeoFactory.h
+#        src/graph/GeoFactory.cpp
+#        include/graph/GeoSolver.h
+#        src/graph/GeoSolver.cpp
+#
+#
+#        include/plot/plotCall.h
+#        src/plot/plotCall.cpp
+#        include/plot/plotExplicit.h
+#        src/plot/plotExplicit.cpp
+#        include/plot/plotImplicit.h
+#        src/plot/plotImplicit.cpp
+#
+#        include/plot/plotLine.h
+#        src/plot/plotLine.cpp
+#        include/plot/plotCircle.h
+#        src/plot/plotCircle.cpp
 
 
-        include/plot/plotCall.h
-        src/plot/plotCall.cpp
-        include/plot/plotExplicit.h
-        src/plot/plotExplicit.cpp
-        include/plot/plotImplicit.h
-        src/plot/plotImplicit.cpp
-
-        include/plot/plotLine.h
-        src/plot/plotLine.cpp
-        include/plot/plotCircle.h
-        src/plot/plotCircle.cpp
-
-
-        include/CAS/RPN/RPN.h
-        src/CAS/RPN/RPN.cpp
-        include/CAS/RPN/MultiIntervalRPN.h
-        include/interval/interval.h
-        src/interval/intervalEvaluate.cpp
-        include/interval/MultiInterval.h
-        include/functions/functions.h  # 注意：Linux 区分大小写，确保路径一致
-        include/functions/lerp.h
-
-        include/CAS/RPN/ShuntingYard.h
-        src/CAS/RPN/ShuntingYard.cpp
-        src/graph/GeoCommands.cpp
-        include/graph/GeoCommands.h
-        src/graph/interact/GeoInteract.cpp
-        include/graph/interact/GeoInteract.h
-        src/grids/grids.cpp
-        include/grids/grids.h
-        src/graph/interact/preview/line/previewSegment.cpp
-        include/graph/interact/preview/line/previewSegment.h
-        src/graph/interact/preview/circle/circle_2points.cpp
-        include/graph/interact/preview/circle/circle_2points.h
-        include/graph/interact/preview/circle/circle_3points.h
-        src/graph/interact/preview/circle/circle_3points.cpp
-        include/graph/interact/preview/circle/circle_1point_1radius.h
-        src/graph/interact/preview/circle/circle_1point_1radius.cpp
-        include/graph/interact/preview/circle/circle_distance.h
-        src/graph/interact/preview/circle/circle_distance.cpp
-        include/graph/interact/preview/line/previewLine.h
-        src/graph/interact/preview/line/previewLine.cpp
-        include/graph/interact/preview/line/previewRay.h
-        src/graph/interact/preview/line/previewRay.cpp
-        src/graph/interact/preview/circle/arc_2points_1radius.cpp
-        include/graph/interact/preview/circle/arc_2points_1radius.h
-        src/graph/interact/preview/circle/arc_3points.cpp
-        include/graph/interact/preview/circle/arc_3points.h
-        src/graph/interact/preview/circle/arc_3points_circumarc.cpp
-        include/graph/interact/preview/circle/arc_3points_circumarc.h
-        include/graph/interact/preview/line/line_vertical.h
-        src/graph/interact/preview/line/line_vertical.cpp
-        src/graph/interact/preview/line/line_parallel.cpp
-        include/graph/interact/preview/line/line_parallel.h
+#        include/CAS/RPN/RPN.h
+#        src/CAS/RPN/RPN.cpp
+#        include/CAS/RPN/MultiIntervalRPN.h
+#        include/interval/interval.h
+#        src/interval/intervalEvaluate.cpp
+#        include/interval/MultiInterval.h
+#        include/functions/functions.h  # 注意：Linux 区分大小写，确保路径一致
+#        include/functions/lerp.h
+#
+#        include/CAS/RPN/ShuntingYard.h
+#        src/CAS/RPN/ShuntingYard.cpp
+#        src/graph/GeoCommands.cpp
+#        include/graph/GeoCommands.h
+#        src/graph/interact/GeoInteract.cpp
+#        include/graph/interact/GeoInteract.h
+#        src/grids/grids.cpp
+#        include/grids/grids.h
+#        src/graph/interact/preview/line/previewSegment.cpp
+#        include/graph/interact/preview/line/previewSegment.h
+#        src/graph/interact/preview/circle/circle_2points.cpp
+#        include/graph/interact/preview/circle/circle_2points.h
+#        include/graph/interact/preview/circle/circle_3points.h
+#        src/graph/interact/preview/circle/circle_3points.cpp
+#        include/graph/interact/preview/circle/circle_1point_1radius.h
+#        src/graph/interact/preview/circle/circle_1point_1radius.cpp
+#        include/graph/interact/preview/circle/circle_distance.h
+#        src/graph/interact/preview/circle/circle_distance.cpp
+#        include/graph/interact/preview/line/previewLine.h
+#        src/graph/interact/preview/line/previewLine.cpp
+#        include/graph/interact/preview/line/previewRay.h
+#        src/graph/interact/preview/line/previewRay.cpp
+#        src/graph/interact/preview/circle/arc_2points_1radius.cpp
+#        include/graph/interact/preview/circle/arc_2points_1radius.h
+#        src/graph/interact/preview/circle/arc_3points.cpp
+#        include/graph/interact/preview/circle/arc_3points.h
+#        src/graph/interact/preview/circle/arc_3points_circumarc.cpp
+#        include/graph/interact/preview/circle/arc_3points_circumarc.h
+#        include/graph/interact/preview/line/line_vertical.h
+#        src/graph/interact/preview/line/line_vertical.cpp
+#        src/graph/interact/preview/line/line_parallel.cpp
+#        include/graph/interact/preview/line/line_parallel.h
 
 
 )
@@ -126,12 +127,22 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
-        -march=native
         -O3
+        -march=native
+
+
+
+        -flto                # 链接时优化（跨文件优化）
+        -fomit-frame-pointer # 释放一个寄存器用于计算
+        -funroll-loops       # 激进的循环展开
         -fpermissive
+        -fno-semantic-interposition
+
+        -funroll-loops
 
 )
-
+target_link_options(${PROJECT_NAME} PRIVATE -O3 -march=native -flto)
+target_compile_definitions(${PROJECT_NAME} PRIVATE NDEBUG)
 # ---------------------------------------------------------
 # 6. 链接
 # ---------------------------------------------------------

@@ -1,4 +1,5 @@
 // --- 文件路径: src/plot/plotExplicit.cpp ---
+
 #include "../../pch.h"
 #include "../../include/plot/plotExplicit.h"
 #include "../../include/functions/functions.h"
@@ -7,163 +8,253 @@
 #include <cmath>
 #include <algorithm>
 
-
-constexpr double SAMPLING_DENSITY = 1;
 namespace {
-    // 简单的线段裁剪并补点函数
-    // 针对 Clip Space [-1.2, 1.2] 范围进行裁剪（多留 0.2 边缘防止缝隙）
-    void clip_and_interpolate(
-        std::vector<PointData>& out,
-        PointData p1, PointData p2,
-        float pixel_size_clip,
-        unsigned int func_idx
+    // 适配极致性能：每次处理 4 个 Batch
+    constexpr size_t VM_BLOCK_SIZE = 4;
+
+    /**
+     * @brief 极致优化的 RPN 执行引擎 (On-the-fly X 累加法)
+     */
+    void EvaluateExplicit_SIMD_Accumulate(
+        const AlignedVector<RPNToken> &tokens,
+        double x_start,
+        double x_step,
+        batch_type *__restrict out_buffer,
+        size_t num_batches,
+        batch_type *__restrict workspace
     ) {
-        float x1 = p1.position.x, y1 = p1.position.y;
-        float x2 = p2.position.x, y2 = p2.position.y;
+        const RPNToken *pc_base = tokens.data();
+        batch_type *curr_out = out_buffer;
 
-        // 1. 简单的视口包围盒快速剔除 (AABB 检查)
-        // 增加缓冲区到 1.2，确保斜线能画到屏幕边缘
-        const float margin = 1.1f;
-        if (std::max(x1, x2) < -margin || std::min(x1, x2) > margin ||
-            std::max(y1, y2) < -margin || std::min(y1, y2) > margin) {
-            return;
-        }
+        // 初始化 X 向量累加器
+        batch_type v_x_step(x_step);
+        batch_type v_batch_step(x_step * batch_type::size);
+        batch_type v_indices = get_index_vec();
 
-        // 2. 计算线段参数
-        float dx = x2 - x1;
-        float dy = y2 - y1;
-        float t_min = 0.0f;
-        float t_max = 1.0f;
+        batch_type base_x_v = batch_type(x_start) + v_indices * v_x_step;
 
-        // 3. 针对 Y 轴边界进行参数裁剪 (Liang-Barsky 简化版)
-        // 我们重点防止 Y 轴溢出导致的补点爆炸
-        auto clip_t = [&](float p, float q) {
-            if (p < 0) {
-                float r = q / p;
-                if (r > t_max) return false;
-                if (r > t_min) t_min = r;
-            } else if (p > 0) {
-                float r = q / p;
-                if (r < t_min) return false;
-                if (r < t_max) t_max = r;
-            } else if (q < 0) return false;
-            return true;
-        };
+        for (size_t b = 0; b < num_batches; b += VM_BLOCK_SIZE) {
+            batch_type bx0 = base_x_v;
+            batch_type bx1 = bx0 + v_batch_step;
+            batch_type bx2 = bx1 + v_batch_step;
+            batch_type bx3 = bx2 + v_batch_step;
+            base_x_v = bx3 + v_batch_step;
 
-        // 裁剪 Y 轴范围 [-margin, margin]
-        if (!clip_t(-dy, y1 - (-margin))) return;
-        if (!clip_t(dy, margin - y1)) return;
+            const RPNToken *pc = pc_base;
+            batch_type *__restrict sp = workspace;
+            batch_type acc0, acc1, acc2, acc3;
 
-        // 4. 根据裁剪后的 t 范围确定有效起止点
-        float start_x = x1 + t_min * dx;
-        float start_y = y1 + t_min * dy;
-        float end_x = x1 + t_max * dx;
-        float end_y = y1 + t_max * dy;
-
-        // 5. 在有效范围内进行插值
-        float vis_dx = end_x - start_x;
-        float vis_dy = end_y - start_y;
-        float dist = 0.5*std::sqrt(vis_dx * vis_dx + vis_dy * vis_dy);
-
-        if (dist > pixel_size_clip) {
-            int steps = static_cast<int>(std::ceil(dist / pixel_size_clip));
-            // 现在的 steps 永远不会爆炸，因为 dist 最大也就是 2.8 左右 (屏幕对角线)
-            steps = std::min(steps, 2048);
-
-            for (int k = 0; k <= steps; ++k) {
-                float t = (float)k / (float)steps;
-                PointData pd{};
-                pd.position.x = start_x + t * vis_dx;
-                pd.position.y = start_y + t * vis_dy;
-                pd.function_index = func_idx;
-                out.push_back(pd);
+            while (true) {
+                const auto &token = *pc++;
+                switch (token.type) {
+                    case RPNTokenType::PUSH_X: {
+                        sp[0] = acc0;
+                        sp[1] = acc1;
+                        sp[2] = acc2;
+                        sp[3] = acc3;
+                        sp += 4;
+                        acc0 = bx0;
+                        acc1 = bx1;
+                        acc2 = bx2;
+                        acc3 = bx3;
+                        break;
+                    }
+                    case RPNTokenType::PUSH_CONST: {
+                        sp[0] = acc0;
+                        sp[1] = acc1;
+                        sp[2] = acc2;
+                        sp[3] = acc3;
+                        sp += 4;
+                        batch_type vc(token.value);
+                        acc0 = vc;
+                        acc1 = vc;
+                        acc2 = vc;
+                        acc3 = vc;
+                        break;
+                    }
+                    case RPNTokenType::ADD: sp -= 4;
+                        acc0 += sp[0];
+                        acc1 += sp[1];
+                        acc2 += sp[2];
+                        acc3 += sp[3];
+                        break;
+                    case RPNTokenType::SUB: sp -= 4;
+                        acc0 = sp[0] - acc0;
+                        acc1 = sp[1] - acc1;
+                        acc2 = sp[2] - acc2;
+                        acc3 = sp[3] - acc3;
+                        break;
+                    case RPNTokenType::MUL: sp -= 4;
+                        acc0 *= sp[0];
+                        acc1 *= sp[1];
+                        acc2 *= sp[2];
+                        acc3 *= sp[3];
+                        break;
+                    case RPNTokenType::DIV: sp -= 4;
+                        acc0 = sp[0] / acc0;
+                        acc1 = sp[1] / acc1;
+                        acc2 = sp[2] / acc2;
+                        acc3 = sp[3] / acc3;
+                        break;
+                    case RPNTokenType::SIN: acc0 = xs::sin(acc0);
+                        acc1 = xs::sin(acc1);
+                        acc2 = xs::sin(acc2);
+                        acc3 = xs::sin(acc3);
+                        break;
+                    case RPNTokenType::COS: acc0 = xs::cos(acc0);
+                        acc1 = xs::cos(acc1);
+                        acc2 = xs::cos(acc2);
+                        acc3 = xs::cos(acc3);
+                        break;
+                    case RPNTokenType::STOP: {
+                        curr_out[0] = acc0;
+                        curr_out[1] = acc1;
+                        curr_out[2] = acc2;
+                        curr_out[3] = acc3;
+                        curr_out += 4;
+                        goto block_done;
+                    }
+                    default: break;
+                }
             }
-        } else {
-            // 距离很近，直接加端点
-            PointData pd;
-            pd.position.x = start_x; pd.position.y = start_y; pd.function_index = func_idx;
-            out.push_back(pd);
-            pd.position.x = end_x; pd.position.y = end_y;
-            out.push_back(pd);
+        block_done:;
         }
     }
 
-    // 内部 SIMD 转换
-    FORCE_INLINE void world_to_clip_store_fixed_batch(
-        PointData* out_ptr,
-        const batch_type& wx_batch,
-        const batch_type& wy_batch,
-        const NDCMap& map,
+    /**
+     * @brief 世界空间裁剪与补点器 (修正版)
+     */
+    void clip_and_interpolate_world(
+        std::vector<PointData> &out,
+        double x1, double y1, double x2, double y2,
+        const ViewState &view,
         unsigned int func_idx
     ) {
-        batch_type b_center_x(map.center_x);
-        batch_type b_center_y(map.center_y);
-        batch_type b_scale_x(map.scale_x);
-        batch_type b_scale_y(map.scale_y);
+        // 1. 获取世界坐标系下的 y 边界
+        const double margin_y = view.half_h * view.wpp * 1.05;
+        const double y_min = view.offset_y - margin_y;
+        const double y_max = view.offset_y + margin_y;
 
-        batch_type ndc_x = (wx_batch - b_center_x) * b_scale_x;
-        batch_type ndc_y = -(wy_batch - b_center_y) * b_scale_y; // 修复 Y 反转
+        // --- 逻辑 A：Trivial Reject (两点都在同一侧外) ---
+        if ((y1 > y_max && y2 > y_max) || (y1 < y_min && y2 < y_min)) return;
 
-        constexpr std::size_t N = batch_type::size;
-        alignas(64) double buf_x[N], buf_y[N];
-        ndc_x.store_aligned(buf_x);
-        ndc_y.store_aligned(buf_y);
+        double t0 = 0.0, t1 = 1.0;
+        double dy = y2 - y1;
 
-        for (std::size_t k = 0; k < N; ++k) {
-            out_ptr[k].position.x = static_cast<float>(buf_x[k]);
-            out_ptr[k].position.y = static_cast<float>(buf_y[k]);
-            out_ptr[k].function_index = func_idx;
+        // --- 逻辑 B：检测是否需要裁剪 (如果有任何一点在屏幕外) ---
+        bool trivial_accept = (y1 >= y_min && y1 <= y_max && y2 >= y_min && y2 <= y_max);
+
+        if (!trivial_accept) {
+            // 使用 Liang-Barsky 算出线段进入和离开 y 边界的 t 值
+            // P(t) = P1 + t * (P2 - P1)
+            auto clip_t = [&](double p, double q) -> bool {
+                if (std::abs(p) < 1e-15) return q >= 0;
+                double r = q / p;
+                if (p < 0) {
+                    // 进入边界
+                    if (r > t1) return false;
+                    if (r > t0) t0 = r;
+                } else {
+                    // 离开边界
+                    if (r < t0) return false;
+                    if (r < t1) t1 = r;
+                }
+                return true;
+            };
+
+            // 裁剪 y_min 和 y_max
+            if (!clip_t(-dy, y1 - y_min)) return;
+            if (!clip_t(dy, y_max - y1)) return;
+        }
+
+        // 算出裁剪后的实际可见部分世界坐标
+        double dx = x2 - x1;
+        double cx1 = x1 + t0 * dx;
+        double cy1 = y1 + t0 * dy;
+        double cx2 = x1 + t1 * dx;
+        double cy2 = y1 + t1 * dy;
+
+        // --- 逻辑 C：插值补点 ---
+        // 计算可见部分在屏幕上的像素跨度 (主要考察 y 轴)
+        double dist_pix = std::abs(cy2 - cy1) * view.inv_wpp;
+
+        // 分段步数：每 0.5 像素补一个点
+        int steps = std::max(1, static_cast<int>(std::ceil(dist_pix * 2.0)));
+        steps = std::min(steps, 1024); // 安全锁，防止函数斜率趋于无穷时内存爆炸
+
+        double step_inv = 1.0 / steps;
+        for (int i = 0; i <= steps; ++i) {
+            double t = i * step_inv;
+            double wx = cx1 + t * (cx2 - cx1);
+            double wy = cy1 + t * (cy2 - cy1);
+
+            // 最终投影到 Clip 空间存储
+            Vec2i cp = view.WorldToClip(wx, wy);
+            out.push_back({cp.x, cp.y});
         }
     }
 }
 
+/**
+ * @brief 显函数 Plotter 主入口
+ */
 void process_explicit_chunk(
     double x_start_world, double x_end_world,
-    const AlignedVector<RPNToken>& rpn_program,
-    oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
+    const AlignedVector<RPNToken> &rpn_program,
+    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData> > &results_queue,
     unsigned int func_idx,
-    double screen_width,
-    const NDCMap& ndc_map
+    const ViewState &view
 ) {
-    int total_samples = static_cast<int>(std::ceil(screen_width * SAMPLING_DENSITY));
-    if (total_samples < 2) total_samples = 2;
-    double step_x = (x_end_world - x_start_world) / (total_samples - 1);
+    double x_step = view.wpp;
+    int pixel_width = static_cast<int>(std::ceil((x_end_world - x_start_world) / x_step));
+    if (pixel_width <= 0) return;
 
-    // 计算骨架点 (SIMD)
-    std::vector<PointData> raw_points;
-    raw_points.resize(total_samples);
-    PointData* raw_ptr = raw_points.data();
-    int valid_count = 0;
+    // 1. 内存准备：向上对齐到 VM_BLOCK_SIZE
+    size_t num_batches = (pixel_width + batch_type::size - 1) / batch_type::size;
+    num_batches = (num_batches + VM_BLOCK_SIZE - 1) / VM_BLOCK_SIZE * VM_BLOCK_SIZE;
 
-    constexpr int batch_size = batch_type::size;
-    const batch_type v_step_x(step_x);
-    const batch_type v_step_batch(step_x * (double)batch_size);
-    const batch_type v_index = get_index_vec();
-    batch_type x_batch = batch_type(x_start_world) + v_index * v_step_x;
+    AlignedVector<batch_type> y_results(num_batches);
+    std::array<batch_type, 256> vm_stack;
 
-    int i = 0;
-    for (; i + batch_size <= total_samples; i += batch_size) {
-        batch_type y_batch = evaluate_rpn<batch_type>(rpn_program, x_batch);
-        world_to_clip_store_fixed_batch(raw_ptr + valid_count, x_batch, y_batch, ndc_map, func_idx);
-        valid_count += batch_size;
-        x_batch += v_step_batch;
-    }
-    for (; i < total_samples; ++i) {
-        double wx = x_start_world + i * step_x;
-        double wy = evaluate_rpn<double>(rpn_program, wx);
-        world_to_clip_store(raw_ptr[valid_count++], wx, wy, ndc_map, func_idx);
-    }
+    // 2. 寄存器 X 累加 + SIMD VM 解算
+    EvaluateExplicit_SIMD_Accumulate(
+        rpn_program, x_start_world, x_step,
+        y_results.data(), num_batches, vm_stack.data()
+    );
 
-    // 细分插值 (基于裁剪后的线段)
+    // 3. 处理解算出的“珍珠链”
     std::vector<PointData> final_points;
-    final_points.reserve(total_samples * 2);
+    // 考虑到插值，预留 2 倍空间
+    final_points.reserve(pixel_width * 2);
 
-    float pixel_size_clip = 2.0f / static_cast<float>(screen_width);
+    double *raw_y = reinterpret_cast<double *>(y_results.data());
 
-    for (int k = 1; k < valid_count; ++k) {
-        // 对每一对相邻点构成的线段进行视口裁剪并插值
-        clip_and_interpolate(final_points, raw_points[k-1], raw_points[k], pixel_size_clip, func_idx);
+    double last_wx = x_start_world;
+    double last_wy = raw_y[0];
+    bool last_valid = std::isfinite(last_wy);
+
+    // 遍历采样点线段 [P_i, P_{i+1}]
+    for (int i = 1; i < pixel_width; ++i) {
+        double curr_wx = x_start_world + i * x_step;
+        double curr_wy = raw_y[i];
+        bool curr_valid = std::isfinite(curr_wy);
+
+        if (last_valid && curr_valid) {
+            // 线段两端数学上连续：执行带穿透检测的世界裁剪
+            clip_and_interpolate_world(final_points, last_wx, last_wy, curr_wx, curr_wy, view, func_idx);
+        } else if (!last_valid && curr_valid) {
+            // 数学断裂点（从 NaN 恢复）：仅投射当前采样点
+            Vec2i p = view.WorldToClip(curr_wx, curr_wy);
+            if (std::abs(p.y) <= 32767) final_points.push_back({p.x, p.y});
+        }
+
+        last_wx = curr_wx;
+        last_wy = curr_wy;
+        last_valid = curr_valid;
     }
 
-    results_queue->push({ func_idx, std::move(final_points) });
+    // 4. 提交结果
+    if (!final_points.empty()) {
+        results_queue.push(std::move(final_points));
+    }
 }
