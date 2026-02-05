@@ -18,7 +18,11 @@ set(SOURCE_FILES
         src/main.cpp
         include/graph/GeoGraph.h
         src/graph/GeoGraph.cpp
-#        include/graph/GeoFactory.h
+        include/interval/interval.h
+        include/CAS/RPN/RPN.h
+        src/interval/intervalEvaluate.cpp
+        include/CAS/RPN/ShuntingYard.h
+        #        include/graph/GeoFactory.h
 #        src/graph/GeoFactory.cpp
 #        include/graph/GeoSolver.h
 #        src/graph/GeoSolver.cpp
@@ -47,7 +51,7 @@ set(SOURCE_FILES
 #        include/functions/lerp.h
 #
 #        include/CAS/RPN/ShuntingYard.h
-#        src/CAS/RPN/ShuntingYard.cpp
+        src/CAS/RPN/ShuntingYard.cpp
 #        src/graph/GeoCommands.cpp
 #        include/graph/GeoCommands.h
 #        src/graph/interact/GeoInteract.cpp

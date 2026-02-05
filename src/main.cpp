@@ -1,235 +1,368 @@
 ﻿#include <iostream>
 #include <vector>
-#include <array>
 #include <chrono>
 #include <cmath>
 #include <algorithm>
-#include <iomanip>
-#include <limits>
 #include <xsimd/xsimd.hpp>
+
+// 严格依赖项目提供的头文件
+#include "include/graph/GeoGraph.h"
+#include "include/interval/interval.h"
+#include "include/CAS/RPN/ShuntingYard.h"
 
 namespace xs = xsimd;
 using batch_type = xs::batch<double>;
 
-// 4路垂直化展开核心参数
-constexpr size_t VM_BLOCK_SIZE = 4;
+// ====================================================================
+// 1. 数据结构定义 (针对单核极致优化)
+// ====================================================================
 
-// ==========================================
-// 1. 指令集与数据结构
-// ==========================================
-enum class OpCode : uint8_t {
-    PUSH_X, PUSH_Y, PUSH_CONST, ADD, SUB, MUL, DIV, SIN, STOP
+struct ImplicitTask {
+    double x, y, size;
 };
 
-struct RPNToken {
-    OpCode op;
-    double val = 0.0;
-};
+// 预分配大池：消除 malloc 抖动
+constexpr size_t MAX_POOL_SIZE = 1024 * 256;
+static ImplicitTask Pool_IA_A[MAX_POOL_SIZE];
+static ImplicitTask Pool_IA_B[MAX_POOL_SIZE];
+static ImplicitTask Pool_Sampling[MAX_POOL_SIZE];
 
-struct Interval_Batch {
-    batch_type min, max;
-    Interval_Batch() = default;
-    Interval_Batch(batch_type mn, batch_type mx) : min(mn), max(mx) {}
-};
-
-// ==========================================
-// 2. 垂直化采样引擎 (针对像素点 4x4 块密集计算)
-// ==========================================
-void EvaluateVertical_Sample(
+// ====================================================================
+// 2. 极致性能 RPN 引擎 - 采样版 (4路展开)
+// ====================================================================
+void EvaluateRPN_Fast_Point(
     const std::vector<RPNToken>& tokens,
-    const batch_type* x_ptr, const batch_type* y_ptr,
-    batch_type* out_ptr, batch_type* workspace
+    const batch_type* __restrict x_ptr,
+    const batch_type* __restrict y_ptr,
+    batch_type* __restrict out_ptr,
+    size_t num_batches,
+    void* __restrict workspace
 ) {
-    const RPNToken* pc = tokens.data();
-    batch_type* sp = workspace;
-    // 寄存器直接映射到 CPU 端口
-    batch_type acc0 = 0, acc1 = 0, acc2 = 0, acc3 = 0;
+    auto* __restrict v_stack_base = static_cast<batch_type*>(workspace);
+    // 核心修正：由于外部传来的 NUM_BATCHES 是 8，这里正好可以跑两次内层循环
+    for (size_t b = 0; b < num_batches; b += 4) {
+        const RPNToken* pc = tokens.data();
+        batch_type* __restrict sp = v_stack_base;
+        batch_type acc0, acc1, acc2, acc3;
 
-    while (true) {
-        const auto& t = *pc++;
-        switch (t.op) {
-            case OpCode::PUSH_X:
-                sp[0]=acc0; sp[1]=acc1; sp[2]=acc2; sp[3]=acc3; sp+=4;
-                acc0=x_ptr[0]; acc1=x_ptr[1]; acc2=x_ptr[2]; acc3=x_ptr[3]; break;
-            case OpCode::PUSH_Y:
-                sp[0]=acc0; sp[1]=acc1; sp[2]=acc2; sp[3]=acc3; sp+=4;
-                acc0=y_ptr[0]; acc1=y_ptr[1]; acc2=y_ptr[2]; acc3=y_ptr[3]; break;
-            case OpCode::PUSH_CONST:
-                sp[0]=acc0; sp[1]=acc1; sp[2]=acc2; sp[3]=acc3; sp+=4;
-                { batch_type v(t.val); acc0=v; acc1=v; acc2=v; acc3=v; } break;
-            case OpCode::ADD: sp-=4; acc0+=sp[0]; acc1+=sp[1]; acc2+=sp[2]; acc3+=sp[3]; break;
-            case OpCode::SUB: sp-=4; acc0=sp[0]-acc0; acc1=sp[1]-acc1; acc2=sp[2]-acc2; acc3=sp[3]-acc3; break;
-            case OpCode::MUL: sp-=4; acc0*=sp[0]; acc1*=sp[1]; acc2*=sp[2]; acc3*=sp[3]; break;
-            case OpCode::DIV: sp-=4; acc0=sp[0]/acc0; acc1=sp[1]/acc1; acc2=sp[2]/acc2; acc3=sp[3]/acc3; break;
-            case OpCode::SIN: acc0=xs::sin(acc0); acc1=xs::sin(acc1); acc2=xs::sin(acc2); acc3=xs::sin(acc3); break;
-            case OpCode::STOP:
-                out_ptr[0]=acc0; out_ptr[1]=acc1; out_ptr[2]=acc2; out_ptr[3]=acc3;
-                return;
+        while (true) {
+            const auto& token = *pc++;
+            switch (token.type) {
+                case RPNTokenType::PUSH_X:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    acc0 = x_ptr[b]; acc1 = x_ptr[b+1]; acc2 = x_ptr[b+2]; acc3 = x_ptr[b+3];
+                    break;
+                case RPNTokenType::PUSH_Y:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    acc0 = y_ptr[b]; acc1 = y_ptr[b+1]; acc2 = y_ptr[b+2]; acc3 = y_ptr[b+3];
+                    break;
+                case RPNTokenType::PUSH_CONST:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    { batch_type vc(token.value); acc0 = vc; acc1 = vc; acc2 = vc; acc3 = vc; }
+                    break;
+                case RPNTokenType::ADD: sp -= 4; acc0 += sp[0]; acc1 += sp[1]; acc2 += sp[2]; acc3 += sp[3]; break;
+                case RPNTokenType::SUB: sp -= 4; acc0 = sp[0] - acc0; acc1 = sp[1] - acc1; acc2 = sp[2] - acc2; acc3 = sp[3] - acc3; break;
+                case RPNTokenType::MUL: sp -= 4; acc0 *= sp[0]; acc1 *= sp[1]; acc2 *= sp[2]; acc3 *= sp[3]; break;
+                case RPNTokenType::DIV: sp -= 4; acc0 = sp[0] / acc0; acc1 = sp[1] / acc1; acc2 = sp[2] / acc2; acc3 = sp[3] / acc3; break;
+                case RPNTokenType::SIN: acc0 = xs::sin(acc0); acc1 = xs::sin(acc1); acc2 = xs::sin(acc2); acc3 = xs::sin(acc3); break;
+                case RPNTokenType::COS: acc0 = xs::cos(acc0); acc1 = xs::cos(acc1); acc2 = xs::cos(acc2); acc3 = xs::cos(acc3); break;
+                case RPNTokenType::SQRT: acc0 = xs::sqrt(acc0); acc1 = xs::sqrt(acc1); acc2 = xs::sqrt(acc2); acc3 = xs::sqrt(acc3); break;
+                case RPNTokenType::STOP:
+                    out_ptr[b] = acc0; out_ptr[b+1] = acc1; out_ptr[b+2] = acc2; out_ptr[b+3] = acc3;
+                    goto block_done;
+                default: break;
+            }
         }
+        block_done:;
     }
 }
 
-// ==========================================
-// 3. 垂直化区间引擎 (严谨 IA 减枝)
-// ==========================================
-namespace IA {
-    inline Interval_Batch mul(const Interval_Batch& a, const Interval_Batch& b) {
-        batch_type p1 = a.min * b.min, p2 = a.min * b.max, p3 = a.max * b.min, p4 = a.max * b.max;
-        return { xs::min(xs::min(p1, p2), xs::min(p3, p4)), xs::max(xs::max(p1, p2), xs::max(p3, p4)) };
-    }
-    inline Interval_Batch sin(const Interval_Batch& i) {
-        auto width_ge_2pi = (i.max - i.min) >= (2.0 * M_PI);
-        auto s_min = xs::sin(i.min), s_max = xs::sin(i.max);
-        auto b_min = xs::min(s_min, s_max), b_max = xs::max(s_min, s_max);
-        auto k_peak = xs::ceil((i.min - (M_PI/2.0)) / (2.0 * M_PI));
-        auto has_peak = (k_peak * (2.0 * M_PI) + (M_PI/2.0)) <= i.max;
-        auto k_trough = xs::ceil((i.min - (1.5 * M_PI)) / (2.0 * M_PI));
-        auto has_trough = (k_trough * (2.0 * M_PI) + (1.5 * M_PI)) <= i.max;
-        batch_type f_max = xs::select(has_peak, batch_type(1.0), b_max);
-        batch_type f_min = xs::select(has_trough, batch_type(-1.0), b_min);
-        return { xs::select(width_ge_2pi, batch_type(-1.0), f_min), xs::select(width_ge_2pi, batch_type(1.0), f_max) };
-    }
-    inline Interval_Batch div(const Interval_Batch& a, const Interval_Batch& b) {
-        auto b_has_zero = (b.min <= 0.0) & (b.max >= 0.0);
-        Interval_Batch inv_b = { 1.0 / b.max, 1.0 / b.min };
-        Interval_Batch res = mul(a, inv_b);
-        return { xs::select(b_has_zero, batch_type(-1e18), res.min), xs::select(b_has_zero, batch_type(1e18), res.max) };
-    }
-}
-
-void EvaluateVertical_Prune(
+// ====================================================================
+// 3. 极致性能 RPN 引擎 - 区间版 (用于剪枝)
+// ====================================================================
+void EvaluateRPN_Fast_IA(
     const std::vector<RPNToken>& tokens,
-    const Interval_Batch* x_ptr, const Interval_Batch* y_ptr,
-    Interval_Batch* out_ptr, batch_type* ws_min, batch_type* ws_max
+    const Interval_Batch* __restrict x_ptr,
+    const Interval_Batch* __restrict y_ptr,
+    Interval_Batch* __restrict out_ptr,
+    size_t num_batches,
+    void* __restrict workspace
 ) {
-    const RPNToken* pc = tokens.data();
-    batch_type* sp_min = ws_min; batch_type* sp_max = ws_max;
-    batch_type min0=0, min1=0, min2=0, min3=0, max0=0, max1=0, max2=0, max3=0;
+    auto* __restrict v_stack_base = static_cast<Interval_Batch*>(workspace);
+    for (size_t b = 0; b < num_batches; b += 4) {
+        const RPNToken* pc = tokens.data();
+        Interval_Batch* __restrict sp = v_stack_base;
+        Interval_Batch acc0, acc1, acc2, acc3;
 
-    while (true) {
-        const auto& t = *pc++;
-        switch (t.op) {
-            case OpCode::PUSH_X:
-                sp_min[0]=min0; sp_min[1]=min1; sp_min[2]=min2; sp_min[3]=min3;
-                sp_max[0]=max0; sp_max[1]=max1; sp_max[2]=max2; sp_max[3]=max3; sp_min+=4; sp_max+=4;
-                min0=x_ptr[0].min; min1=x_ptr[1].min; min2=x_ptr[2].min; min3=x_ptr[3].min;
-                max0=x_ptr[0].max; max1=x_ptr[1].max; max2=x_ptr[2].max; max3=x_ptr[3].max; break;
-            case OpCode::PUSH_Y:
-                sp_min[0]=min0; sp_min[1]=min1; sp_min[2]=min2; sp_min[3]=min3;
-                sp_max[0]=max0; sp_max[1]=max1; sp_max[2]=max2; sp_max[3]=max3; sp_min+=4; sp_max+=4;
-                min0=y_ptr[0].min; min1=y_ptr[1].min; min2=y_ptr[2].min; min3=y_ptr[3].min;
-                max0=y_ptr[0].max; max1=y_ptr[1].max; max2=y_ptr[2].max; max3=y_ptr[3].max; break;
-            case OpCode::PUSH_CONST:
-                sp_min[0]=min0; sp_min[1]=min1; sp_min[2]=min2; sp_min[3]=min3;
-                sp_max[0]=max0; sp_max[1]=max1; sp_max[2]=max2; sp_max[3]=max3; sp_min+=4; sp_max+=4;
-                { batch_type v(t.val); min0=min1=min2=min3=max0=max1=max2=max3=v; } break;
-            case OpCode::ADD:
-                sp_min-=4; sp_max-=4; min0+=sp_min[0]; min1+=sp_min[1]; min2+=sp_min[2]; min3+=sp_min[3];
-                max0+=sp_max[0]; max1+=sp_max[1]; max2+=sp_max[2]; max3+=sp_max[3]; break;
-            case OpCode::SUB:
-                sp_min-=4; sp_max-=4;
-                { batch_type t0=sp_min[0]-max0, t1=sp_min[1]-max1, t2=sp_min[2]-max2, t3=sp_min[3]-max3;
-                  max0=sp_max[0]-min0; max1=sp_max[1]-min1; max2=sp_max[2]-min2; max3=sp_max[3]-min3;
-                  min0=t0; min1=t1; min2=t2; min3=t3; } break;
-            case OpCode::MUL:
-                sp_min-=4; sp_max-=4;
-                { auto r0=IA::mul({sp_min[0],sp_max[0]},{min0,max0}); min0=r0.min; max0=r0.max;
-                  auto r1=IA::mul({sp_min[1],sp_max[1]},{min1,max1}); min1=r1.min; max1=r1.max;
-                  auto r2=IA::mul({sp_min[2],sp_max[2]},{min2,max2}); min2=r2.min; max2=r2.max;
-                  auto r3=IA::mul({sp_min[3],sp_max[3]},{min3,max3}); min3=r3.min; max3=r3.max; } break;
-            case OpCode::SIN:
-                { auto r0=IA::sin({min0,max0}); min0=r0.min; max0=r0.max;
-                  auto r1=IA::sin({min1,max1}); min1=r1.min; max1=r1.max;
-                  auto r2=IA::sin({min2,max2}); min2=r2.min; max2=r2.max;
-                  auto r3=IA::sin({min3,max3}); min3=r3.min; max3=r3.max; } break;
-            case OpCode::STOP:
-                out_ptr[0]={min0,max0}; out_ptr[1]={min1,max1}; out_ptr[2]={min2,max2}; out_ptr[3]={min3,max3};
-                return;
+        while (true) {
+            const auto& token = *pc++;
+            switch (token.type) {
+                case RPNTokenType::PUSH_X:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    acc0 = x_ptr[b]; acc1 = x_ptr[b+1]; acc2 = x_ptr[b+2]; acc3 = x_ptr[b+3];
+                    break;
+                case RPNTokenType::PUSH_Y:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    acc0 = y_ptr[b]; acc1 = y_ptr[b+1]; acc2 = y_ptr[b+2]; acc3 = y_ptr[b+3];
+                    break;
+                case RPNTokenType::PUSH_CONST:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    { batch_type vc(token.value); acc0 = {vc, vc}; acc1 = {vc, vc}; acc2 = {vc, vc}; acc3 = {vc, vc}; }
+                    break;
+                case RPNTokenType::ADD: sp -= 4; acc0 = interval_add_batch(sp[0], acc0); acc1 = interval_add_batch(sp[1], acc1); acc2 = interval_add_batch(sp[2], acc2); acc3 = interval_add_batch(sp[3], acc3); break;
+                case RPNTokenType::SUB: sp -= 4; acc0 = interval_sub_batch(sp[0], acc0); acc1 = interval_sub_batch(sp[1], acc1); acc2 = interval_sub_batch(sp[2], acc2); acc3 = interval_sub_batch(sp[3], acc3); break;
+                case RPNTokenType::MUL: sp -= 4; acc0 = interval_mul_batch(sp[0], acc0); acc1 = interval_mul_batch(sp[1], acc1); acc2 = interval_mul_batch(sp[2], acc2); acc3 = interval_mul_batch(sp[3], acc3); break;
+                case RPNTokenType::DIV: sp -= 4; acc0 = interval_div_batch(sp[0], acc0); acc1 = interval_div_batch(sp[1], acc1); acc2 = interval_div_batch(sp[2], acc2); acc3 = interval_div_batch(sp[3], acc3); break;
+                case RPNTokenType::SIN: acc0 = interval_sin_batch(acc0); acc1 = interval_sin_batch(acc1); acc2 = interval_sin_batch(acc2); acc3 = interval_sin_batch(acc3); break;
+                case RPNTokenType::COS: acc0 = interval_cos_batch(acc0); acc1 = interval_cos_batch(acc1); acc2 = interval_cos_batch(acc2); acc3 = interval_cos_batch(acc3); break;
+                case RPNTokenType::STOP:
+                    out_ptr[b] = acc0; out_ptr[b+1] = acc1; out_ptr[b+2] = acc2; out_ptr[b+3] = acc3;
+                    goto block_done;
+                default: break;
+            }
         }
+        block_done:;
     }
 }
 
-// ==========================================
-// 4. 全流程绘图基准测试
-// ==========================================
-struct QuadNode { double xmin, xmax, ymin, ymax; };
+// ====================================================================
+// 4. 函数二：4x4 采样 Kernel (Fused Sample Kernel)
+// ====================================================================
+void Fused_Sample_Kernel(
+    GeometryGraph& graph,
+    const std::vector<RPNToken>& tokens,
+    ImplicitTask* tasks,
+    size_t task_count
+) {
+    const auto& v = graph.view;
+    auto& final_buffer = graph.final_points_buffer;
 
-void RunExtremeVerticalPlotter(const std::vector<RPNToken>& tokens) {
-    // 模拟 2560x1600 高清分辨率
-    double zoom = 0.05;
-    double wpp = 2.0 / (1600.0 * zoom);
+    // 核心修正：25个格点，为了满足 Evaluate 引擎的 4 路展开，我们将 Batch 数设为 8 (32个槽位)
+    constexpr size_t NUM_BATCHES = 8;
+    alignas(64) batch_type gx[NUM_BATCHES], gy[NUM_BATCHES], gv[NUM_BATCHES];
+    alignas(64) batch_type vm_workspace[256];
 
-    std::vector<QuadNode> stack;
-    stack.reserve(10000);
-    stack.push_back({-40.0, 40.0, -25.0, 25.0});
+    for (size_t t = 0; t < task_count; ++t) {
+        const ImplicitTask& task = tasks[t];
+        const double step = task.size / 4.0;
+        double col_off[5], row_off[5];
+        for(int i=0; i<5; ++i) { col_off[i] = task.x + i*step; row_off[i] = task.y - i*step; }
 
-    alignas(64) batch_type ws_sample[64];
-    alignas(64) batch_type ws_ia_min[64], ws_ia_max[64];
+        for (size_t b = 0; b < NUM_BATCHES; ++b) {
+            alignas(64) double tx[batch_type::size] = {0}, ty[batch_type::size] = {0};
+            for (int k = 0; k < 4; ++k) {
+                size_t idx = b * 4 + k;
+                if (idx < 25) { tx[k] = col_off[idx % 5]; ty[k] = row_off[idx / 5]; }
+                else { tx[k] = 1e30; ty[k] = 1e30; }
+            }
+            gx[b] = batch_type::load_aligned(tx); gy[b] = batch_type::load_aligned(ty);
+        }
 
-    size_t total_points = 0;
-    size_t ia_decisions = 0;
+        EvaluateRPN_Fast_Point(tokens, gx, gy, gv, NUM_BATCHES, vm_workspace);
 
-    auto start_time = std::chrono::high_resolution_clock::now();
+        alignas(64) double val_grid[32];
+        for(size_t b=0; b<NUM_BATCHES; ++b) gv[b].store_aligned(&val_grid[b*4]);
 
-    while(!stack.empty()) {
-        QuadNode c = stack.back(); stack.pop_back();
-        double xm = (c.xmin + c.xmax) * 0.5, ym = (c.ymin + c.ymax) * 0.5;
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                int i0 = r*5+c, i1 = i0+1, i2 = i0+5, i3 = i2+1;
+                double v0 = val_grid[i0], v1 = val_grid[i1], v2 = val_grid[i2], v3 = val_grid[i3];
 
-        // Quadtree 子块区间
-        Interval_Batch X_subs[4] = { {c.xmin,xm}, {xm,c.xmax}, {c.xmin,xm}, {xm,c.xmax} };
-        Interval_Batch Y_subs[4] = { {c.ymin,ym}, {c.ymin,ym}, {ym,c.ymax}, {ym,c.ymax} };
-        Interval_Batch prune_res[4];
-
-        // [ IA PRUNING ] 垂直化一次判定 4 个块
-        EvaluateVertical_Prune(tokens, X_subs, Y_subs, prune_res, ws_ia_min, ws_ia_max);
-
-        for(int i = 0; i < 4; ++i) {
-            ia_decisions++;
-            auto mask = (prune_res[i].min <= 0.0) & (prune_res[i].max >= 0.0);
-
-            if(xs::any(mask)) {
-                // 修改为 4 像素级停止
-                if((X_subs[i].max.get(0) - X_subs[i].min.get(0)) <= 4.0 * wpp) {
-
-                    // [ PIXEL SAMPLING ] 针对 4x4=16 像素块进行垂直化采样
-                    // 16 像素 = 4 个 Batch (每个batch=4点, AVX2) 或 8 个 Batch (WASM)
-                    // 垂直化每次处理 4 个 Batch，所以只需 1-2 次循环
-                    int loops = 16 / (batch_type::size * VM_BLOCK_SIZE);
-                    if (loops == 0) loops = 1;
-
-                    for(int l=0; l<loops; ++l) {
-                        batch_type dx[4]={0}, dy[4]={0}, dout[4];
-                        EvaluateVertical_Sample(tokens, dx, dy, dout, ws_sample);
-                        total_points += (batch_type::size * VM_BLOCK_SIZE);
+                auto check_lerp = [&](double va, double vb, double xa, double ya, double xb, double yb) {
+                    if ((va * vb) <= 0.0 && va != vb) {
+                        double tr = va / (va - vb);
+                        int16_t cx = static_cast<int16_t>((xa + tr*(xb-xa) - v.offset_x) * v.ndc_scale_x);
+                        int16_t cy = static_cast<int16_t>((ya + tr*(yb-ya) - v.offset_y) * v.ndc_scale_y);
+                        final_buffer.push_back({cx, cy});
                     }
-                } else {
-                    stack.push_back({X_subs[i].min.get(0), X_subs[i].max.get(0),
-                                     Y_subs[i].min.get(0), Y_subs[i].max.get(0)});
+                };
+                check_lerp(v0, v1, col_off[c], row_off[r], col_off[c+1], row_off[r]);
+                check_lerp(v0, v2, col_off[c], row_off[r], col_off[c], row_off[r+1]);
+            }
+        }
+    }
+}
+
+// ====================================================================
+// 5. 函数一：IA 任务泵 (IA Subdivision Pump)
+// ====================================================================
+void IA_Subdivision_Pump(GeometryGraph& graph, const std::vector<RPNToken>& tokens) {
+    const auto& v = graph.view;
+    const double threshold = 3.5 * v.wpp; // 四叉树细分到 3*3 像素附近，向上取整
+
+    ImplicitTask* src = Pool_IA_A;
+    ImplicitTask* dst = Pool_IA_B;
+    size_t src_count = 1;
+    size_t sampling_count = 0;
+
+    // 初始任务：全屏。注意：初始 size 必须涵盖整个视口
+    double initial_size = std::max(v.screen_width, v.screen_height) * v.wpp;
+    src[0] = { v.offset_x - (v.screen_width * 0.5 * v.wpp), v.offset_y + (v.screen_height * 0.5 * v.wpp), initial_size };
+
+    alignas(64) Interval_Batch ib_x[4], ib_y[4], ib_res[4];
+    alignas(64) Interval_Batch ia_workspace[256];
+
+    while (src_count > 0) {
+        size_t dst_count = 0;
+        for (size_t i = 0; i < src_count; ++i) {
+            ImplicitTask p = src[i];
+            double sub = p.size * 0.5;
+            double x_m = p.x + sub, y_m = p.y - sub;
+
+            alignas(64) double tx_min[batch_type::size] = {0}, tx_max[batch_type::size] = {0};
+            alignas(64) double ty_min[batch_type::size] = {0}, ty_max[batch_type::size] = {0};
+
+            tx_min[0]=p.x; tx_min[1]=x_m; tx_min[2]=p.x; tx_min[3]=x_m;
+            tx_max[0]=x_m; tx_max[1]=p.x+p.size; tx_max[2]=x_m; tx_max[3]=p.x+p.size;
+            ty_min[0]=y_m; ty_min[1]=y_m; ty_min[2]=p.y-p.size; ty_min[3]=p.y-p.size;
+            ty_max[0]=p.y; ty_max[1]=p.y; ty_max[2]=y_m; ty_max[3]=y_m;
+
+            ib_x[0] = { batch_type::load_aligned(tx_min), batch_type::load_aligned(tx_max) };
+            ib_y[0] = { batch_type::load_aligned(ty_min), batch_type::load_aligned(ty_max) };
+
+            EvaluateRPN_Fast_IA(tokens, ib_x, ib_y, ib_res, 4, ia_workspace);
+
+            auto alive = (ib_res[0].min <= 0.0) & (ib_res[0].max >= 0.0);
+            uint32_t mask = 0;
+            if (alive.get(0)) mask |= 1; if (alive.get(1)) mask |= 2;
+            if (alive.get(2)) mask |= 4; if (alive.get(3)) mask |= 8;
+
+            for (int k = 0; k < 4; ++k) {
+                if (mask & (1 << k)) {
+                    ImplicitTask c = { (k%2==0)?p.x:x_m, (k<2)?p.y:y_m, sub };
+                    if (c.size <= threshold) Pool_Sampling[sampling_count++] = c;
+                    else dst[dst_count++] = c;
                 }
             }
         }
-        if(ia_decisions > 5000000) break;
+        std::swap(src, dst); src_count = dst_count;
     }
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto total_us = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
-
-    std::cout << std::fixed << std::setprecision(3);
-    std::cout << "--- Rigorous Vertical Engine (4x4 Subdivision) ---" << std::endl;
-    std::cout << "IA Decisions:         " << ia_decisions << std::endl;
-    std::cout << "Total Pixels Sampled: " << total_points << std::endl;
-    std::cout << "Total Time:           " << total_us << " us (" << total_us/1000.0 << " ms)" << std::endl;
-    std::cout << "Throughput:           " << (total_points / (total_us / 1e6)) / 1e6 << " M Pixels/s" << std::endl;
+    Fused_Sample_Kernel(graph, tokens, Pool_Sampling, sampling_count);
 }
 
-int main() {
-    // 公式: y - x * sin(x) / 3 = 0
-    std::vector<RPNToken> tokens = {
-        {OpCode::PUSH_Y}, {OpCode::PUSH_X}, {OpCode::PUSH_X},
-        {OpCode::SIN}, {OpCode::MUL}, {OpCode::PUSH_CONST, 3.0},
-        {OpCode::DIV}, {OpCode::SUB}, {OpCode::STOP}
-    };
+// ====================================================================
+// 6. 顶层接口与测试
+// ====================================================================
+void calculate_implicit_core(GeometryGraph& graph, const std::vector<RPNToken>& tokens) {
+    graph.final_points_buffer.clear();
+    IA_Subdivision_Pump(graph, tokens);
+}
+void ExportPointsToFile(const std::vector<PointData>& buffer) {
+    if (buffer.empty()) {
+        std::cout << "Warning: Buffer is empty, nothing to export.\n";
+        return;
+    }
 
-    RunExtremeVerticalPlotter(tokens);
+    std::ofstream ofs("points.txt");
+    if (!ofs.is_open()) {
+        std::cerr << "Error: Could not open points.txt for writing.\n";
+        return;
+    }
+
+    // 使用 \n 而非 std::endl 以避免频繁刷新缓冲区导致的 IO 性能下降
+    for (const auto& p : buffer) {
+        ofs << p.x << " " << p.y << "\n";
+    }
+
+    ofs.close();
+    std::cout << "Successfully exported " << buffer.size() << " points to points.txt\n";
+}
+
+
+std::vector<RPNToken> ParseRPNText(const std::string& input) {
+    std::vector<RPNToken> tokens;
+    std::stringstream ss(input);
+    std::string item;
+
+    while (ss >> item) {
+        // 1. 处理坐标变量
+        if (item == "x") {
+            tokens.push_back({RPNTokenType::PUSH_X, 0.0});
+        }
+        else if (item == "y") {
+            tokens.push_back({RPNTokenType::PUSH_Y, 0.0});
+        }
+        // 2. 处理基础算术运算
+        else if (item == "+") {
+            tokens.push_back({RPNTokenType::ADD, 0.0});
+        }
+        else if (item == "-") {
+            tokens.push_back({RPNTokenType::SUB, 0.0});
+        }
+        else if (item == "*") {
+            tokens.push_back({RPNTokenType::MUL, 0.0});
+        }
+        else if (item == "/") {
+            tokens.push_back({RPNTokenType::DIV, 0.0});
+        }
+        // 3. 处理内置数学函数
+        else if (item == "sin") {
+            tokens.push_back({RPNTokenType::SIN, 0.0});
+        }
+        else if (item == "cos") {
+            tokens.push_back({RPNTokenType::COS, 0.0});
+        }
+        else if (item == "sqrt") {
+            tokens.push_back({RPNTokenType::SQRT, 0.0});
+        }
+        // 4. 处理常数 (如果不是以上符号，则尝试解析为 double)
+        else {
+            try {
+                double val = std::stod(item);
+                tokens.push_back({RPNTokenType::PUSH_CONST, val});
+            } catch (...) {
+                std::cerr << "Unknown RPN Token: " << item << std::endl;
+            }
+        }
+    }
+
+    // 5. 极致引擎强制要求的终止符
+    tokens.push_back({RPNTokenType::STOP, 0.0});
+
+    return tokens;
+}
+int main() {
+    // 1. 初始化图解引擎上下文
+    GeometryGraph graph;
+    graph.view.offset_x = 0;
+    graph.view.offset_y = 0;
+    graph.view.zoom = 0.05; // 适当缩放以看清细分效果
+    graph.view.screen_width = 2560;
+    graph.view.screen_height = 1600;
+    graph.view.Refresh(); // 刷新预计算系数 (ndc_scale 等)
+
+    std::string userInput;
+
+
+    std::cout << "Enter RPN expression (e.g., 'x x * y y * + 3 -'): ";
+    std::getline(std::cin, userInput);
+
+    // 解析用户输入的文本
+    std::vector<RPNToken> tokens = ParseRPNText(userInput);
+
+    // 2. 手动构建极致性能 RPN 指令序列
+    // 逻辑：x -> x -> * -> y -> y -> * -> + -> 3 -> - -> STOP
+
+
+    // 3. 执行解算并计时
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    // 直接调用核心，不产生任何解析开销
+    calculate_implicit_core(graph, tokens);
+
+
+    auto t2 = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+    ExportPointsToFile(graph.final_points_buffer);
+
+    // 4. 输出结果
+    std::cout << "==========================================\n";
+    std::cout << "Implicit Rendering (Direct Tokens Mode)\n";
+    std::cout << "==========================================\n";
+
+    std::cout << "Output Points: " << graph.final_points_buffer.size() << "\n";
+    std::cout << "Processing Time: " << duration << " us (" << duration / 1000.0 << " ms)\n";
+    std::cout << "==========================================\n";
+
     return 0;
 }
