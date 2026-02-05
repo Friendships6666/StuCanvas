@@ -23,9 +23,9 @@ struct ImplicitTask {
 
 // 预分配大池：消除 malloc 抖动
 constexpr size_t MAX_POOL_SIZE = 1024 * 256;
-static ImplicitTask Pool_IA_A[MAX_POOL_SIZE];
-static ImplicitTask Pool_IA_B[MAX_POOL_SIZE];
-static ImplicitTask Pool_Sampling[MAX_POOL_SIZE];
+thread_local static ImplicitTask Pool_IA_A[MAX_POOL_SIZE];
+thread_local static ImplicitTask Pool_IA_B[MAX_POOL_SIZE];
+thread_local static ImplicitTask Pool_Sampling[MAX_POOL_SIZE];
 
 // ====================================================================
 // 2. 极致性能 RPN 引擎 - 采样版 (4路展开)
