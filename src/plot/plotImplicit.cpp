@@ -1,247 +1,261 @@
-﻿// --- 文件路径: src/plot/plotImplicit.cpp ---
-
-#include "../../pch.h"
-#include "../../include/plot/plotImplicit.h"
-#include "../../include/functions/lerp.h"     // 包含 world_to_clip_store
-#include "../../include/functions/functions.h"
-#include <stack>
+﻿#include "../../include/plot/plotImplicit.h"
+#include "../../include/graph/GeoGraph.h"
+#include "../../include/interval/interval.h"
+#include <oneapi/tbb/concurrent_queue.h>
+#include <vector>
 #include <algorithm>
-#include <cmath>
 
-// 任务结构体，用于四叉树细分
-struct QuadtreeTask {
-    double world_x, world_y; // 区块左上角的世界坐标
-    double world_w, world_h; // 区块在世界坐标系下的宽高
+namespace xs = xsimd;
+using batch_type = xs::batch<double>;
+
+// ====================================================================
+// 1. 任务池定义 (针对并行调用下的单核内部串行逻辑优化)
+// ====================================================================
+struct ImplicitTask {
+    double x, y, size;
 };
 
-// 构造函数
-ThreadCacheForTiling::ThreadCacheForTiling() {
-    top_row_vals.resize(TILE_W + 1);
-    bot_row_vals.resize(TILE_W + 1);
-}
+// 预分配大池：thread_local 确保外部并行调用时线程安全
+constexpr size_t MAX_POOL_SIZE = 1024 * 256;
+thread_local static ImplicitTask Pool_IA_A[MAX_POOL_SIZE];
+thread_local static ImplicitTask Pool_IA_B[MAX_POOL_SIZE];
+thread_local static ImplicitTask Pool_Sampling[MAX_POOL_SIZE];
 
-// 内部工作函数：在叶子节点(Tile)内进行像素级 Marching Squares
-// 注意：输入仍然是 World Space，计算过程保持 Double 精度
-void draw_points_in_tile(
-    oneapi::tbb::concurrent_vector<PointData>& concurrent_points,
-    const Vec2& world_origin, double wppx, double wppy,
-    const AlignedVector<RPNToken>& rpn_program, const AlignedVector<RPNToken>& rpn_program_check,
-    unsigned int func_idx, unsigned int x_start, unsigned int x_end, unsigned int y_start, unsigned int y_end,
-    ThreadCacheForTiling& cache,
-    const NDCMap& ndc_map // ★★★ 传入映射表
+// ====================================================================
+// 2. 极致性能 RPN 引擎 - 采样版 (4路展开 + 寄存器栈)
+// ====================================================================
+static void EvaluateRPN_Fast_Point(
+    const std::vector<RPNToken>& tokens,
+    const batch_type* __restrict x_ptr,
+    const batch_type* __restrict y_ptr,
+    batch_type* __restrict out_ptr,
+    size_t num_batches,
+    void* __restrict workspace
 ) {
-    const unsigned int tile_w = x_end - x_start;
-    if (tile_w > TILE_W || tile_w == 0) return;
+    auto* __restrict v_stack_base = static_cast<batch_type*>(workspace);
+    for (size_t b = 0; b < num_batches; b += 4) {
+        const RPNToken* pc = tokens.data();
+        batch_type* __restrict sp = v_stack_base;
+        batch_type acc0, acc1, acc2, acc3;
 
-    auto& top_row_vals = cache.top_row_vals;
-    auto& bot_row_vals = cache.bot_row_vals;
-
-    // 1. 预计算顶行值 (Double)
-    for (unsigned int x = x_start; x <= x_end; ++x) {
-        top_row_vals[x - x_start] = evaluate_rpn<double>(rpn_program, world_origin.x + x * wppx, world_origin.y + y_start * wppy);
-    }
-
-    // 2. 逐行扫描
-    for (unsigned int y = y_start; y < y_end; ++y) {
-        // SIMD 批量计算底行值
-        const std::size_t vec_end = tile_w - (tile_w % batch_type::size);
-        for (std::size_t x_off = 0; x_off < vec_end; x_off += batch_type::size) {
-            batch_type sx = get_index_vec() + static_cast<double>(x_start + x_off);
-            auto [wx, wy] = screen_to_world_batch(sx, (double)y + 1.0, world_origin, wppx, wppy);
-            xs::store_aligned(&bot_row_vals[x_off], evaluate_rpn<batch_type>(rpn_program, wx, wy));
-        }
-        // 标量处理尾部
-        for (std::size_t x_off = vec_end; x_off <= tile_w; ++x_off) {
-            Vec2 world_pos = screen_to_world_inline({(double)(x_start + x_off), (double)y + 1.0}, world_origin, wppx, wppy);
-            bot_row_vals[x_off] = evaluate_rpn<double>(rpn_program, world_pos.x, world_pos.y);
-        }
-
-        // Marching Squares 求交
-        for (unsigned int x_off = 0; x_off < tile_w; ++x_off) {
-            double tl = top_row_vals[x_off], tr = top_row_vals[x_off + 1], bl = bot_row_vals[x_off];
-
-            // 过滤无效值
-            if (!std::isfinite(tl) || !std::isfinite(tr) || !std::isfinite(bl)) continue;
-
-            // 简单拓扑检查 (同号跳过)
-            double sign_tl = (tl > 0.0) - (tl < 0.0);
-            if (((tr > 0.0) - (tr < 0.0)) == sign_tl && ((bl > 0.0) - (bl < 0.0)) == sign_tl) continue;
-
-            constexpr double step = 0.5;
-            Vec2 intersection{}; // 这里的 intersection 是 Double 精度的世界坐标
-
-            // 检查 Tile 内的 2x2 子网格
-            for (int ly = 0; ly < 2; ++ly) for (int lx = 0; lx < 2; ++lx) {
-                Vec2 s_tl_scr = {(double)(x_start + x_off) + lx * step, (double)y + ly * step};
-
-                // 计算三角形顶点 (World Space)
-                Vec2 p_tl = screen_to_world_inline(s_tl_scr, world_origin, wppx, wppy);
-                Vec2 p_tr = screen_to_world_inline({s_tl_scr.x + step, s_tl_scr.y}, world_origin, wppx, wppy);
-                Vec2 p_bl = screen_to_world_inline({s_tl_scr.x, s_tl_scr.y + step}, world_origin, wppx, wppy);
-
-                // 求值
-                double v_tl = evaluate_rpn<double>(rpn_program, p_tl.x, p_tl.y);
-                double v_tr = evaluate_rpn<double>(rpn_program, p_tr.x, p_tr.y);
-                double v_bl = evaluate_rpn<double>(rpn_program, p_bl.x, p_bl.y);
-
-                if (!std::isfinite(v_tl) || !std::isfinite(v_tr) || !std::isfinite(v_bl)) continue;
-
-                // =========================================================
-                // 线性插值求交 (World Space)
-                // =========================================================
-                if (try_get_intersection_point(intersection, p_tl, p_tr, v_tl, v_tr, rpn_program_check)) {
-                    // ★★★ 核心修改：Double World -> Float Clip ★★★
-                    PointData pd;
-                    world_to_clip_store(pd, intersection.x, intersection.y, ndc_map, func_idx);
-                    concurrent_points.push_back(pd);
-                }
-
-                if (try_get_intersection_point(intersection, p_tl, p_bl, v_tl, v_bl, rpn_program_check)) {
-                    // ★★★ 核心修改：Double World -> Float Clip ★★★
-                    PointData pd;
-                    world_to_clip_store(pd, intersection.x, intersection.y, ndc_map, func_idx);
-                    concurrent_points.push_back(pd);
-                }
+        while (true) {
+            const auto& token = *pc++;
+            switch (token.type) {
+                case RPNTokenType::PUSH_X:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    acc0 = x_ptr[b]; acc1 = x_ptr[b+1]; acc2 = x_ptr[b+2]; acc3 = x_ptr[b+3];
+                    break;
+                case RPNTokenType::PUSH_Y:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    acc0 = y_ptr[b]; acc1 = y_ptr[b+1]; acc2 = y_ptr[b+2]; acc3 = y_ptr[b+3];
+                    break;
+                case RPNTokenType::PUSH_CONST:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    { batch_type vc(token.value); acc0 = vc; acc1 = vc; acc2 = vc; acc3 = vc; }
+                    break;
+                case RPNTokenType::ADD: sp -= 4; acc0 += sp[0]; acc1 += sp[1]; acc2 += sp[2]; acc3 += sp[3]; break;
+                case RPNTokenType::SUB: sp -= 4; acc0 = sp[0] - acc0; acc1 = sp[1] - acc1; acc2 = sp[2] - acc2; acc3 = sp[3] - acc3; break;
+                case RPNTokenType::MUL: sp -= 4; acc0 *= sp[0]; acc1 *= sp[1]; acc2 *= sp[2]; acc3 *= sp[3]; break;
+                case RPNTokenType::DIV: sp -= 4; acc0 = sp[0] / acc0; acc1 = sp[1] / acc1; acc2 = sp[2] / acc2; acc3 = sp[3] / acc3; break;
+                case RPNTokenType::SIN: acc0 = xs::sin(acc0); acc1 = xs::sin(acc1); acc2 = xs::sin(acc2); acc3 = xs::sin(acc3); break;
+                case RPNTokenType::COS: acc0 = xs::cos(acc0); acc1 = xs::cos(acc1); acc2 = xs::cos(acc2); acc3 = xs::cos(acc3); break;
+                case RPNTokenType::SQRT: acc0 = xs::sqrt(acc0); acc1 = xs::sqrt(acc1); acc2 = xs::sqrt(acc2); acc3 = xs::sqrt(acc3); break;
+                case RPNTokenType::STOP:
+                    out_ptr[b] = acc0; out_ptr[b+1] = acc1; out_ptr[b+2] = acc2; out_ptr[b+3] = acc3;
+                    goto block_done;
+                default: break;
             }
         }
-        // 交换行缓存，准备下一行
-        std::swap(top_row_vals, bot_row_vals);
+        block_done:;
     }
 }
 
-// 主生产者函数
-void process_implicit_adaptive(
-    oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
-    const Vec2& world_origin, double wppx, double wppy,
-    double screen_width, double screen_height,
-    const AlignedVector<RPNToken>& rpn_program,
-    const AlignedVector<RPNToken>& rpn_program_check,
-    unsigned int func_idx,
-    double offset_x, double offset_y,
-    const NDCMap& ndc_map // ★★★ 接收映射参数
+// ====================================================================
+// 3. 极致性能 RPN 引擎 - 区间版 (垂直 IA 判定)
+// ====================================================================
+static void EvaluateRPN_Fast_IA(
+    const std::vector<RPNToken>& tokens,
+    const Interval_Batch* __restrict x_ptr,
+    const Interval_Batch* __restrict y_ptr,
+    Interval_Batch* __restrict out_ptr,
+    size_t num_batches,
+    void* __restrict workspace
 ) {
-    // 1. 创建并发向量
-    oneapi::tbb::concurrent_vector<PointData> concurrent_points;
+    auto* __restrict v_stack_base = static_cast<Interval_Batch*>(workspace);
+    for (size_t b = 0; b < num_batches; b += 4) {
+        const RPNToken* pc = tokens.data();
+        Interval_Batch* __restrict sp = v_stack_base;
+        Interval_Batch acc0, acc1, acc2, acc3;
 
-    // 线程局部缓存
-    oneapi::tbb::combinable<ThreadCacheForTiling> thread_local_caches;
+        while (true) {
+            const auto& token = *pc++;
+            switch (token.type) {
+                case RPNTokenType::PUSH_X:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    acc0 = x_ptr[b]; acc1 = x_ptr[b+1]; acc2 = x_ptr[b+2]; acc3 = x_ptr[b+3];
+                    break;
+                case RPNTokenType::PUSH_Y:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    acc0 = y_ptr[b]; acc1 = y_ptr[b+1]; acc2 = y_ptr[b+2]; acc3 = y_ptr[b+3];
+                    break;
+                case RPNTokenType::PUSH_CONST:
+                    sp[0] = acc0; sp[1] = acc1; sp[2] = acc2; sp[3] = acc3; sp += 4;
+                    { batch_type vc(token.value); acc0 = {vc, vc}; acc1 = {vc, vc}; acc2 = {vc, vc}; acc3 = {vc, vc}; }
+                    break;
+                case RPNTokenType::ADD: sp -= 4; acc0 = interval_add_batch(sp[0], acc0); acc1 = interval_add_batch(sp[1], acc1); acc2 = interval_add_batch(sp[2], acc2); acc3 = interval_add_batch(sp[3], acc3); break;
+                case RPNTokenType::SUB: sp -= 4; acc0 = interval_sub_batch(sp[0], acc0); acc1 = interval_sub_batch(sp[1], acc1); acc2 = interval_sub_batch(sp[2], acc2); acc3 = interval_sub_batch(sp[3], acc3); break;
+                case RPNTokenType::MUL: sp -= 4; acc0 = interval_mul_batch(sp[0], acc0); acc1 = interval_mul_batch(sp[1], acc1); acc2 = interval_mul_batch(sp[2], acc2); acc3 = interval_mul_batch(sp[3], acc3); break;
+                case RPNTokenType::DIV: sp -= 4; acc0 = interval_div_batch(sp[0], acc0); acc1 = interval_div_batch(sp[1], acc1); acc2 = interval_div_batch(sp[2], acc2); acc3 = interval_div_batch(sp[3], acc3); break;
+                case RPNTokenType::SIN: acc0 = interval_sin_batch(acc0); acc1 = interval_sin_batch(acc1); acc2 = interval_sin_batch(acc2); acc3 = interval_sin_batch(acc3); break;
+                case RPNTokenType::COS: acc0 = interval_cos_batch(acc0); acc1 = interval_cos_batch(acc1); acc2 = interval_cos_batch(acc2); acc3 = interval_cos_batch(acc3); break;
+                case RPNTokenType::STOP:
+                    out_ptr[b] = acc0; out_ptr[b+1] = acc1; out_ptr[b+2] = acc2; out_ptr[b+3] = acc3;
+                    goto block_done;
+                default: break;
+            }
+        }
+        block_done:;
+    }
+}
 
-    // 2. 四叉树细分逻辑 (World Space)
-    // 这里的逻辑依然在世界坐标系进行，确保区间算术的正确性
-    std::stack<QuadtreeTask> tasks;
-    std::vector<QuadtreeTask> leaf_nodes;
+// ====================================================================
+// 4. 函数二：4x4 采样 Kernel (直接压入 TBB 队列)
+// ====================================================================
+static void Fused_Sample_Kernel(
+    const ViewState& v,
+    const std::vector<RPNToken>& tokens,
+    ImplicitTask* tasks,
+    size_t task_count,
+    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>>& queue
+) {
+    // 25个格点，为了满足 Evaluate 引擎的 4 路展开，我们将 Batch 数设为 8 (32个槽位)
+    constexpr size_t NUM_BATCHES = 8;
+    alignas(64) batch_type gx[NUM_BATCHES], gy[NUM_BATCHES], gv[NUM_BATCHES];
+    alignas(64) batch_type vm_workspace[256];
 
-    // 初始根节点：整个屏幕视口 (World Space)
-    tasks.push({ world_origin.x, world_origin.y, screen_width * wppx, screen_height * wppy });
+    // 局部结果暂存，为了性能，每个函数调用产出一个大 vector
+    std::vector<PointData> local_points;
+    local_points.reserve(task_count * 16); // 预估空间
 
-    const double min_pixel_width = 10 * wppx;
-    const double min_pixel_height = 10 * std::abs(wppy);
+    for (size_t t = 0; t < task_count; ++t) {
+        const ImplicitTask& task = tasks[t];
+        const double step = task.size / 4.0;
+        double col_off[5], row_off[5];
+        for(int i=0; i<5; ++i) { col_off[i] = task.x + i*step; row_off[i] = task.y - i*step; }
 
-    alignas(batch_type::arch_type::alignment()) double min_x[BATCH_SIZE], max_x[BATCH_SIZE];
-    alignas(batch_type::arch_type::alignment()) double min_y[BATCH_SIZE], max_y[BATCH_SIZE];
-    QuadtreeTask task_lanes[BATCH_SIZE];
+        for (size_t b = 0; b < NUM_BATCHES; ++b) {
+            alignas(64) double tx[batch_type::size] = {0}, ty[batch_type::size] = {0};
+            for (int k = 0; k < 4; ++k) {
+                size_t idx = b * 4 + k;
+                if (idx < 25) { tx[k] = col_off[idx % 5]; ty[k] = row_off[idx / 5]; }
+                else { tx[k] = 1e30; ty[k] = 1e30; }
+            }
+            gx[b] = batch_type::load_aligned(tx); gy[b] = batch_type::load_aligned(ty);
+        }
 
-    while (true) {
-        // --- SIMD 批量区间检测 ---
-        while (tasks.size() >= BATCH_SIZE) {
-            for (size_t i = 0; i < BATCH_SIZE; ++i) {
-                task_lanes[i] = tasks.top(); tasks.pop();
-                min_x[i] = task_lanes[i].world_x;
-                max_x[i] = task_lanes[i].world_x + task_lanes[i].world_w;
-                min_y[i] = task_lanes[i].world_y + task_lanes[i].world_h;
-                max_y[i] = task_lanes[i].world_y; // 注意 Y 轴方向
+        EvaluateRPN_Fast_Point(tokens, gx, gy, gv, NUM_BATCHES, vm_workspace);
+
+        alignas(64) double val_grid[32];
+        for(size_t b=0; b<NUM_BATCHES; ++b) gv[b].store_aligned(&val_grid[b*4]);
+
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                int i0 = r*5+c, i1 = i0+1, i2 = i0+5, i3 = i2+1;
+                double v0 = val_grid[i0], v1 = val_grid[i1], v2 = val_grid[i2], v3 = val_grid[i3];
+
+                auto check_lerp = [&](double va, double vb, double xa, double ya, double xb, double yb) {
+                    if ((va * vb) <= 0.0 && va != vb) {
+                        double tr = va / (va - vb);
+                        int16_t cx = static_cast<int16_t>((xa + tr*(xb-xa) - v.offset_x) * v.ndc_scale_x);
+                        int16_t cy = static_cast<int16_t>((ya + tr*(yb-ya) - v.offset_y) * v.ndc_scale_y);
+                        local_points.push_back({cx, cy});
+                    }
+                };
+                check_lerp(v0, v1, col_off[c], row_off[r], col_off[c+1], row_off[r]);
+                check_lerp(v0, v2, col_off[c], row_off[r], col_off[c], row_off[r+1]);
+            }
+        }
+    }
+
+    // 一次性压入队列，减少原子开销
+    if (!local_points.empty()) {
+        queue.push(std::move(local_points));
+    }
+}
+
+// ====================================================================
+// 5. 核心导出：隐函数计算核心入口
+// ====================================================================
+void calculate_implicit_core(
+    GeometryGraph& graph,
+    const std::vector<RPNToken>& tokens,
+    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData>>& queue
+) {
+    const auto& v = graph.view;
+    // 阈值：向 3.5 到 4 像素对齐
+    const double threshold = 3.8 * v.wpp;
+
+    ImplicitTask* src = Pool_IA_A;
+    ImplicitTask* dst = Pool_IA_B;
+    size_t src_count = 1;
+    size_t sampling_count = 0;
+
+    // 初始任务：全屏包围盒
+    double view_w = v.screen_width * v.wpp;
+    double view_h = v.screen_height * v.wpp;
+    double initial_size = std::max(view_w, view_h);
+    src[0] = { v.offset_x - view_w * 0.5, v.offset_y + view_h * 0.5, initial_size };
+
+    alignas(64) Interval_Batch ib_x[4], ib_y[4], ib_res[4];
+    alignas(64) Interval_Batch ia_workspace[256];
+
+    while (src_count > 0) {
+        size_t dst_count = 0;
+        for (size_t i = 0; i < src_count; ++i) {
+            ImplicitTask p = src[i];
+            double sub = p.size * 0.5;
+            double x_m = p.x + sub, y_m = p.y - sub;
+
+            // 垂直向量化：准备 4 个子区间的边界
+            alignas(64) double tx_min[batch_type::size] = {0}, tx_max[batch_type::size] = {0};
+            alignas(64) double ty_min[batch_type::size] = {0}, ty_max[batch_type::size] = {0};
+
+            tx_min[0]=p.x; tx_min[1]=x_m; tx_min[2]=p.x; tx_min[3]=x_m;
+            tx_max[0]=x_m; tx_max[1]=p.x+p.size; tx_max[2]=x_m; tx_max[3]=p.x+p.size;
+            ty_min[0]=y_m; ty_min[1]=y_m; ty_min[2]=p.y-p.size; ty_min[3]=p.y-p.size;
+            ty_max[0]=p.y; ty_max[1]=p.y; ty_max[2]=y_m; ty_max[3]=y_m;
+
+            ib_x[0] = { batch_type::load_aligned(tx_min), batch_type::load_aligned(tx_max) };
+            ib_y[0] = { batch_type::load_aligned(ty_min), batch_type::load_aligned(ty_max) };
+
+            // 清理并填充占位通道 (防止未初始化垃圾污染寄存器)
+            for(int k=1; k<4; ++k) {
+                ib_x[k] = { batch_type(1e30), batch_type(1e30) };
+                ib_y[k] = { batch_type(1e30), batch_type(1e30) };
             }
 
-            Interval_Batch x_interval = { xs::load_aligned(min_x), xs::load_aligned(max_x) };
-            Interval_Batch y_interval = { xs::load_aligned(min_y), xs::load_aligned(max_y) };
+            EvaluateRPN_Fast_IA(tokens, ib_x, ib_y, ib_res, 4, ia_workspace);
 
-            // 区间求值 (Double)
-            auto result = evaluate_rpn<Interval_Batch>(rpn_program_check, x_interval, y_interval);
-            auto should_keep_mask = (result.min <= 0.0) & (result.max >= 0.0);
+            auto alive = (ib_res[0].min <= 0.0) & (ib_res[0].max >= 0.0);
+            uint32_t mask = 0;
+            if (alive.get(0)) mask |= 1; if (alive.get(1)) mask |= 2;
+            if (alive.get(2)) mask |= 4; if (alive.get(3)) mask |= 8;
 
-            if (xs::any(should_keep_mask)) {
-                for (size_t i = 0; i < BATCH_SIZE; ++i) {
-                    if (should_keep_mask.get(i)) {
-                        const auto& task = task_lanes[i];
-                        if (task.world_w < min_pixel_width || std::abs(task.world_h) < min_pixel_height) {
-                            leaf_nodes.push_back(task); // 到达叶子节点
-                        } else {
-                            // 继续细分
-                            double w_half = task.world_w / 2.0;
-                            double h_half = task.world_h / 2.0;
-                            tasks.push({task.world_x, task.world_y, w_half, h_half});
-                            tasks.push({task.world_x + w_half, task.world_y, w_half, h_half});
-                            tasks.push({task.world_x, task.world_y + h_half, w_half, h_half});
-                            tasks.push({task.world_x + w_half, task.world_y + h_half, w_half, h_half});
-                        }
+            for (int k = 0; k < 4; ++k) {
+                if (mask & (1 << k)) {
+                    ImplicitTask c = { (k%2==0)?p.x:x_m, (k<2)?p.y:y_m, sub };
+                    if (c.size <= threshold) {
+                        if (sampling_count < MAX_POOL_SIZE) Pool_Sampling[sampling_count++] = c;
+                    } else {
+                        if (dst_count < MAX_POOL_SIZE) dst[dst_count++] = c;
                     }
                 }
             }
         }
-
-        // --- 标量尾部处理 ---
-        while (!tasks.empty()) {
-            QuadtreeTask task = tasks.top(); tasks.pop();
-            Interval<double> x_interval(task.world_x, task.world_x + task.world_w);
-            Interval<double> y_interval(task.world_y + task.world_h, task.world_y);
-            auto result = evaluate_rpn<Interval<double>>(rpn_program_check, x_interval, y_interval);
-
-            if (result.max >= 0.0 && result.min <= 0.0) {
-                if (task.world_w < min_pixel_width || std::abs(task.world_h) < min_pixel_height) {
-                    leaf_nodes.push_back(task);
-                } else {
-                    double w_half = task.world_w / 2.0;
-                    double h_half = task.world_h / 2.0;
-                    tasks.push({task.world_x, task.world_y, w_half, h_half});
-                    tasks.push({task.world_x + w_half, task.world_y, w_half, h_half});
-                    tasks.push({task.world_x, task.world_y + h_half, w_half, h_half});
-                    tasks.push({task.world_x + w_half, task.world_y + h_half, w_half, h_half});
-                }
-            }
-        }
-
-        if (tasks.empty()) {
-            break;
-        }
+        std::swap(src, dst);
+        src_count = dst_count;
     }
 
-    // 3. 并行计算叶子节点 (Rasterization)
-    oneapi::tbb::parallel_for_each(leaf_nodes.begin(), leaf_nodes.end(),
-        [&](const QuadtreeTask& leaf) {
-            ThreadCacheForTiling& cache = thread_local_caches.local();
-
-            // 计算像素范围 (Screen Pixel Index)
-            const double sx_start_f = (leaf.world_x - world_origin.x) / wppx;
-            const double sy_start_f = (leaf.world_y - world_origin.y) / wppy;
-            const double sx_end_f = (leaf.world_x + leaf.world_w - world_origin.x) / wppx;
-            const double sy_end_f = (leaf.world_y + leaf.world_h - world_origin.y) / wppy;
-
-            unsigned int x_start = static_cast<unsigned int>(std::floor(sx_start_f));
-            unsigned int y_start = static_cast<unsigned int>(std::floor(sy_start_f));
-            unsigned int x_end = static_cast<unsigned int>(std::ceil(sx_end_f));
-            unsigned int y_end = static_cast<unsigned int>(std::ceil(sy_end_f));
-
-            // 边界钳制
-            x_start = std::max(0u, x_start);
-            y_start = std::max(0u, y_start);
-            x_end = std::min((unsigned int)screen_width, x_end);
-            y_end = std::min((unsigned int)screen_height, y_end);
-
-            if (x_start >= x_end || y_start >= y_end) return;
-
-            // 执行核心绘制，传入 NDC Map
-            draw_points_in_tile(
-                concurrent_points,
-                world_origin, wppx, wppy,
-                rpn_program, rpn_program_check, func_idx,
-                x_start, x_end, y_start, y_end,
-                cache,
-                ndc_map // ★★★ 传入映射
-            );
-        }
-    );
-
-    // 4. 导出结果
-    std::vector<PointData> final_points(concurrent_points.begin(), concurrent_points.end());
-    results_queue->push({func_idx, std::move(final_points)});
+    // 运行采样阶段
+    Fused_Sample_Kernel(v, tokens, Pool_Sampling, sampling_count, queue);
 }

@@ -25,17 +25,14 @@
  * @param rpn_program 预编译的 RPN 指令流
  * @param results_queue [输出] 线程安全的点收集容器
  * @param func_idx 函数的唯一 ID (用于着色)
- * @param screen_width 屏幕像素宽度 (用于计算采样密度)
- * @param ndc_map NDC 映射参数包 (用于将结果从 World 转换到 Clip)
+
  */
 void process_explicit_chunk(
-
     double x_start_world, double x_end_world,
-    const AlignedVector<RPNToken>& rpn_program,
-    oneapi::tbb::concurrent_bounded_queue<FunctionResult>* results_queue,
+    const AlignedVector<RPNToken> &rpn_program,
+    oneapi::tbb::concurrent_bounded_queue<std::vector<PointData> > &results_queue,
     unsigned int func_idx,
-    double screen_width,
-    const NDCMap& ndc_map // ★★★ 新增：用于坐标空间转换
+    const ViewState &view
 );
 
 #endif //PLOTEXPLICIT_H
