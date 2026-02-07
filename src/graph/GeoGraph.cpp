@@ -178,42 +178,93 @@ uint32_t GeometryGraph::GetNodeID(const std::string& name) const {
     return GeoErrorStatus::ERR_ID_NOT_FOUND;
 }
 
-std::string GeometryGraph::GenerateNextName() {
+
+
+
+std::string GeometryGraph::GenerateNextName(GeoType::Type type) {
     while (true) {
-        // 1. 记录当前索引并递增，准备下一次尝试
-        uint32_t current_idx = next_name_index++;
-
-        char letter = static_cast<char>('a' + (current_idx % 26));
-        uint32_t cycle = current_idx / 26;
-
         std::string name;
-        if (cycle == 0) {
+
+        if (GeoType::is_point(type)) {
+            // --- 点类：A, B, C... Z, A1, B1... Z1, A2... ---
+            uint32_t idx = m_counters.point++;
+            char letter = static_cast<char>('A' + (idx % 26));
+            uint32_t suffix = idx / 26;
+
             name = std::string(1, letter);
+            if (suffix > 0) {
+                name += std::to_string(suffix);
+            }
+
+        } else if (GeoType::is_scalar(type)) {
+            // --- 标量类：a, b, c... z, a1, b1... z1, a2... ---
+            uint32_t idx = m_counters.scalar++;
+            char letter = static_cast<char>('a' + (idx % 26));
+            uint32_t suffix = idx / 26;
+
+            name = std::string(1, letter);
+            if (suffix > 0) {
+                name += std::to_string(suffix);
+            }
+
+        } else if (type == GeoType::LINE_SEGMENT) {
+            // --- 线段：l1, l2, l3... ---
+            name = "l" + std::to_string(m_counters.segment++);
+
+        } else if (type == GeoType::LINE_RAY) {
+            // --- 射线：R1, R2, R3... ---
+            name = "R" + std::to_string(m_counters.ray++);
+
+        } else if (GeoType::is_line(type)) {
+            // --- 其余直线类 (Straight, Perp, Parallel, Vertical)：L1, L2... ---
+            name = "L" + std::to_string(m_counters.straight_line++);
+
+        } else if (GeoType::is_circle(type)) {
+            // --- 圆与圆弧：C1, C2, C3... ---
+            name = "C" + std::to_string(m_counters.circle++);
+
+        } else if (type == GeoType::FUNC_EXPLICIT) {
+            // --- 显函数：f, g, h, p, q, s, r, f1, g1... ---
+            // 严格遵循 f,g,h,p,q,s,r 七个字母循环
+            static constexpr std::array<char, 7> explicit_letters = {'f', 'g', 'h', 'p', 'q', 's', 'r'};
+            uint32_t idx = m_counters.explicit_func++;
+            char letter = explicit_letters[idx % 7];
+            uint32_t suffix = idx / 7;
+
+            name = std::string(1, letter);
+            if (suffix > 0) {
+                name += std::to_string(suffix);
+            }
+
+        } else if (type == GeoType::FUNC_IMPLICIT) {
+            // --- 隐函数：eq1, eq2... ---
+            name = "eq" + std::to_string(m_counters.implicit_func++);
+
+        } else if (type == GeoType::FUNC_PARAMETRIC) {
+            // --- 参数方程：peq1, peq2... ---
+            name = "peq" + std::to_string(m_counters.parametric_func++);
+
+        } else if (type == GeoType::FUNC_INDUSTRIAL) {
+            // --- 工业函数：in1, in2... ---
+            name = "in" + std::to_string(m_counters.industrial_func++);
+
+        } else if (type == GeoType::FUNC_INDUSTRIAL_PARAMETRIC) {
+            // --- 工业参数方程：inp1, inp2... ---
+            name = "inp" + std::to_string(m_counters.industrial_param++);
+
+        } else if (type == GeoType::FUNC_COMPLEX) {
+            // --- 复变函数：complex1, complex2... ---
+            name = "complex" + std::to_string(m_counters.complex_func++);
+
         } else {
-            char buf[12];
-            buf[0] = letter;
-            auto [ptr, ec] = std::to_chars(buf + 1, buf + 12, cycle);
-            name = std::string(buf, ptr - buf);
+            // 兜底方案
+            static uint32_t unknown_idx = 1;
+            name = "_obj" + std::to_string(unknown_idx++);
         }
 
-        // 2. 💡 核心逻辑：区分大小写查重
-        // 如果地图里不包含这个名字，说明可用，直接返回
-        if (!name_to_id_map.contains(name)) {
-            return name;
-        }
-
-        // 如果重名（比如用户手动创建了一个叫 "a" 的点），
-        // 循环会继续，使用下一个 next_name_index 再次生成并校验
-    }
-}
-
-std::string GeometryGraph::GenerateInternalName() {
-    while (true) {
-        // 1. 递增内部计数器
-        uint32_t idx = ++next_internal_index;
-        std::string name = "_internal_scalar_" + std::to_string(idx);
-
-        // 2. 💡 查重校验
+        // 💡 查重校验
+        // 如果生成的默认名称（如 "A"）已经被用户手动创建的对象占用了，
+        // 循环会继续，递增对应的计数器并产生下一个名字（如 "B" 或 "A1"）
         if (!name_to_id_map.contains(name)) {
             return name;
         }

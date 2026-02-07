@@ -208,7 +208,7 @@ namespace GeoFactory {
         uint32_t id = graph.allocate_node();
         std::vector<uint32_t> parents;
         CompileChannelInternal(graph, id, 0, infix_expr, parents, false);
-        SetupNodeBase(graph, id, config, GeoType::SCALAR_INTERNAL, Solver_ScalarRPN, nullptr);
+        SetupNodeBase(graph, id, config, GeoType::SCALAR, Solver_ScalarRPN, nullptr);
         graph.LinkAndRank(id, parents);
         return id;
     }

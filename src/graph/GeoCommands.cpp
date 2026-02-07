@@ -77,7 +77,7 @@ static CommandPacket ExtractNodeToCommand(const GeoNode& node, const GeometryGra
             break;
         }
 
-        case GeoType::SCALAR_INTERNAL: {
+        case GeoType::SCALAR: {
             // 独立标量节点的公式存储在自己的通道 0 中
             pkt.op = (uint8_t)OpCode::CREATE_INTERNAL_SCALAR;
             pkt.s0 = node.channels[0].original_infix;

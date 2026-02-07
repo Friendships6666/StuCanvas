@@ -336,15 +336,18 @@ namespace GeoType {
 
 
         // --- 4. 函数/高级曲线类 (CAT_CURVE) ---
-        CAT_CURVE        = 0x0400,
+        CAT_FUNC        = 0x0400,
         FUNC_EXPLICIT    = 0x0401,
         FUNC_IMPLICIT    = 0x0402,
         FUNC_PARAMETRIC  = 0x0403,
+        FUNC_INDUSTRIAL = 0x0404,
+        FUNC_INDUSTRIAL_PARAMETRIC = 0x0405,
+        FUNC_COMPLEX    = 0x0406,
 
         // --- 5. 标量/测量类 (CAT_SCALAR) ---
         CAT_SCALAR       = 0x0500,
-        SCALAR_INTERNAL  = 0x0501,
-        SCALAR_MEASURE   = 0x0502,
+        SCALAR  = 0x0501,
+
 
         UNKNOWN          = 0x0000
     };
@@ -353,7 +356,7 @@ namespace GeoType {
     FORCE_INLINE inline bool is_point(uint32_t t)  { return (t & MASK_CAT) == CAT_POINT; }
     FORCE_INLINE inline bool is_line(uint32_t t)   { return (t & MASK_CAT) == CAT_LINE; }
     FORCE_INLINE inline bool is_circle(uint32_t t)  { return (t & MASK_CAT) == CAT_CIRCLE; }
-    FORCE_INLINE inline bool is_curve(uint32_t t)  { return (t & MASK_CAT) == CAT_CURVE; }
+    FORCE_INLINE inline bool is_func(uint32_t t)  { return (t & MASK_CAT) == CAT_FUNC; }
     FORCE_INLINE inline bool is_scalar(uint32_t t) { return (t & MASK_CAT) == CAT_SCALAR; }
 }
 // --- include/graph/GeoGraph.h ---
@@ -599,7 +602,7 @@ public:
     ViewState view;          // 当前活跃视口 (由 JS/Factory 修改)
     ViewState m_last_view;   // 上一帧计算后的视口备份
     uint32_t next_internal_index = 0; // 💡 新增：内部标量计数器
-    std::string GenerateInternalName(); // 💡 新增：生成 _internal_scalar_n
+
 
     std::vector<uint32_t> m_pending_seeds;
     void mark_as_seed(uint32_t id) {
@@ -618,6 +621,8 @@ public:
     uint32_t max_graph_rank = 0;
 
     std::vector<uint8_t> m_dirty_mask;
+
+
 
     GeometryGraph();
 
@@ -642,7 +647,7 @@ public:
         return NULL_NODE;;
     }
 
-    std::string GenerateNextName();
+    std::string GenerateNextName(GeoType::Type type);
     void RegisterNodeName(const std::string& name, uint32_t id);
     void UnregisterNodeName(const std::string& name);
     uint32_t GetNodeID(const std::string& name) const;
@@ -669,6 +674,22 @@ public:
 private:
     void UpdateBit(uint32_t rank, bool has_elements);
     void update_mapping_after_erase(size_t start_index);
+    struct NameCounters {
+        uint32_t point = 0;            // A, B, C...
+        uint32_t scalar = 0;           // a, b, c...
+        uint32_t segment = 1;          // l1, l2...
+        uint32_t straight_line = 1;    // L1, L2...
+        uint32_t ray = 1;              // R1, R2...
+        uint32_t circle = 1;           // C1, C2...
+        uint32_t explicit_func = 0;    // f, g, h...
+        uint32_t implicit_func = 1;    // eq1, eq2...
+        uint32_t parametric_func = 1;  // peq1, peq2...
+        uint32_t industrial_func = 1;  // in1, in2...
+        uint32_t industrial_param = 1; // inp1, inp2...
+        uint32_t complex_func = 1;     // complex1...
+    } m_counters;
+
+
 };
 struct GeoFunctionMeta {
     uint32_t start_index;           // 4 字节
