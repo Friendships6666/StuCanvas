@@ -1,7 +1,7 @@
 ﻿// --- 文件路径: src/graph/GeoSolver.cpp ---
 #include "../../include/graph/GeoSolver.h"
 #include "../../include/graph/GeoGraph.h"
-#include "../../include/CAS/RPN/ShuntingYard.h"
+#include "../../include/CAS/RPN/SyntaxChecker.h"
 #include <cmath>
 #include <limits>
 #include <algorithm>

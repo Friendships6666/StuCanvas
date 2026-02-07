@@ -21,18 +21,18 @@ set(SOURCE_FILES
         include/interval/interval.h
         include/CAS/RPN/RPN.h
         src/interval/intervalEvaluate.cpp
-        include/CAS/RPN/ShuntingYard.h
-                include/graph/GeoFactory.h
-        src/graph/GeoFactory.cpp
-        include/graph/GeoSolver.h
-        src/graph/GeoSolver.cpp
+        include/CAS/RPN/SyntaxChecker.h
+#                include/graph/GeoFactory.h
+#        src/graph/GeoFactory.cpp
+#        include/graph/GeoSolver.h
+#        src/graph/GeoSolver.cpp
 #
 #
-        include/plot/plotCall.h
-        src/plot/plotCall.cpp
-        include/plot/plotExplicit.h
-        src/plot/plotExplicit.cpp
-        include/plot/plotImplicit.h
+#        include/plot/plotCall.h
+#        src/plot/plotCall.cpp
+#        include/plot/plotExplicit.h
+#        src/plot/plotExplicit.cpp
+#        include/plot/plotImplicit.h
 
 #
 #        include/plot/plotLine.h
@@ -48,9 +48,11 @@ set(SOURCE_FILES
 #        include/functions/functions.h  # 注意：Linux 区分大小写，确保路径一致
 #        include/functions/lerp.h
 #
-        include/CAS/RPN/ShuntingYard.h
-        src/CAS/RPN/ShuntingYard.cpp
+        include/CAS/RPN/SyntaxChecker.h
+        src/CAS/RPN/SyntaxChecker.cpp
         src/plot/plotImplicit.cpp
+        include/CAS/RPN/FormulaNormalizer.h
+        src/CAS/RPN/FormulaNormalizer.cpp
         #        src/graph/GeoCommands.cpp
 #        include/graph/GeoCommands.h
 #        src/graph/interact/GeoInteract.cpp

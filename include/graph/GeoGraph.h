@@ -531,8 +531,38 @@ struct AxisIntersectionData {
     double value;   // 坐标数值 (世界空间绝对坐标)
 };
 
+
+namespace CAS::Parser {
+    // 1. 定义参数类型规则
+    enum class ArgType {
+        ID_ONLY,    // 仅名字 (A, Point1)
+        NUM_ONLY,   // 仅数字 (1, -0.5)
+        VAR_ONLY,   // 仅变量 (x, y, t)
+        MIXED,      // 名字 + 数字 (不含变量)
+        FULLY_MIXED // 名字 + 数字 + 变量
+    };
+
+    // 2. 定义函数元数据
+    struct FuncMeta {
+        std::vector<ArgType> pos_rules; // 对应位置的参数要求
+        bool variadic = false;          // 是否为变长参数（如 Area）
+        bool is_macro = false;          // 是否为宏函数（独占表达式）
+    };
+}
 class GeometryGraph {
 public:
+    // A. 静态硬编码函数（所有 graph 实例共享：sin, cos, ln 等）
+    static const std::unordered_map<std::string, CAS::Parser::FuncMeta> BUILT_IN_FUNCTIONS;
+
+    // B. 运行时动态函数（每个实例独有：用户定义的宏，特定插件函数）
+    std::unordered_map<std::string, CAS::Parser::FuncMeta> dynamic_functions;
+
+    // 辅助方法
+    void RegisterDynamicFunction(const std::string& name, const CAS::Parser::FuncMeta& meta);
+    void UnregisterDynamicFunction(const std::string& name);
+
+    // 统一查找接口
+    const CAS::Parser::FuncMeta* FindFunction(std::string_view name) const;
     static GeoNode NULL_NODE; // 这是一个全局或静态的无效节点
 
     Vec2 mouse_position;

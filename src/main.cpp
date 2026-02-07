@@ -1,57 +1,57 @@
 ﻿#include <iostream>
 #include <string>
-#include <giac.h>
+#include <vector>
+#include <iomanip>
+#include "../include/CAS/RPN/FormulaNormalizer.h"
+#include "../include/graph/GeoGraph.h"
 
-using namespace std;
-using namespace giac;
+using namespace CAS::Parser;
 
-// 封装一个简单的执行器：输入指令，输出结果字符串
-string execute(const string& command, context* ctx) {
-    try {
-        // 第一步：将字符串解析为 gen 对象（内部会处理 ASCIIMATH）
-        gen g(command, ctx);
+#define C_RESET   "\033[0m"
+#define C_GREEN   "\033[32m"
+#define C_YELLOW  "\033[33m"
+#define C_CYAN    "\033[36m"
+#define C_BOLD    "\033[1m"
 
-        // 第二步：执行运算
-        // 第二个参数 1 表示执行级别
-        gen result = eval(g, 1, ctx);
-
-        // 返回结果的打印形式
-        return result.print(ctx);
-    } catch (std::runtime_error& e) {
-        return string("Error: ") + e.what();
-    }
+void run_norm_test(const std::string& input, GeometryGraph& graph) {
+    std::string actual = FormulaNormalizer::Normalize(input, graph);
+    std::cout << "  " << std::left << std::setw(25) << ("[" + input + "]")
+              << " -> " << C_GREEN << "[" << actual << "]" << C_RESET << std::endl;
 }
 
 int main() {
-    context ctx;
+    GeometryGraph graph;
 
-    cout << "=== Giac 字符串指令测试 (ASCIIMATH 风格) ===" << endl;
+    std::cout << C_BOLD << C_CYAN << "=== FORMULA NORMALIZER: DECIMAL & SIGN FOLDING ===\n" << C_RESET;
 
-    // 1. 符号积分
-    // 直接写完整的指令字符串
-    string i1 = "int(x^2 * sin(x)*sin(x)*sin(x), x)";
-    cout << "积分 [In]: " << i1 << endl;
-    cout << "     [Out]: " << execute(i1, &ctx) << endl << endl;
+    // 1. 小数规范化测试
+    std::cout << "\n[DECIMAL NORMALIZATION]\n";
+    run_norm_test(".5", graph);             // 0.5
+    run_norm_test("5.", graph);             // 5.0
+    run_norm_test(".123 + 45.", graph);     // 0.123+45.0
+    run_norm_test("sin(.5)", graph);        // sin(0.5)
 
-    // 2. 符号极限
-    string l1 = "limit(sin(x)/x, x, 0)";
-    cout << "极限 [In]: " << l1 << endl;
-    cout << "     [Out]: " << execute(l1, &ctx) << endl << endl;
+    // 2. 负号与小数组合
+    std::cout << "\n[SIGNED DECIMALS]\n";
+    run_norm_test("-.5", graph);            // -0.5
+    run_norm_test("- .5", graph);           // -0.5 (去空格)
+    run_norm_test("1 - .5", graph);         // 1-0.5
+    run_norm_test("- - .5", graph);         // 0.5 (正号抵消)
+    run_norm_test("2 ^ -.5", graph);        // 2^-0.5
 
-    // 3. 数值积分 (使用 evalf 强制转浮点)
-    string n1 = "evalf(integrate(exp(-x^2), x, 0, 1))";
-    cout << "数值积分 [In]: " << n1 << endl;
-    cout << "         [Out]: " << execute(n1, &ctx) << endl << endl;
+    // 3. 极端符号链
+    std::cout << "\n[EXTREME SIGN FOLDING]\n";
+    run_norm_test("1----5", graph);         // 1+5 (4个负号)
+    run_norm_test("x+++++y", graph);        // x+y
+    run_norm_test("a + - + - b", graph);    // a+b (2个负号)
+    run_norm_test("1 - - - 1", graph);      // 1-1 (3个负号)
 
-    // 4. 方程求解 (演示 CAS 的强大)
-    string s1 = "solve(x^2 - 3x + 2 = 0, x)";
-    cout << "解方程 [In]: " << s1 << endl;
-    cout << "       [Out]: " << execute(s1, &ctx) << endl << endl;
+    // 4. 函数与赋值
+    std::cout << "\n[FUNCTIONS & EQUATIONS]\n";
+    run_norm_test("f( x ) = .5 * x", graph); // f(x)=0.5*x
+    run_norm_test("sin(- - .1)", graph);     // sin(0.1)
 
-    // 5. 矩阵运算
-    string m1 = "[[1,2],[3,4]]^2";
-    cout << "矩阵平方 [In]: " << m1 << endl;
-    cout << "         [Out]: " << execute(m1, &ctx) << endl << endl;
+    std::cout << "\n" << C_BOLD << C_YELLOW << "===============================================\n" << C_RESET;
 
     return 0;
 }

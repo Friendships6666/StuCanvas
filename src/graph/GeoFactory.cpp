@@ -2,7 +2,7 @@
 
 #include "../../include/graph/GeoFactory.h"
 #include "../../include/graph/GeoGraph.h"
-#include "../../include/CAS/RPN/ShuntingYard.h"
+#include "../../include/CAS/RPN/SyntaxChecker.h"
 #include "../../include/graph/GeoSolver.h"
 #include "../../include/plot/plotLine.h"
 #include "../../include/plot/plotCircle.h"

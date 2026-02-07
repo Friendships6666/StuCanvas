@@ -40,8 +40,48 @@ namespace {
 // =========================================================
 // 1. 构造与生命周期管理
 // =========================================================
+namespace CAS::Parser {
+    using AT = ArgType;
+}
 
-GeometryGraph::GeometryGraph() : view(), id_generator(1) {
+// 初始化静态内置函数库 (ISO 小写 + 基础几何查询)
+// src/graph/GeoGraph.cpp 内部初始化部分
+const std::unordered_map<std::string, CAS::Parser::FuncMeta> GeometryGraph::BUILT_IN_FUNCTIONS = {
+    // 数学函数：必须设为 4 (FULLY_MIXED) 以允许 x, y, t
+    {"sin",    {{(CAS::Parser::ArgType)4}, false, false}},
+    {"cos",    {{(CAS::Parser::ArgType)4}, false, false}},
+    {"tan",    {{(CAS::Parser::ArgType)4}, false, false}},
+    {"ln",     {{(CAS::Parser::ArgType)4}, false, false}},
+    {"log",    {{(CAS::Parser::ArgType)4}, false, false}},
+    {"atan2",  {{(CAS::Parser::ArgType)4, (CAS::Parser::ArgType)4}, false, false}},
+
+    // 几何查询：设为 0 (ID_ONLY)
+    {"Length", {{(CAS::Parser::ArgType)0, (CAS::Parser::ArgType)0}, false, false}},
+    {"Area",   {{(CAS::Parser::ArgType)0}, true, false}},
+
+    // 宏函数：设为 0 (ID_ONLY)，并标记 is_macro = true
+    {"CreateCircle", {{(CAS::Parser::ArgType)0, (CAS::Parser::ArgType)0}, false, true}}
+};
+
+const CAS::Parser::FuncMeta* GeometryGraph::FindFunction(std::string_view name) const {
+    std::string key(name);
+    // 1. 先找动态注册的
+    auto it_dyn = dynamic_functions.find(key);
+    if (it_dyn != dynamic_functions.end()) return &it_dyn->second;
+
+    // 2. 再找静态硬编码的
+    auto it_stat = BUILT_IN_FUNCTIONS.find(key);
+    if (it_stat != BUILT_IN_FUNCTIONS.end()) return &it_stat->second;
+
+    return nullptr;
+}
+
+void GeometryGraph::RegisterDynamicFunction(const std::string& name, const CAS::Parser::FuncMeta& meta) {
+    dynamic_functions[name] = meta;
+}
+
+
+GeometryGraph::GeometryGraph() : mouse_position(), view(), id_generator(1) {
     m_last_view.zoom = -1.0;
     // 构造函数逻辑，确保在头文件中没有重复定义
     buckets_all_heads.resize(128, NULL_ID);
