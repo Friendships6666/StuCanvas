@@ -1,173 +1,152 @@
 cmake_minimum_required(VERSION 3.16)
 project(GeoEngine LANGUAGES CXX C)
 
-# ---------------------------------------------------------
+# =========================================================
 # 1. 基础编译配置
-# ---------------------------------------------------------
+# =========================================================
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libstdc++ -static-libgcc")
 
-# ---------------------------------------------------------
-# 2. 显式定义源文件列表 (基于你提供的列表)
-# ---------------------------------------------------------
+# 压制 CMake 策略警告 (针对 FindBoost)
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 NEW)
+endif()
+
+# =========================================================
+# 2. 源文件列表
+# =========================================================
 set(SOURCE_FILES
         pch.h
         pch.cpp
         src/main.cpp
         include/graph/GeoGraph.h
-        src/graph/GeoGraph.cpp
-        include/interval/interval.h
-        include/CAS/RPN/RPN.h
-        src/interval/intervalEvaluate.cpp
-        include/CAS/RPN/SyntaxChecker.h
-#                include/graph/GeoFactory.h
-#        src/graph/GeoFactory.cpp
-#        include/graph/GeoSolver.h
-#        src/graph/GeoSolver.cpp
-#
-#
-#        include/plot/plotCall.h
-#        src/plot/plotCall.cpp
-#        include/plot/plotExplicit.h
-#        src/plot/plotExplicit.cpp
-#        include/plot/plotImplicit.h
-
-#
-#        include/plot/plotLine.h
-#        src/plot/plotLine.cpp
-#        include/plot/plotCircle.h
-#        src/plot/plotCircle.cpp
-
-
-#        include/CAS/RPN/MultiIntervalRPN.h
-#        include/interval/interval.h
-#        src/interval/intervalEvaluate.cpp
-#        include/interval/MultiInterval.h
-#        include/functions/functions.h  # 注意：Linux 区分大小写，确保路径一致
-#        include/functions/lerp.h
-#
-        include/CAS/RPN/SyntaxChecker.h
-        src/CAS/RPN/SyntaxChecker.cpp
-        src/plot/plotImplicit.cpp
-        include/CAS/RPN/FormulaNormalizer.h
-        src/CAS/RPN/FormulaNormalizer.cpp
-        #        src/graph/GeoCommands.cpp
-#        include/graph/GeoCommands.h
-#        src/graph/interact/GeoInteract.cpp
-#        include/graph/interact/GeoInteract.h
-#        src/grids/grids.cpp
-#        include/grids/grids.h
-#        src/graph/interact/preview/line/previewSegment.cpp
-#        include/graph/interact/preview/line/previewSegment.h
-#        src/graph/interact/preview/circle/circle_2points.cpp
-#        include/graph/interact/preview/circle/circle_2points.h
-#        include/graph/interact/preview/circle/circle_3points.h
-#        src/graph/interact/preview/circle/circle_3points.cpp
-#        include/graph/interact/preview/circle/circle_1point_1radius.h
-#        src/graph/interact/preview/circle/circle_1point_1radius.cpp
-#        include/graph/interact/preview/circle/circle_distance.h
-#        src/graph/interact/preview/circle/circle_distance.cpp
-#        include/graph/interact/preview/line/previewLine.h
-#        src/graph/interact/preview/line/previewLine.cpp
-#        include/graph/interact/preview/line/previewRay.h
-#        src/graph/interact/preview/line/previewRay.cpp
-#        src/graph/interact/preview/circle/arc_2points_1radius.cpp
-#        include/graph/interact/preview/circle/arc_2points_1radius.h
-#        src/graph/interact/preview/circle/arc_3points.cpp
-#        include/graph/interact/preview/circle/arc_3points.h
-#        src/graph/interact/preview/circle/arc_3points_circumarc.cpp
-#        include/graph/interact/preview/circle/arc_3points_circumarc.h
-#        include/graph/interact/preview/line/line_vertical.h
-#        src/graph/interact/preview/line/line_vertical.cpp
-#        src/graph/interact/preview/line/line_parallel.cpp
-#        include/graph/interact/preview/line/line_parallel.h
-
-
+        # 请根据需要取消注释下面的核心文件
+        # src/CAS/RPN/SyntaxChecker.cpp
+        # src/CAS/RPN/FormulaNormalizer.cpp
+        # src/graph/GeoGraph.cpp
+        # ...
 )
 
-# ---------------------------------------------------------
-# 3. 外部依赖配置 (Arch Linux 路径)
-# ---------------------------------------------------------
-set(GIAC_DIR "/home/giac")
-# 注意：我们将包含路径指向 src/giac 这一级，这样 <giac/headers/gen.h> 能通
-# 但为了支持 <giac/gen.h>，我们直接指向 headers 并配合软链接（见下文）
-set(GIAC_INC_DIR "${GIAC_DIR}/src/giac/headers")
-set(GIAC_LIB "${GIAC_DIR}/build/libjavagiac.so")
+# =========================================================
+# 3. 外部依赖配置 (Arch Linux 修复版)
+# =========================================================
+# 1. 查找 Dawn 库
+# 安装后，Dawn 会提供 CMake 配置文件
+find_package(Dawn REQUIRED)
 
-# 查找系统库
+# 2. 查找 GLFW（通常你也需要窗口系统）
+# 确保你已经 pacman -S glfw-x11 或 glfw-wayland
+find_package(glfw3 REQUIRED)
+# 3.1 PkgConfig (用于查找 GMP/MPFR)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GMP REQUIRED gmp)
+pkg_check_modules(MPFR REQUIRED mpfr)
+
+# 3.2 TBB & xsimd
 find_package(TBB REQUIRED)
 find_package(xsimd REQUIRED)
-find_package(Boost REQUIRED)
-find_library(GMP_LIB gmp REQUIRED)
-find_library(MPFR_LIB mpfr REQUIRED)
-find_library(SIMDJSON_LIB simdjson REQUIRED)
+# 3.5 CGAL (Header-only，但需要链接依赖)
+find_package(CGAL REQUIRED)
 
+# 3.6 Lua (标准包查找)
+find_package(Lua REQUIRED)
+
+# 3.7 REBOUND (手动查找 - 假设安装在 /usr/local)
+find_path(REBOUND_INCLUDE_DIR rebound.h PATHS /usr/local/include /usr/include)
+find_library(REBOUND_LIBRARY NAMES rebound PATHS /usr/local/lib /usr/lib)
+if(NOT REBOUND_INCLUDE_DIR OR NOT REBOUND_LIBRARY)
+    message(FATAL_ERROR "Could NOT find REBOUND library/headers. Did you run 'sudo make install'?")
+endif()
+# 3.3 simdjson
+find_package(simdjson REQUIRED)
+
+# 3.4 GSL
+find_package(GSL REQUIRED)
+
+# 3.5 SymEngine (使用自定义安装路径)
+set(SymEngine_DIR "/usr/local/lib/cmake/symengine")
+find_package(SymEngine REQUIRED)
+
+# 3.6 Eigen3
+find_package(Eigen3 REQUIRED)
+
+# 3.7 Boost (关键修复)
 # ---------------------------------------------------------
-# 4. 创建执行文件
+# 1. 强制使用 Module 模式，避开 Arch 上 Config 模式的路径问题
+set(Boost_NO_BOOST_CMAKE ON)
+# 2. 不请求特定组件(如 system/unit_test)，仅查找头文件核心
+#    Odeint 和 Multiprecision 都是 Header-only 的
+find_package(Boost REQUIRED)
 # ---------------------------------------------------------
+
+# =========================================================
+# 4. 构建目标
+# =========================================================
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
-# 配置预编译头文件 (PCH) - 大幅提升编译速度
-# CMake 会自动处理 pch.h 和 pch.cpp
+# 预编译头文件
 target_precompile_headers(${PROJECT_NAME} PRIVATE pch.h)
 
-# ---------------------------------------------------------
-# 5. 头文件、宏与选项
-# ---------------------------------------------------------
+# =========================================================
+# 5. 头文件路径与宏
+# =========================================================
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${PROJECT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/include
-        ${GIAC_INC_DIR}
+
+        ${EIGEN3_INCLUDE_DIR}
+        ${Boost_INCLUDE_DIRS}
+        ${GMP_INCLUDE_DIRS}
+        ${MPFR_INCLUDE_DIRS}
+        /usr/local/include  # 确保能找到手动编译的库头文件
+        ${REBOUND_INCLUDE_DIR}
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-        GIAC_GGB
-        IN_GIAC
         HAVE_LIBMPFR
         SIZEOF_VOID_P=8
-        GIAC_GENERIC_CONSTANTS
         SMARTPTR64
+        NDEBUG
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE
-        -O3
-        -march=native
-
-
-
-        -flto                # 链接时优化（跨文件优化）
-        -fomit-frame-pointer # 释放一个寄存器用于计算
-        -funroll-loops       # 激进的循环展开
-        -fpermissive
-        -fno-semantic-interposition
-
+        -O3 -march=native -flto
+        -fomit-frame-pointer
         -funroll-loops
-
+        -fno-semantic-interposition
 )
 target_link_options(${PROJECT_NAME} PRIVATE -O3 -march=native -flto)
-target_compile_definitions(${PROJECT_NAME} PRIVATE NDEBUG)
-# ---------------------------------------------------------
-# 6. 链接
-# ---------------------------------------------------------
+
+# =========================================================
+# 6. 链接库
+# =========================================================
 target_link_libraries(${PROJECT_NAME} PRIVATE
+        dawn::webgpu_dawn
+    dawn_native
+       dawn_proc
+        glfw
+        # 并行与向量化
         TBB::tbb
         xsimd
-        ${GIAC_LIB}
-        ${MPFR_LIB}
-        ${GMP_LIB}
-        ${SIMDJSON_LIB}
-)
+        Eigen3::Eigen
 
-# 配置运行时搜索路径，保证 .so 能被找到
-set_target_properties(${PROJECT_NAME} PROPERTIES
-        BUILD_WITH_INSTALL_RPATH TRUE
-        INSTALL_RPATH "${GIAC_DIR}/build"
-)
+        # 基础数学库 (通过 PkgConfig 变量链接)
+        ${MPFR_LIBRARIES}
+        ${GMP_LIBRARIES}
 
-# ---------------------------------------------------------
-# 10. (可选) 打印调试信息，方便排查路径错误
-# ---------------------------------------------------------
-message(STATUS "GIAC Headers: ${GIAC_INCLUDE_DIR}")
-message(STATUS "GIAC Lib: ${GIAC_LIBRARY}")
+        # JSON
+        simdjson::simdjson
+
+        # 科学计算
+        GSL::gsl
+        GSL::gslcblas
+        symengine
+
+        # Boost (只链接头文件接口，不需要 system/thread 库文件)
+        Boost::headers
+        CGAL::CGAL           # CGAL 核心库 (Header-only 也会有链接时需要的目标)
+        ${REBOUND_LIBRARY}   # Rebound 库
+        lua             # Lua 库
+)

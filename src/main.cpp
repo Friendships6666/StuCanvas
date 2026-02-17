@@ -1,57 +1,55 @@
-﻿#include <iostream>
-#include <string>
-#include <vector>
-#include <iomanip>
-#include "../include/CAS/RPN/FormulaNormalizer.h"
-#include "../include/graph/GeoGraph.h"
+﻿#include <webgpu/webgpu_cpp.h>
+#include <webgpu/webgpu_cpp_print.h>
 
-using namespace CAS::Parser;
+#include <cstdlib>
+#include <iostream>
 
-#define C_RESET   "\033[0m"
-#define C_GREEN   "\033[32m"
-#define C_YELLOW  "\033[33m"
-#define C_CYAN    "\033[36m"
-#define C_BOLD    "\033[1m"
+int main(int argc, char *argv[]) {
+    static constexpr auto kTimedWaitAny = wgpu::InstanceFeatureName::TimedWaitAny;
+    wgpu::InstanceDescriptor instanceDescriptor{
+        .requiredFeatureCount = 1,
+        .requiredFeatures = &kTimedWaitAny
+      };
 
-void run_norm_test(const std::string& input, GeometryGraph& graph) {
-    std::string actual = FormulaNormalizer::Normalize(input, graph);
-    std::cout << "  " << std::left << std::setw(25) << ("[" + input + "]")
-              << " -> " << C_GREEN << "[" << actual << "]" << C_RESET << std::endl;
-}
+    wgpu::Instance instance = wgpu::CreateInstance(&instanceDescriptor);
+    if (instance == nullptr) {
+        std::cerr << "Instance creation failed!\n";
+        return EXIT_FAILURE;
+    }
+    // Synchronously request the adapter.
+    wgpu::RequestAdapterOptions options = {};
+    options.powerPreference = wgpu::PowerPreference::HighPerformance; // 强制请求高性能显卡
 
-int main() {
-    GeometryGraph graph;
+    wgpu::Adapter adapter;
 
-    std::cout << C_BOLD << C_CYAN << "=== FORMULA NORMALIZER: DECIMAL & SIGN FOLDING ===\n" << C_RESET;
+    auto callback = [](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, const char *message, void *userdata) {
+        if (status != wgpu::RequestAdapterStatus::Success) {
+            std::cerr << "Failed to get an adapter:" << message;
+            return;
+        }
+        *static_cast<wgpu::Adapter *>(userdata) = adapter;
+    };
 
-    // 1. 小数规范化测试
-    std::cout << "\n[DECIMAL NORMALIZATION]\n";
-    run_norm_test(".5", graph);             // 0.5
-    run_norm_test("5.", graph);             // 5.0
-    run_norm_test(".123 + 45.", graph);     // 0.123+45.0
-    run_norm_test("sin(.5)", graph);        // sin(0.5)
 
-    // 2. 负号与小数组合
-    std::cout << "\n[SIGNED DECIMALS]\n";
-    run_norm_test("-.5", graph);            // -0.5
-    run_norm_test("- .5", graph);           // -0.5 (去空格)
-    run_norm_test("1 - .5", graph);         // 1-0.5
-    run_norm_test("- - .5", graph);         // 0.5 (正号抵消)
-    run_norm_test("2 ^ -.5", graph);        // 2^-0.5
+    auto callbackMode = wgpu::CallbackMode::WaitAnyOnly;
+    void *userdata = &adapter;
+    instance.WaitAny(instance.RequestAdapter(&options, callbackMode, callback, userdata), UINT64_MAX);
+    if (adapter == nullptr) {
+        std::cerr << "RequestAdapter failed!\n";
+        return EXIT_FAILURE;
+    }
 
-    // 3. 极端符号链
-    std::cout << "\n[EXTREME SIGN FOLDING]\n";
-    run_norm_test("1----5", graph);         // 1+5 (4个负号)
-    run_norm_test("x+++++y", graph);        // x+y
-    run_norm_test("a + - + - b", graph);    // a+b (2个负号)
-    run_norm_test("1 - - - 1", graph);      // 1-1 (3个负号)
+    wgpu::DawnAdapterPropertiesPowerPreference power_props{};
 
-    // 4. 函数与赋值
-    std::cout << "\n[FUNCTIONS & EQUATIONS]\n";
-    run_norm_test("f( x ) = .5 * x", graph); // f(x)=0.5*x
-    run_norm_test("sin(- - .1)", graph);     // sin(0.1)
+    wgpu::AdapterInfo info{};
+    info.nextInChain = &power_props;
 
-    std::cout << "\n" << C_BOLD << C_YELLOW << "===============================================\n" << C_RESET;
-
-    return 0;
+    adapter.GetInfo(&info);
+    std::cout << "VendorID: " << std::hex << info.vendorID << std::dec << "\n";
+    std::cout << "Vendor: " << info.vendor << "\n";
+    std::cout << "Architecture: " << info.architecture << "\n";
+    std::cout << "DeviceID: " << std::hex << info.deviceID << std::dec << "\n";
+    std::cout << "Name: " << info.device << "\n";
+    std::cout << "Driver description: " << info.description << "\n";
+    return EXIT_SUCCESS;
 }
