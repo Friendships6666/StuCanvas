@@ -14,10 +14,28 @@
 #include <cmath>
 
 #include "../../pch.h"
-#include "../CAS/RPN/RPN.h"
+
 
 #include "../graph/GeoCommands.h"
+enum class RPNTokenType {
+    // Variables and Constants
+    PUSH_CONST, PUSH_X, PUSH_Y, PUSH_T,
+    // Basic Arithmetic
+    ADD, SUB, MUL, DIV,
+    // Powers and Roots
+    POW, SQRT,
+    // Exponential and Logarithmic
+    EXP, LN, SAFE_LN, SAFE_EXP, CHECK_LN,
+    // Trigonometric
+    SIN, COS, TAN,
+    // Other
+    SIGN, ABS, CUSTOM_FUNCTION,STOP
+};
 
+struct RPNToken {
+    RPNTokenType type;
+    double value = 0.0;
+};
 // =========================================================
 // 1. 基础宏与常量定义
 // =========================================================
@@ -181,6 +199,8 @@ struct alignas(64) ViewState {
         };
     }
 
+
+
     // ==========================================
     // 4. 状态维护与同步函数
     // ==========================================
@@ -224,6 +244,162 @@ struct alignas(64) ViewState {
     }
 };
 
+
+struct alignas(64) ViewState3D {
+    // ==========================================
+    // 1. 基础配置 (由 Camera/JS 直接修改)
+    // ==========================================
+    Eigen::Vector3d eye = {0.0, 0.0, 5.0};
+    double yaw = -90.0;
+    double pitch = 0.0;
+
+    double fov_y = 45.0;
+    double aspect = 1.6; // width/height
+    double z_near = 0.1;
+    double z_far = 1000.0;
+
+    double screen_width = 2560.0;
+    double screen_height = 1600.0;
+
+    // 极致压缩常量 M (用于将 NDC 映射到 int16_t)
+    static constexpr double M = 32767.0;
+    static constexpr double InvM = 1.0 / 32767.0;
+
+    // ==========================================
+    // 2. 预计算派生参数 (核心：双精度存储，确保转换精度)
+    // ==========================================
+    Eigen::Matrix4d view_mat;
+    Eigen::Matrix4d proj_mat;
+    Eigen::Matrix4d vp_mat;      // View * Projection
+    Eigen::Matrix4d inv_vp_mat;  // 用于 ScreenToWorld (Unprojection)
+
+    // 视口变换辅助系数
+    double half_w, half_h;
+
+    // ==========================================
+    // 3. 极致优化的坐标转换成员函数
+    // ==========================================
+
+    // ① World → Screen (3D点到像素，包含深度测试前的坐标)
+    // 返回 Vector3d: x,y 为屏幕像素，z 为 WebGPU 标准深度 [0, 1]
+    FORCE_INLINE Eigen::Vector3d WorldToScreen(const Eigen::Vector3d& world_pos) const noexcept {
+        Eigen::Vector4d clip = vp_mat * world_pos.homogeneous();
+        double inv_w = 1.0 / clip.w();
+        double ndc_x = clip.x() * inv_w;
+        double ndc_y = clip.y() * inv_w;
+        double ndc_z = clip.z() * inv_w; // WebGPU: 0 to 1
+
+        return {
+            (ndc_x + 1.0) * half_w,
+            (1.0 - ndc_y) * half_h,
+            ndc_z
+        };
+    }
+
+    // ② Screen → World (接收像素坐标 sx, sy 和深度 sz)
+    // sz 为 GPU 深度缓冲中的值 [0, 1]
+    FORCE_INLINE Eigen::Vector3d ScreenToWorld(double sx, double sy, double sz) const noexcept {
+        double ndc_x = (sx / half_w) - 1.0;
+        double ndc_y = 1.0 - (sy / half_h);
+        Eigen::Vector4d clip_pos(ndc_x, ndc_y, sz, 1.0);
+        Eigen::Vector4d world_pos = inv_vp_mat * clip_pos;
+        return world_pos.head<3>() / world_pos.w();
+    }
+
+    // ③ World → Clip (3D点到压缩的 int16_t 空间)
+    // 将 NDC [-1,1] 映射到 [-M, M]，Z [0,1] 映射到 [0, M]
+    struct Vec3i16 { int16_t x, y, z; };
+    inline Vec3i16 WorldToClip(const Eigen::Vector3d& world_pos) const noexcept {
+        Eigen::Vector4d clip = vp_mat * world_pos.homogeneous();
+
+        // 简单的视锥体剔除保护
+        if (clip.w() <= 0.0001) return { -32768, -32768, -32768 };
+
+        double inv_w = 1.0 / clip.w();
+
+        // 映射到 [-M, M]
+        double x = clip.x() * inv_w * M;
+        double y = clip.y() * inv_w * M;
+        double z = clip.z() * inv_w * M; // WebGPU depth [0, 1] -> [0, M] or [-M, M] based on impl
+
+        // 饱和截断，防止 int16 溢出
+        auto saturate = [](double v) -> int16_t {
+            if (v > M) return (int16_t)M;
+            if (v < -M) return (int16_t)-M;
+            return (int16_t)v;
+        };
+
+        return { saturate(x), saturate(y), saturate(z) };
+    }
+
+    // ④ Clip → World (逆向还原)
+    FORCE_INLINE Eigen::Vector3d ClipToWorld(int16_t cx, int16_t cy, int16_t cz) const noexcept {
+        Eigen::Vector4d clip_pos(
+            static_cast<double>(cx) * InvM,
+            static_cast<double>(cy) * InvM,
+            static_cast<double>(cz) * InvM,
+            1.0
+        );
+        Eigen::Vector4d world_pos = inv_vp_mat * clip_pos;
+        return world_pos.head<3>() / world_pos.w();
+    }
+
+    // ⑤ Screen → Clip (像素快速转压缩 NDC)
+    FORCE_INLINE Vec3i16 ScreenToClip(double sx, double sy, double sz) const noexcept {
+        return {
+            static_cast<int16_t>(((sx / half_w) - 1.0) * M),
+            static_cast<int16_t>((1.0 - (sy / half_h)) * M),
+            static_cast<int16_t>(sz * M)
+        };
+    }
+
+    // ⑥ Clip → Screen (压缩 NDC 转像素)
+    FORCE_INLINE Eigen::Vector3d ClipToScreen(int16_t cx, int16_t cy, int16_t cz) const noexcept {
+        return {
+            (static_cast<double>(cx) * InvM + 1.0) * half_w,
+            (1.0 - static_cast<double>(cy) * InvM) * half_h,
+            static_cast<double>(cz) * InvM
+        };
+    }
+
+    // ==========================================
+    // 4. 状态维护与同步函数
+    // ==========================================
+
+
+    void UpdateMatrices(const Eigen::Matrix4f& viewF, const Eigen::Matrix4f& projF, const Eigen::Vector3f& eyePos) {
+        half_w = screen_width * 0.5;
+        half_h = screen_height * 0.5;
+
+        // 记录相机位置 (转为 double)
+        eye = eyePos.cast<double>();
+
+        // 将 float 矩阵转为 double 矩阵以供 CPU 端高精度计算
+        view_mat = viewF.cast<double>();
+        proj_mat = projF.cast<double>();
+
+        // 计算派生矩阵
+        vp_mat = proj_mat * view_mat;
+
+        // 求逆 (这是计算量最大的部分，每帧只做一次)
+        inv_vp_mat = vp_mat.inverse();
+    }
+
+    /**
+     * @brief 获取用于 GPU Uniform 的单精度矩阵
+     */
+    FORCE_INLINE Eigen::Matrix4f GetVPMatrixF() const noexcept {
+        return vp_mat.cast<float>();
+    }
+
+    FORCE_INLINE void copy_from(const ViewState3D& other) noexcept {
+        std::memcpy(this, &other, sizeof(ViewState3D));
+    }
+
+    FORCE_INLINE bool is_different_from(const ViewState3D& other) const noexcept {
+        return std::memcmp(this, &other, sizeof(ViewState3D)) != 0;
+    }
+};
 
 // 统一函数指针签名
 using SolverFunc = void(*)(GeoNode& self, GeometryGraph& graph);

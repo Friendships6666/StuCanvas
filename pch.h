@@ -3,7 +3,7 @@
 #define NOMINMAX
 #include <iostream>
 #include <vector>
-
+#include <Eigen/Dense>
 #include <string>
 #include <sstream>
 #include <cmath>
@@ -39,6 +39,7 @@ struct Vec2 { double x; double y; };
 struct Vec2f { float x; float y; };
 struct Vec2i { int16_t x, y; };
 struct PointData { int16_t x, y; };
+struct PointData3D { int16_t x, y,z,padding; };
 struct FunctionResult { Vec2i start, end; };
 
 #include <expected>
