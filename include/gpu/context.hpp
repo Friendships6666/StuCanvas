@@ -19,7 +19,7 @@ public:
     WGPUTextureFormat surfaceFormat = WGPUTextureFormat_Undefined;
     std::atomic<bool> isReady = false;
 
-    inline void update() {
+    inline void update() const {
         // 驱动异步回调（无论是 Dawn 还是 WASM 均需要 ProcessEvents）
         if (instance) wgpuInstanceProcessEvents(instance);
     }
@@ -37,12 +37,11 @@ public:
         canvasDesc.selector = s("#canvas");
         surfDesc.nextInChain = reinterpret_cast<WGPUChainedStruct*>(&canvasDesc);
 #else
-        // 💡 强制 X11 路径
         SDL_PropertiesID props = SDL_GetWindowProperties(window);
         static WGPUSurfaceSourceXlibWindow xlibSource = {};
         xlibSource.chain.sType = WGPUSType_SurfaceSourceXlibWindow;
         xlibSource.display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
-        xlibSource.window = (uint64_t)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+        xlibSource.window = static_cast<uint64_t>(SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
 
         if (!xlibSource.display) {
             printf("[GPU ERROR] Could not get X11 Display. Ensure SDL_VIDEODRIVER=x11\n");
@@ -94,8 +93,8 @@ public:
         config.format = surfaceFormat;
         config.usage = WGPUTextureUsage_RenderAttachment;
         config.alphaMode = WGPUCompositeAlphaMode_Auto;
-        config.width = (uint32_t)w;
-        config.height = (uint32_t)h;
+        config.width = static_cast<uint32_t>(w);
+        config.height = static_cast<uint32_t>(h);
         config.presentMode = WGPUPresentMode_Fifo;
         wgpuSurfaceConfigure(surface, &config);
     }
