@@ -49,6 +49,7 @@ set(SOURCE_FILES
         include/gpu/camera.hpp
         include/graph/GeoGraph.h
         include/plot/plotExplicit3D.hpp
+        include/gpu/app.hpp
 
 )
 
