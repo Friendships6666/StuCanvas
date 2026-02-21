@@ -42,7 +42,6 @@ set(SOURCE_FILES
         pch.h
         pch.cpp
         src/main.cpp
-        include/gpu/utils.hpp
         include/gpu/math_utils.hpp
         include/gpu/geometry.hpp
         include/gpu/context.hpp

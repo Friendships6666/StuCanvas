@@ -85,7 +85,6 @@ public:
         if (kb[SDL_SCANCODE_S]) camera.processKeyboard(BACKWARD, deltaTime);
         if (kb[SDL_SCANCODE_A]) camera.processKeyboard(LEFT, deltaTime);
         if (kb[SDL_SCANCODE_D]) camera.processKeyboard(RIGHT, deltaTime);
-        // 💡 补全 Space (上升) 和 Shift (下降)
         if (kb[SDL_SCANCODE_SPACE]) camera.processKeyboard(UP, deltaTime);
         if (kb[SDL_SCANCODE_LSHIFT]) camera.processKeyboard(DOWN, deltaTime);
 
@@ -97,25 +96,35 @@ public:
         plotExplicit3D(rpnProg, resultsQueue, 0, viewState, true);
         std::vector<PointData3D> points;
         if (resultsQueue.try_pop(points)) {
-            pointCount = (uint32_t)points.size();
+            pointCount = static_cast<uint32_t>(points.size());
             if (pointCount > 0) wgpuQueueWriteBuffer(gpu->queue, vBuf, 0, points.data(), pointCount * 8);
         }
     }
 
-    inline void render() {
+    inline void render()
+    {
         if (!isGpuResourcesInitialized) return;
-        WGPUSurfaceTexture surfTex; wgpuSurfaceGetCurrentTexture(gpu->surface, &surfTex);
-        if (surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal && surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) return;
+        WGPUSurfaceTexture surfTex;
+        wgpuSurfaceGetCurrentTexture(gpu->surface, &surfTex);
+        if (surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal && surfTex.status !=
+            WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal) return;
 
         WGPUTextureView backBuffer = wgpuTextureCreateView(surfTex.texture, nullptr);
         WGPUCommandEncoder encoder = wgpuDeviceCreateCommandEncoder(gpu->device, nullptr);
 
-        WGPURenderPassColorAttachment ca = { nullptr, msaaView, WGPU_DEPTH_SLICE_UNDEFINED, backBuffer, WGPULoadOp_Clear, WGPUStoreOp_Store, {0.02, 0.02, 0.02, 1.0} };
-        WGPURenderPassDepthStencilAttachment dsa = { nullptr, depthView, WGPULoadOp_Clear, WGPUStoreOp_Store, 1.0f, WGPU_FALSE, WGPULoadOp_Undefined, WGPUStoreOp_Undefined, 0, WGPU_FALSE };
-        WGPURenderPassDescriptor passDesc = { nullptr, s("RP"), 1, &ca, &dsa };
+        WGPURenderPassColorAttachment ca = {
+            nullptr, msaaView, WGPU_DEPTH_SLICE_UNDEFINED, backBuffer, WGPULoadOp_Clear, WGPUStoreOp_Store,
+            {0.02, 0.02, 0.02, 1.0}
+        };
+        WGPURenderPassDepthStencilAttachment dsa = {
+            nullptr, depthView, WGPULoadOp_Clear, WGPUStoreOp_Store, 1.0f, WGPU_FALSE, WGPULoadOp_Undefined,
+            WGPUStoreOp_Undefined, 0, WGPU_FALSE
+        };
+        WGPURenderPassDescriptor passDesc = {nullptr, s("RP"), 1, &ca, &dsa};
 
         WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(encoder, &passDesc);
-        if (pointCount > 0) {
+        if (pointCount > 0)
+        {
             wgpuRenderPassEncoderSetPipeline(pass, pipeline);
             wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vBuf, 0, pointCount * 8);
             wgpuRenderPassEncoderDraw(pass, pointCount, 1, 0, 0);
@@ -128,8 +137,10 @@ public:
         wgpuSurfacePresent(gpu->surface);
 #endif
 
-        wgpuCommandBufferRelease(cb); wgpuCommandEncoderRelease(encoder);
-        wgpuTextureViewRelease(backBuffer); wgpuTextureRelease(surfTex.texture);
+        wgpuCommandBufferRelease(cb);
+        wgpuCommandEncoderRelease(encoder);
+        wgpuTextureViewRelease(backBuffer);
+        wgpuTextureRelease(surfTex.texture);
     }
 
     inline void cleanup() {
