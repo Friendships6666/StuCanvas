@@ -687,7 +687,7 @@ bool ImGui_ImplWGPU_CreateDeviceObjects()
     WGPUShaderModule vertex_module = ImGui_ImplWGPU_CreateShaderModule(__shader_vert_wgsl);
     WGPUShaderModule pixel_module = ImGui_ImplWGPU_CreateShaderModule(__shader_frag_wgsl);
 
-    // 💡 修复：直接配置 VertexState (不再使用 WGPUProgrammableStageDescriptor)
+
     graphics_pipeline_desc.vertex.module = vertex_module;
 
     graphics_pipeline_desc.vertex.entryPoint = { "main", WGPU_STRLEN };
