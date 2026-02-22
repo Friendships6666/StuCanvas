@@ -61,6 +61,7 @@ set(SOURCE_FILES
         third_party/imgui/imgui_tables.cpp
         third_party/imgui/imgui_widgets.cpp
         third_party/imgui/imstb_textedit.h
+        include/gpu/gui.hpp
 
 )
 
