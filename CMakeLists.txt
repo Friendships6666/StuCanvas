@@ -91,7 +91,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
         NDEBUG
         O3
 )
-
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/assets
+        DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
 # =========================================================
 # 6. 链接库
 # =========================================================

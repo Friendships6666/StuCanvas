@@ -64,7 +64,6 @@ public:
 
     inline bool init() {
 #ifndef __EMSCRIPTEN__
-        // 强制 X11，规避 Linux Wayland 兼容性问题
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11");
 #endif
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) return false;
@@ -78,11 +77,35 @@ public:
         gpu = new GpuContext();
         if (!gpu->init(window)) return false;
 
-        // 初始化 ImGui 上下文
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
-        io.FontGlobalScale = 1.5f; // 高分屏字体放大
+
+        // 💡 1. 字体配置：加载外部中文字体
+        // 先确保字体边缘清晰，这在缩放时很有用
+        io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines;
+
+        // 加载你提供的 NotoSansSC-Regular.ttf
+        // 参数 2：字体大小设为 20.0f（你可以根据喜好调整）
+        // 参数 4：指定使用 ImGui 内置的“简体中文常用字符集”
+        ImFont* font = io.Fonts->AddFontFromFileTTF(
+            "assets/fonts/NotoSansSC-Regular.ttf",
+            20.0f,
+            nullptr,
+            io.Fonts->GetGlyphRangesChineseSimplifiedCommon()
+        );
+
+        // 安全检查：如果找不到字体文件，回退到默认设置并打印警告
+        if (font == nullptr) {
+            printf("[WARNING] Failed to load NotoSansSC-Regular.ttf! Please check the path.\n");
+            // 如果加载失败，为了防止瞎眼，稍微放大一下默认英文字体
+            io.FontGlobalScale = 1.5f;
+        } else {
+            printf("[DEBUG] Chinese font loaded successfully.\n");
+            // 字体加载成功后，如果有高分屏需要，可以微调整体缩放
+            // io.FontGlobalScale = 1.2f;
+        }
+
         ImGui::StyleColorsDark();
 
         if (ImGui_ImplSDL3_InitForOther(window)) {
@@ -112,42 +135,70 @@ public:
         }
     }
 
-    inline void update() {
+inline void update() {
         gpu->update();
         if (!gpu->isReady) return;
         if (!isGpuResourcesInitialized) initGpuResources();
 
         uint64_t now = SDL_GetTicks();
         deltaTime = (float)(now - lastFrameTime) / 1000.0f;
+
+        // 💡 修复：限制最大增量时间，防止卡顿后突然飞跃
         if (deltaTime > 0.05f) deltaTime = 0.05f;
         lastFrameTime = now;
 
         ImGuiIO& io = ImGui::GetIO();
+        bool isOperatingUI = io.WantCaptureMouse || io.WantCaptureKeyboard;
+
+        // 1. 处理相机移动（只有当没有操作 UI 时才响应键盘）
+        bool cameraMoved = false;
         if (!io.WantCaptureKeyboard) {
             const bool* kb = SDL_GetKeyboardState(NULL);
-            if (kb[SDL_SCANCODE_W]) camera.processKeyboard(FORWARD, deltaTime);
-            if (kb[SDL_SCANCODE_S]) camera.processKeyboard(BACKWARD, deltaTime);
-            if (kb[SDL_SCANCODE_A]) camera.processKeyboard(LEFT, deltaTime);
-            if (kb[SDL_SCANCODE_D]) camera.processKeyboard(RIGHT, deltaTime);
-            if (kb[SDL_SCANCODE_SPACE]) camera.processKeyboard(UP, deltaTime);
-            if (kb[SDL_SCANCODE_LSHIFT]) camera.processKeyboard(DOWN, deltaTime);
+            if (kb[SDL_SCANCODE_W]) { camera.processKeyboard(FORWARD, deltaTime); cameraMoved = true; }
+            if (kb[SDL_SCANCODE_S]) { camera.processKeyboard(BACKWARD, deltaTime); cameraMoved = true; }
+            if (kb[SDL_SCANCODE_A]) { camera.processKeyboard(LEFT, deltaTime); cameraMoved = true; }
+            if (kb[SDL_SCANCODE_D]) { camera.processKeyboard(RIGHT, deltaTime); cameraMoved = true; }
+            if (kb[SDL_SCANCODE_SPACE]) { camera.processKeyboard(UP, deltaTime); cameraMoved = true; }
+            if (kb[SDL_SCANCODE_LSHIFT]) { camera.processKeyboard(DOWN, deltaTime); cameraMoved = true; }
+        }
+
+        // 检查鼠标是否在 3D 视口内进行了拖拽旋转
+        if (!io.WantCaptureMouse && SDL_GetWindowRelativeMouseMode(window)) {
+            cameraMoved = true;
         }
 
         int pw, ph; SDL_GetWindowSizeInPixels(window, &pw, &ph);
         if (pw <= 0 || ph <= 0) return;
-        viewState.screen_width = (double)pw; viewState.screen_height = (double)ph;
-        viewState.UpdateMatrices(camera.getViewMatrix(), createPerspective(45.0f * 3.14159f / 180.0f, (float)pw/ph, 0.1f, 1000.0f), camera.position);
 
-        // 拷贝 ViewState 防并发竞争
-        ViewState3D threadSafeViewState = viewState;
-        plotExplicit3D(rpnProg, resultsQueue, 0, viewState, true);
-        std::vector<PointData3D> points;
-        if (resultsQueue.try_pop(points)) {
-            pointCount = static_cast<uint32_t>(points.size());
-            if (pointCount > 0) wgpuQueueWriteBuffer(gpu->queue, vBuf, 0, points.data(), pointCount * 8);
+        // 💡 核心优化：如果正在拖拽 UI，不要重新发送 3D 计算任务给 TBB！
+        // 因为 TBB 疯狂抢占 CPU 会导致主线程（负责处理 UI 鼠标事件）饿死，从而产生巨大延迟。
+        // 我们只在“相机移动了”或者“第一次初始化时”触发计算。
+        static bool first_compute = true;
+        if (cameraMoved || first_compute) {
+            viewState.screen_width = (double)pw; viewState.screen_height = (double)ph;
+            viewState.UpdateMatrices(camera.getViewMatrix(), createPerspective(45.0f * 3.14159f / 180.0f, (float)pw/ph, 0.1f, 1000.0f), camera.position);
+
+            ViewState3D threadSafeViewState = viewState;
+
+            // 💡 防堆积：如果之前算好的还没取走，就不发新的，防止 TBB 任务爆炸
+            if (resultsQueue.empty()) {
+                plotExplicit3D(rpnProg, resultsQueue, 0, threadSafeViewState, true);
+                first_compute = false;
+            }
         }
 
-        // 构建 UI 界面
+        // 2. 收割 TBB 数据（必须把 ownership 转移给类的成员 currentPointsCache）
+        std::vector<PointData3D> new_points;
+        if (resultsQueue.try_pop(new_points)) {
+            pointCount = static_cast<uint32_t>(new_points.size());
+            if (pointCount > 0) {
+                currentPointsCache = std::move(new_points);
+                wgpuQueueWriteBuffer(gpu->queue, vBuf, 0, currentPointsCache.data(), pointCount * sizeof(PointData3D));
+                wgpuQueueSubmit(gpu->queue, 0, nullptr); // 强制刷新 WebGPU 队列
+            }
+        }
+
+        // 3. ImGui 构建逻辑
         if (isImGuiWgpuInitialized) {
             ImGui_ImplWGPU_NewFrame();
             ImGui_ImplSDL3_NewFrame();
@@ -158,6 +209,7 @@ public:
                 if (ImGui::Begin("GeoEngine 系统终端", &showTestWindow)) {
                     ImGui::TextColored(ImVec4(0, 1, 0, 1), "系统状态: 稳定运行");
                     ImGui::Text("活跃顶点数: %u", pointCount);
+                    ImGui::Text("帧步长: %.1f ms", deltaTime * 1000.0f); // 监控帧率
                     ImGui::Separator();
                     ImGui::BulletText("点击深色背景: 锁定相机");
                     ImGui::BulletText("按 ESC 键: 释放鼠标");
