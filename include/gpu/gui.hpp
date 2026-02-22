@@ -25,7 +25,7 @@ public:
 
         // 加载字体
         io.Fonts->Flags |= ImFontAtlasFlags_NoBakedLines;
-        // 注意：WASM下需要确保此路径在虚拟文件系统中
+
         ImFont* font = io.Fonts->AddFontFromFileTTF(
             "assets/fonts/NotoSansSC-Regular.ttf",
             20.0f, nullptr, io.Fonts->GetGlyphRangesChineseSimplifiedCommon()
