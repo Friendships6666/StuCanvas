@@ -49,6 +49,18 @@ set(SOURCE_FILES
         include/graph/GeoGraph.h
         include/plot/plotExplicit3D.hpp
         include/gpu/app.hpp
+        third_party/imgui/backends/imgui_impl_sdl3.cpp
+        third_party/imgui/backends/imgui_impl_wgpu.cpp
+        third_party/imgui/imgui.cpp
+        third_party/imgui/imgui.h
+        third_party/imgui/imgui.cpp
+        third_party/imgui/imgui_internal.h
+        third_party/imgui/imconfig.h
+        third_party/imgui/imgui_demo.cpp
+        third_party/imgui/imgui_draw.cpp
+        third_party/imgui/imgui_tables.cpp
+        third_party/imgui/imgui_widgets.cpp
+        third_party/imgui/imstb_textedit.h
 
 )
 
