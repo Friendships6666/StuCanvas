@@ -212,7 +212,7 @@ private:
         int w, h; SDL_GetWindowSizeInPixels(window, &w, &h);
         gpu->configureSurface(w, h);
 
-        // 💡 这里不再需要 extern，直接访问同命名空间下的 INTERNAL_SHADER_CODE
+
         WGPUShaderSourceWGSL wgsl = {};
         wgsl.chain.sType = WGPUSType_ShaderSourceWGSL;
         wgsl.code = s(INTERNAL_SHADER_CODE);
