@@ -139,7 +139,7 @@ public:
         gui->drawTerminal(pointCount, deltaTime * 1000.0f);
     }
 
-    inline void render() {
+    inline void render() const {
         if (!isGpuResourcesInitialized) return;
         WGPUSurfaceTexture surfTex; wgpuSurfaceGetCurrentTexture(gpu->surface, &surfTex);
         if (surfTex.status != WGPUSurfaceGetCurrentTextureStatus_SuccessOptimal &&
