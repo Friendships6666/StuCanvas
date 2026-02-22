@@ -85,9 +85,16 @@ public:
         wgpuInstanceRequestAdapter(instance, &opt, {nullptr, WGPUCallbackMode_AllowProcessEvents, onAdapter, this, nullptr});
         return true;
     }
+    uint32_t lastWidth = 0;
+    uint32_t lastHeight = 0;
 
-    inline void configureSurface(int w, int h) const {
+    inline void configureSurface(int w, int h) { // 移除 const
         if (!device || !surface) return;
+        if (w <= 0 || h <= 0) return;
+
+        // 💡 优化：只有尺寸真的变了才重新配置，防止 SDL 发送重复事件导致闪烁
+        if (static_cast<uint32_t>(w) == lastWidth && static_cast<uint32_t>(h) == lastHeight) return;
+
         WGPUSurfaceConfiguration config = {};
         config.device = device;
         config.format = surfaceFormat;
@@ -97,8 +104,11 @@ public:
         config.height = static_cast<uint32_t>(h);
         config.presentMode = WGPUPresentMode_Fifo;
         wgpuSurfaceConfigure(surface, &config);
-    }
 
+        lastWidth = config.width;
+        lastHeight = config.height;
+        // printf("[GPU] Surface Reconfigured: %dx%d\n", w, h);
+    }
     inline ~GpuContext() {
         if (queue) wgpuQueueRelease(queue);
         if (surface) { if (device) wgpuSurfaceUnconfigure(surface); wgpuSurfaceRelease(surface); }
