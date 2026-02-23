@@ -1,0 +1,23 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    <!--
+       [大圆弧 Arc - 120° 强化版]
+       1. 几何：圆心 (22, 42)，半径严格 30，扫过 120 度张角
+       2. 姿态：对角线构图，红线从右下延伸至左上
+       3. 颜色：纯黑线条 (#000000) + 纯蓝锚点 (#0000FF)
+    -->
+
+    <!-- 1. 圆弧路径 (rx=ry=30, 大弧标志=0, 逆时针标志=0) -->
+    <!-- 坐标从 (51, 50) 扫到 (14, 13) -->
+    <path d="M 51 50 A 30 30 0 0 0 14 13"
+          stroke="#000000" stroke-width="4" fill="none" stroke-linecap="round" />
+
+    <!-- 2. 圆心定义点 (位于左下部) -->
+    <circle cx="22" cy="42" r="6" fill="#0000FF" stroke="#000000" stroke-width="2" />
+
+    <!-- 3. 弧起始点 (右下) -->
+    <circle cx="51" cy="50" r="6" fill="#0000FF" stroke="#000000" stroke-width="2" />
+
+    <!-- 4. 弧终止点 (左上) -->
+    <circle cx="14" cy="13" r="6" fill="#0000FF" stroke="#000000" stroke-width="2" />
+
+</svg>
