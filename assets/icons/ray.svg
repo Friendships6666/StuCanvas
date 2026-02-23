@@ -1,0 +1,17 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    <!--
+       [射线 Ray - 纯色版]
+       配色方案：
+       1. 线条：纯黑色 (#000000)
+       2. 锚点：纯蓝色 (#0000FF)
+    -->
+
+    <!-- 主直线：从起点 (16, 48) 出发，贯穿点2，延伸至 (58, 6)，纯黑色 -->
+    <line x1="16" y1="48" x2="58" y2="6" stroke="#000000" stroke-width="3.5" stroke-linecap="round" />
+
+    <!-- 锚点1 (端点)：纯蓝色填充，纯黑色描边 -->
+    <circle cx="16" cy="48" r="5.5" fill="#0000FF" stroke="#000000" stroke-width="2" />
+
+    <!-- 锚点2 (途经点)：纯蓝色填充，纯黑色描边 -->
+    <circle cx="44" cy="20" r="5.5" fill="#0000FF" stroke="#000000" stroke-width="2" />
+</svg>

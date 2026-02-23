@@ -62,6 +62,9 @@ set(SOURCE_FILES
         third_party/imgui/imgui_widgets.cpp
         third_party/imgui/imstb_textedit.h
         include/gpu/gui.hpp
+        third_party/nanosvg/nanosvg.h
+        third_party/nanosvg/nanosvgrast.h
+        include/gpu/svg_loader.hpp
 
 )
 

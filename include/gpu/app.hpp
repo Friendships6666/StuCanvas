@@ -7,7 +7,7 @@
 #include <oneapi/tbb/concurrent_queue.h>
 #include "../include/graph/GeoGraph.h"
 #include "../include/plot/plotExplicit3D.hpp"
-
+#include <gpu/svg_loader.hpp>
 // 💡 引入 ImGui
 #include <../third_party/imgui/imgui.h>
 #include <../third_party/imgui/backends/imgui_impl_sdl3.h>
@@ -37,6 +37,7 @@ fn fs_main(i: VertexOutput) -> @location(0) vec4f {
 
 class GeoApp {
 public:
+    gpu::IconTexture iconTestPoint;
     SDL_Window* window = nullptr;
     GpuContext* gpu = nullptr;
 
@@ -98,7 +99,7 @@ public:
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGui::StyleColorsDark();
-        ApplyCyberGlassTheme(); // 调用由 gui.hpp 提供的皮肤
+        ApplyLightTheme();
 
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -206,10 +207,11 @@ public:
             ImGui::NewFrame();
 
             // 调用由 gui.hpp 提供的菜单栏渲染函数
-            RenderMainMenuBar(
+            RenderCadRibbon(
                 [this](const char* cat, const char* item) { this->HandleMenuAction(cat, item); },
                 is3DMode,
-                io.Framerate
+                ImGui::GetIO().Framerate,
+                (ImTextureID)iconTestPoint.view // 传递图标指针
             );
 
             ImGui::Render();
@@ -265,6 +267,7 @@ public:
     }
 
     inline void cleanup() {
+        gpu::DestroyIconTexture(iconTestPoint);
         if (isImGuiWgpuInitialized) ImGui_ImplWGPU_Shutdown();
         if (isImGuiSdlInitialized) { ImGui_ImplSDL3_Shutdown(); ImGui::DestroyContext(); }
         std::vector<PointData3D> d; while(resultsQueue.try_pop(d));
@@ -313,6 +316,7 @@ private:
             ImGui_ImplWGPU_CreateDeviceObjects();
             isImGuiWgpuInitialized = true;
         }
+        iconTestPoint = gpu::LoadSvgToWebGPU(gpu->device, gpu->queue, "assets/icons/test.svg");
         isGpuResourcesInitialized = true;
     }
 
