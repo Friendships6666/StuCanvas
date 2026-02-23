@@ -52,7 +52,7 @@ public:
     AlignedVector<RPNToken> rpnProg;
     oneapi::tbb::concurrent_bounded_queue<std::vector<PointData3D>> resultsQueue;
 
-    // 显存缓存保护：确保异步写入时指针存活
+
     std::vector<PointData3D> currentPointsCache;
 
     uint64_t lastFrameTime = 0;
@@ -64,9 +64,9 @@ public:
     bool isImGuiWgpuInitialized = false;
     bool is3DMode = false;
 
-    // 💡 菜单动作分发函数
+
     void HandleMenuAction(const char* category, const char* item) {
-        // 在这里打印调试信息，确认 UI 交互生效
+
         printf("[APP ACTION] Category: %s | Item: %s\n", category, item);
 
         if (strcmp(category, "System") == 0 && strcmp(item, "Exit") == 0) {
@@ -140,7 +140,7 @@ public:
 
         if (io.WantCaptureMouse) return;
 
-        // 缩放自愈机制
+
         if (ev->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED && isGpuResourcesInitialized) {
             int w, h; SDL_GetWindowSizeInPixels(window, &w, &h);
             if (w > 0 && h > 0) {
