@@ -12,15 +12,15 @@
     -->
 
     <!-- 1. 基准大圆 (纯黑 #000000, 4px) -->
-    <circle cx="40" cy="24" r="18" stroke="#000000" stroke-width="4" fill="none" />
+    <circle cx="40" cy="24" r="18" stroke="#000000" stroke-width="1.5" fill="none" />
 
     <!-- 2. 陡峭切线 (红色 #FF0000, k=5) -->
-    <line x1="12.4" y1="57.8" x2="23.8" y2="1.0" stroke="#FF0000" stroke-width="4" stroke-linecap="round" />
+    <line x1="12.4" y1="57.8" x2="23.8" y2="1.0" stroke="#FF0000" stroke-width="1.5" stroke-linecap="round" />
 
     <!-- 3. 平缓切线 (红色 #FF0000, k=0.15) -->
-    <line x1="6.1" y1="51.2" x2="62" y2="42.8" stroke="#FF0000" stroke-width="4" stroke-linecap="round" />
+    <line x1="6.1" y1="51.2" x2="62" y2="42.8" stroke="#FF0000" stroke-width="1.5" stroke-linecap="round" />
 
     <!-- 4. 圆外定义点 (纯蓝 #0000FF) -->
-    <circle cx="14" cy="50" r="6.5" fill="#0000FF" stroke="#000000" stroke-width="2" />
+    <circle cx="14" cy="50" r="4.5" fill="#0000FF" stroke="#000000" stroke-width="2" />
 
 </svg>

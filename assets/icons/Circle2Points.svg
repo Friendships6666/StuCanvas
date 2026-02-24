@@ -1,19 +1,22 @@
 <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
     <!--
-       [圆：大尺寸版 Circle by Center and Point]
-       1. 圆：纯黑 (#000000)，半径放大至 30 (几乎填满 64x64 空间)
+       [圆：圆心与一点 Circle by Center and Point - 半径 25 版]
+       1. 圆：纯黑 (#000000)，半径 25，4px 粗
        2. 锚点：纯蓝 (#0000FF)，两处定义点
        3. 构图：圆心居中，定义点位于圆周 45° 位置
     -->
 
-    <!-- 1. 主圆环 (半径 30，4px 粗) -->
-    <circle cx="32" cy="32" r="30" stroke="#000000" stroke-width="4" fill="none" />
+    <!-- 1. 主圆环 (半径 25，4px 粗) -->
+    <circle cx="32" cy="32" r="25" stroke="#000000" stroke-width="1.5" fill="none" />
 
     <!-- 2. 圆心定义点 (位于正中心 32, 32) -->
-    <circle cx="32" cy="32" r="6" fill="#0000FF" stroke="#000000" stroke-width="2" />
+    <circle cx="32" cy="32" r="4.5" fill="#0000FF" stroke="#000000" stroke-width="2" />
 
     <!-- 3. 圆周定义点 (位于 45° 方向) -->
-    <!-- 坐标计算：32 + 30*cos(45°) ≈ 53.2, 32 - 30*sin(45°) ≈ 10.8 -->
-    <circle cx="53.2" cy="10.8" r="6" fill="#0000FF" stroke="#000000" stroke-width="2" />
+    <!-- 坐标计算：
+         x = 32 + 25 * cos(45°) ≈ 49.7
+         y = 32 - 25 * sin(45°) ≈ 14.3
+    -->
+    <circle cx="49.7" cy="14.3" r="4.5" fill="#0000FF" stroke="#000000" stroke-width="2" />
 
 </svg>

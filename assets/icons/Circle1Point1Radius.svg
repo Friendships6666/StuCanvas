@@ -1,19 +1,22 @@
 <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
     <!--
-       [圆：圆心与半径 Circle by Center and Radius]
-       1. 圆体：纯黑 (#000000)，半径 30
-       2. 半径线：纯红 (#FF0000)，代表输入的半径数值
+       [圆：圆心与半径 Circle by Center and Radius - 半径 25 版]
+       1. 圆体：纯黑 (#000000)，半径 25
+       2. 半径线：纯红 (#FF0000)，表示该圆由输入的长度数值定义
        3. 锚点：纯蓝 (#0000FF)，仅圆心一个定义点
     -->
 
-    <!-- 1. 主圆环 (半径 30，4px 粗) -->
-    <circle cx="32" cy="32" r="30" stroke="#000000" stroke-width="4" fill="none" />
+    <!-- 1. 主圆环 (半径 25，4px 粗) -->
+    <circle cx="32" cy="32" r="25" stroke="#000000" stroke-width="1.5" fill="none" />
 
     <!-- 2. 半径指示线 (纯红，4px 粗) -->
-    <!-- 从圆心 (32, 32) 到圆周 45° 位置 (53.2, 10.8) -->
-    <line x1="32" y1="32" x2="53.2" y2="10.8" stroke="#000000" stroke-width="4" stroke-linecap="round" />
+    <!-- 坐标计算 (45° 方向):
+         x = 32 + 25 * 0.707 ≈ 49.7
+         y = 32 - 25 * 0.707 ≈ 14.3
+    -->
+    <line x1="32" y1="32" x2="49.7" y2="14.3" stroke="#000000" stroke-width="1.5" stroke-linecap="round" />
 
     <!-- 3. 圆心定义点 (纯蓝) -->
-    <circle cx="32" cy="32" r="6" fill="#0000FF" stroke="#000000" stroke-width="2" />
+    <circle cx="32" cy="32" r="4.5" fill="#0000FF" stroke="#000000" stroke-width="2" />
 
 </svg>

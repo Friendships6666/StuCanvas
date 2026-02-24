@@ -11,20 +11,20 @@
        坐标：(18, 51) -> (52.6, 31)
        交点位于其中点 (35.3, 41)
     -->
-    <line x1="18" y1="51" x2="52.6" y2="31" stroke="#000000" stroke-width="4" stroke-linecap="round" />
+    <line x1="18" y1="51" x2="52.6" y2="31" stroke="#000000" stroke-width="1.5" stroke-linecap="round" />
 
     <!--
        红色中垂线 (Bisector Line)
        坐标：(21, 16) -> (41, 51)
        与黑线垂直且等长，位置随黑线下移
     -->
-    <line x1="21" y1="16" x2="41" y2="51" stroke="#FF0000" stroke-width="4" stroke-linecap="round" />
+    <line x1="21" y1="16" x2="41" y2="51" stroke="#FF0000" stroke-width="1.5" stroke-linecap="round" />
 
     <!--
        定义点 (Blue Anchor)
        位置：(27, 26.5)
        计算说明：红线在点上方延伸了约 12px，在交点下方延伸了约 12px，视觉极度平衡
     -->
-    <circle cx="27" cy="26.5" r="6" fill="#0000FF" stroke="#000000" stroke-width="2" />
+    <circle cx="27" cy="26.5" r="4.5" fill="#0000FF" stroke="#000000" stroke-width="2" />
 
 </svg>
