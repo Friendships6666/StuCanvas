@@ -18,6 +18,17 @@ set(CGAL_DO_NOT_WARN_ABOUT_CMAKE_VERSION ON)
 # A. 先找 CGAL (它会自动处理并查找 GMP 和 MPFR)
 # 不要在这里写 pkg_check_modules(GMP/MPFR)
 find_package(CGAL REQUIRED)
+# 1. 查找 Box2D
+find_package(box2d REQUIRED)
+
+# 2. 查找 FFmpeg (使用 PkgConfig)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+        libavcodec
+        libavformat
+        libswscale
+        libavutil
+)
 
 # B. 基础库
 find_package(glfw3 REQUIRED)
@@ -41,7 +52,7 @@ find_package(Boost REQUIRED)
 set(SOURCE_FILES
         pch.h
         pch.cpp
-        src/main.cpp
+
         include/gpu/math_utils.hpp
         include/gpu/geometry.hpp
         include/gpu/context.hpp
@@ -65,10 +76,17 @@ set(SOURCE_FILES
         third_party/nanosvg/nanosvg.h
         third_party/nanosvg/nanosvgrast.h
         include/gpu/svg_loader.hpp
+        src/RingsAndBalls.cpp
+        "include/video/config.hpp"
+        include/video/render_utils.hpp
+        include/video/ffmpeg_utils.hpp
+        include/video/physics_utils.hpp
+        webgpu.h
 
 )
 
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
+
 target_precompile_headers(${PROJECT_NAME} PRIVATE pch.h)
 
 # =========================================================
@@ -105,6 +123,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         # Dawn 库
 
         dawn::webgpu_dawn
+        box2d::box2d
+        PkgConfig::FFMPEG
 
 
         SDL3
@@ -117,6 +137,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         symengine
         Boost::headers
         CGAL::CGAL
+        /usr/lib/libbox2d.so   # <--- 直接在这里写绝对路径
+        m
 
 
 
