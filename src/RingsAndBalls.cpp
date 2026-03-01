@@ -6,10 +6,10 @@
 #include <algorithm>
 #include <set> // 必须包含
 #include <filesystem> // 必须包含
-#include "video/config.hpp"
-#include "video/render_utils.hpp"
-#include "video/ffmpeg_utils.hpp"
-#include "video/physics_utils.hpp"
+#include "video/RingsAndBalls/config.hpp"
+#include "../include/video/RingsAndBalls/render_utils.hpp"
+#include "../include/video/RingsAndBalls/ffmpeg_utils.hpp"
+#include "video/RingsAndBalls/physics_utils.hpp"
 #include <vector>
 #include <string>
 
