@@ -22,7 +22,7 @@ set(CMAKE_CUDA_COMPILER "/opt/cuda/bin/nvcc")
 find_package(CGAL REQUIRED)
 # 1. 查找 Box2D
 find_package(box2d REQUIRED)
-
+find_package(absl REQUIRED)
 # 2. 查找 FFmpeg (使用 PkgConfig)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
@@ -108,10 +108,26 @@ set(SOURCE_FILES
 )
 
 add_executable(${PROJECT_NAME}
+        third_party/imgui/backends/imgui_impl_sdl3.cpp
+        third_party/imgui/backends/imgui_impl_wgpu.cpp
+        third_party/imgui/imgui.cpp
+        third_party/imgui/imgui.h
+        third_party/imgui/imgui.cpp
+        third_party/imgui/imgui_internal.h
+        third_party/imgui/imconfig.h
+        third_party/imgui/imgui_demo.cpp
+        third_party/imgui/imgui_draw.cpp
+        third_party/imgui/imgui_tables.cpp
+        third_party/imgui/imgui_widgets.cpp
+        third_party/imgui/imstb_textedit.h
 
 
-        src/video2.cpp
-      )
+
+        src/StuScriptTest.cpp
+        include/StuScript/ast.hpp
+        include/StuScript/Sema.hpp
+        include/StuScript/Diagnostic.hpp
+)
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE pch.h)
 
@@ -172,12 +188,28 @@ pkg_check_modules(CUDA_NPPI REQUIRED nppi nppig nppicc)
 find_library(NPP_IG_LIB nppig HINTS /opt/cuda/lib64 /usr/lib)
 find_library(NPP_CC_LIB nppicc HINTS /opt/cuda/lib64 /usr/lib)
 find_library(NPP_C_LIB nppc HINTS /opt/cuda/lib64 /usr/lib)
+find_package(LLVM REQUIRED CONFIG)
+# 4. 指定 LLVM 需要用到的组件
+# 对于设计 DSL 和使用 ORC JIT，以下组件是必须的：
+
+# 输出找到的版本信息（可选，方便调试）
+message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
+message(STATUS "Using LLVMConfig.cmake from ${LLVM_DIR}")
+# 必须添加这一行，否则链接器找不到 -lLLVMCore
+link_directories(${LLVM_LIBRARY_DIRS})
+
+include_directories(${LLVM_INCLUDE_DIRS})
+add_definitions(${LLVM_DEFINITIONS})
 target_link_libraries(${PROJECT_NAME} PRIVATE
         CUDA::cudart
         CUDA::cufft
         ${NPP_IG_LIB}
         ${NPP_CC_LIB}
         ${NPP_C_LIB}
+        ${llvm_libs}
+
+        absl::flat_hash_map
+        absl::strings
 
         # Dawn 库
 
@@ -185,7 +217,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         box2d::box2d
         PkgConfig::FFMPEG
         ${OpenCV_LIBS}
-
+        /usr/lib/libLLVM.so
 
         SDL3
 

@@ -3162,7 +3162,7 @@ ImFont* ImFontAtlas::AddFontDefaultBitmap(const ImFontConfig* font_cfg_template)
 }
 
 // Load a minimal version of ProggyForever, designed to match our good old ProggyClean, but nicely scalable.
-// (See build script in https://github.com/ocornut/proggyforever for details)
+// (See build StuScript in https://github.com/ocornut/proggyforever for details)
 ImFont* ImFontAtlas::AddFontDefaultVector(const ImFontConfig* font_cfg_template)
 {
 #ifndef IMGUI_DISABLE_DEFAULT_FONT
@@ -4967,7 +4967,7 @@ const ImWchar*  ImFontAtlas::GetGlyphRangesJapanese()
     //     - http://www.moj.go.jp/MINJI/minji86.html
     //   - Available under the terms of the Creative Commons Attribution 4.0 International (CC BY 4.0).
     //     - https://creativecommons.org/licenses/by/4.0/legalcode
-    // - You can generate this code by the script at:
+    // - You can generate this code by the StuScript at:
     //   - https://github.com/vaiorabbit/everyday_use_kanji
     // - References:
     //   - List of Joyo Kanji
