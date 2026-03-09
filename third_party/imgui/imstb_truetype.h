@@ -147,7 +147,7 @@
 //   Immediately after this block comment are a series of sample programs.
 //
 //   After the sample programs is the "header file" section. This section
-//   includes documentation for each API function.
+//   include documentation for each API function.
 //
 //   Some important concepts to understand to use this library:
 //

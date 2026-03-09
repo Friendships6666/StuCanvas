@@ -123,10 +123,14 @@ add_executable(${PROJECT_NAME}
 
 
 
-        src/StuScriptTest.cpp
+
         include/StuScript/ast.hpp
         include/StuScript/Sema.hpp
         include/StuScript/Diagnostic.hpp
+        include/StuScript/Codegen.hpp
+        src/StuVMTest.cpp
+        include/StuVM/StuCompiler.hpp
+        include/StuVM/StuVM_Engine.hpp
 )
 
 target_precompile_headers(${PROJECT_NAME} PRIVATE pch.h)
@@ -218,6 +222,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         PkgConfig::FFMPEG
         ${OpenCV_LIBS}
         /usr/lib/libLLVM.so
+        /usr/lib/liblldELF.so
+        /usr/lib/liblldCommon.so
+        /usr/lib/liblldCOFF.so
+        /usr/lib/liblldMachO.so
 
         SDL3
 
@@ -230,6 +238,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Boost::headers
         CGAL::CGAL
         /usr/lib/libbox2d.so   # <--- 直接在这里写绝对路径
+        /usr/lib/libclang.so
+        /usr/lib/libclang-cpp.so
         m
 
 

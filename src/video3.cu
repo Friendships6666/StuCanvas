@@ -13,7 +13,7 @@
 namespace fs = std::filesystem;
 
 // --- 生产环境配置 ---
-const std::string INPUT_DIR = "/home/friendships666/PyProject/B站链接/bilibili_videos/264290艺术鉴赏局_Step2";
+const std::string INPUT_DIR = "/home/friendships666/PyProject/B站链接/bilibili_videos/694763095小追让你心情愉悦_Step1";
 const std::string OUTPUT_SUFFIX = "_Step3";
 const std::string FONT_PATH = "/home/friendships666/Projects/WASMTest/assets/fonts/NotoSansSC-Regular.ttf";
 const std::string TEXT_PATH = "/home/friendships666/Projects/WASMTest/assets/texts/simd_article.txt";

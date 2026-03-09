@@ -44,7 +44,7 @@ Index of this file:
 #ifndef IMGUI_DISABLE
 #include "imgui_internal.h"
 
-// System includes
+// System include
 #include <stdint.h>     // intptr_t
 
 //-------------------------------------------------------------------------
@@ -3629,7 +3629,7 @@ void ImParseFormatSanitizeForPrinting(const char* fmt_in, char* fmt_out, size_t 
     *fmt_out = 0; // Zero-terminate
 }
 
-// - For scanning we need to remove all width and precision fields and flags "%+3.7f" -> "%f". BUT don't strip types like "%I64d" which includes digits. ! "%07I64d" -> "%I64d"
+// - For scanning we need to remove all width and precision fields and flags "%+3.7f" -> "%f". BUT don't strip types like "%I64d" which include digits. ! "%07I64d" -> "%I64d"
 const char* ImParseFormatSanitizeForScanning(const char* fmt_in, char* fmt_out, size_t fmt_out_size)
 {
     const char* fmt_end = ImParseFormatFindEnd(fmt_in);
@@ -9313,7 +9313,7 @@ bool ImGui::BeginMenuEx(const char* label, const char* icon, bool enabled)
             want_close = true;
 
         // Open
-        // (note: at this point 'hovered' actually includes the NavDisableMouseHover == false test)
+        // (note: at this point 'hovered' actually include the NavDisableMouseHover == false test)
         if (!menu_is_open && pressed) // Click/activate to open
             want_open = true;
         else if (!menu_is_open && hovered && !moving_toward_child_menu) // Hover to open

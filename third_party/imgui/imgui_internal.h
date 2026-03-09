@@ -10,7 +10,7 @@ Index of this file:
 // [SECTION] Header mess
 // [SECTION] Forward declarations
 // [SECTION] Context pointer
-// [SECTION] STB libraries includes
+// [SECTION] STB libraries include
 // [SECTION] Macros
 // [SECTION] Generic helpers
 // [SECTION] ImDrawList support
@@ -474,7 +474,7 @@ IMGUI_API void*             ImFileLoadToMemory(const char* filename, const char*
 
 // Helpers: Maths
 IM_MSVC_RUNTIME_CHECKS_OFF
-// - Wrapper for standard libs functions. (Note that imgui_demo.cpp does _not_ use them to keep the code easy to copy)
+// - Wrapper for standard lib functions. (Note that imgui_demo.cpp does _not_ use them to keep the code easy to copy)
 #ifndef IMGUI_DISABLE_DEFAULT_MATH_FUNCTIONS
 #define ImFabs(X)           fabsf(X)
 #define ImSqrt(X)           sqrtf(X)

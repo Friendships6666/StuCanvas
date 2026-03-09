@@ -9,9 +9,9 @@
 namespace fs = std::filesystem;
 
 // --- 配置区 ---
-const std::string INPUT_DIR = "/home/friendships666/PyProject/B站链接/bilibili_videos/264290艺术鉴赏局";
+const std::string INPUT_DIR = "/home/friendships666/PyProject/B站链接/bilibili_videos/694763095小追让你心情愉悦";
 const std::string BGM_PATH = "assets/audios/video/VideoBGM.ogg";
-const int CONCURRENT_TASKS = 16;
+const int CONCURRENT_TASKS = 8;
 
 void process_video(const fs::path& input_path, const fs::path& output_dir) {
     std::string filename = input_path.filename().string();

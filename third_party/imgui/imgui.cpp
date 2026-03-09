@@ -121,7 +121,7 @@ CODE
  - Efficient runtime and memory consumption.
 
  Designed primarily for developers and content-creators, not the typical end-user!
- Some of the current weaknesses (which we aim to address in the future) includes:
+ Some of the current weaknesses (which we aim to address in the future) include:
 
  - Doesn't look fancy by default.
  - Limited layout features, intricate layouts are typically crafted in code.
@@ -185,7 +185,7 @@ CODE
 
  - REMOTE INPUTS SHARING & MOUSE EMULATION
    - PS4/PS5 users: Consider emulating a mouse cursor with DualShock touch pad or a spare analog stick as a mouse-emulation fallback.
-   - Consoles/Tablet/Phone users: Consider using a Synergy 1.x server (on your PC) + run examples/libs/synergy/uSynergy.c (on your console/tablet/phone app)
+   - Consoles/Tablet/Phone users: Consider using a Synergy 1.x server (on your PC) + run examples/lib/synergy/uSynergy.c (on your console/tablet/phone app)
      in order to share your PC mouse/keyboard.
    - See https://github.com/ocornut/imgui/wiki/Useful-Extensions#remoting for other remoting solutions.
    - On a TV/console system where readability may be lower or mouse inputs may be awkward, you may want to set the io.ConfigNavMoveSetMousePos flag.
@@ -1196,7 +1196,7 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
 #ifndef IMGUI_DISABLE
 #include "imgui_internal.h"
 
-// System includes
+// System include
 #include <stdio.h>      // vsnprintf, sscanf, printf
 #include <stdint.h>     // intptr_t
 
@@ -1205,7 +1205,7 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
 #define IMGUI_DISABLE_WIN32_DEFAULT_IME_FUNCTIONS
 #endif
 
-// [Windows] OS specific includes (optional)
+// [Windows] OS specific include (optional)
 #if defined(_WIN32) && defined(IMGUI_DISABLE_DEFAULT_FILE_FUNCTIONS) && defined(IMGUI_DISABLE_WIN32_DEFAULT_CLIPBOARD_FUNCTIONS) && defined(IMGUI_DISABLE_WIN32_DEFAULT_IME_FUNCTIONS) && defined(IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS) && !defined(IMGUI_DISABLE_WIN32_FUNCTIONS)
 #define IMGUI_DISABLE_WIN32_FUNCTIONS
 #endif
@@ -1229,7 +1229,7 @@ IMPLEMENTING SUPPORT for ImGuiBackendFlags_RendererHasTextures:
 #endif
 #endif
 
-// [Apple] OS specific includes
+// [Apple] OS specific include
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
@@ -12893,7 +12893,7 @@ void ImGui::FocusWindow(ImGuiWindow* window, ImGuiFocusRequestFlags flags)
     ImGuiWindow* focus_front_window = window ? window->RootWindow : NULL; // NB: In docking branch this is window->RootWindowDockStop
     ImGuiWindow* display_front_window = window ? window->RootWindow : NULL;
 
-    // Steal active widgets. Some of the cases it triggers includes:
+    // Steal active widgets. Some of the cases it triggers include:
     // - Focus a window while an InputText in another window is active, if focus happens before the old InputText can run.
     // - When using Nav to activate menu items (due to timing of activating on press->new window appears->losing ActiveId)
     if (g.ActiveId != 0 && g.ActiveIdWindow && g.ActiveIdWindow->RootWindow != focus_front_window)

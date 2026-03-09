@@ -5490,7 +5490,7 @@ const char* ImFontCalcWordWrapPositionEx(ImFont* font, float size, const char* t
     //  "aaa bbb, ccc,ddd. eee   fff. ggg!"
     //      ^    ^    ^   ^   ^__    ^    ^
 
-    // Skip extra blanks after a line returns (that includes not counting them in width computation)
+    // Skip extra blanks after a line returns (that include not counting them in width computation)
     // e.g. "Hello    world" --> "Hello" "World"
 
     // Cut words that cannot possibly fit within one line.

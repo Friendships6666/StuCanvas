@@ -15,7 +15,8 @@ enum class TokenType : uint8_t {
     COLON, SEMICOLON, COMMA, DOT, ARROW,
     EQUAL, PLUS, MINUS, STAR, SLASH, PERCENT, AMPERSAND, DOT_STAR,
     EQ_EQ, NOT_EQ, LT, GT, LT_EQ, GT_EQ,
-    EOF_TOKEN, INVALID
+    EOF_TOKEN, INVALID, FOR, AND_AND, OR_OR, BREAK, CONTINUE, ELIF,
+    AS
 };
 
 struct alignas(8) Token {
@@ -34,7 +35,7 @@ struct CharTraits {
         for (int i = 'a'; i <= 'z'; ++i) table[i] |= IsAlpha | IsIdent;
         for (int i = 'A'; i <= 'Z'; ++i) table[i] |= IsAlpha | IsIdent;
         table[(uint8_t)'_'] |= IsAlpha | IsIdent;
-        // 关键修复：支持 UTF-8 (128-255 字节全部视为标识符组成部分)
+        // 支持 UTF-8 (128-255 字节全部视为标识符组成部分)
         for (int i = 128; i < 256; ++i) table[i] |= IsAlpha | IsIdent;
         table[(uint8_t)' '] |= IsSpace;
         table[(uint8_t)'\t'] |= IsSpace;
@@ -105,7 +106,6 @@ private:
             case '+': return { {token_start, 1}, line_, col, TokenType::PLUS };
             case '*': return { {token_start, 1}, line_, col, TokenType::STAR };
             case '%': return { {token_start, 1}, line_, col, TokenType::PERCENT };
-            case '&': return { {token_start, 1}, line_, col, TokenType::AMPERSAND };
             case '-':
                 if (cur_ptr_ < end_ptr_ && *cur_ptr_ == '>') { cur_ptr_++; return { {token_start, 2}, line_, col, TokenType::ARROW }; }
                 return { {token_start, 1}, line_, col, TokenType::MINUS };
@@ -124,26 +124,62 @@ private:
             case '>':
                 if (cur_ptr_ < end_ptr_ && *cur_ptr_ == '=') { cur_ptr_++; return { {token_start, 2}, line_, col, TokenType::GT_EQ }; }
                 return { {token_start, 1}, line_, col, TokenType::GT };
+            case '&':
+                if (cur_ptr_ < end_ptr_ && *cur_ptr_ == '&') {
+                    cur_ptr_++;
+                    return { {token_start, 2}, line_, col, TokenType::AND_AND };
+                }
+                return { {token_start, 1}, line_, col, TokenType::AMPERSAND };
+            case '|':
+                if (cur_ptr_ < end_ptr_ && *cur_ptr_ == '|') {
+                    cur_ptr_++;
+                    return { {token_start, 2}, line_, col, TokenType::OR_OR };
+                }
+                break;
             case '"': return string(token_start);
         }
         return { {token_start, 1}, line_, col, TokenType::INVALID };
     }
 
-    Token identifier(const char* start) {
+    Token identifier(const char* start)
+    {
         while (cur_ptr_ < end_ptr_ && (GTraits.table[(uint8_t)*cur_ptr_] & CharTraits::IsIdent)) cur_ptr_++;
         llvm::StringRef text(start, cur_ptr_ - start);
         TokenType type = llvm::StringSwitch<TokenType>(text)
-            .Case("let", TokenType::LET).Case("fn", TokenType::FN).Case("return", TokenType::RETURN)
-            .Case("if", TokenType::IF).Case("else", TokenType::ELSE).Case("while", TokenType::WHILE)
-            .Case("struct", TokenType::STRUCT).Case("alias", TokenType::ALIAS).Default(TokenType::IDENTIFIER);
-        return { text, line_, static_cast<uint32_t>(start - line_start_) + 1, type };
+            .Case("as", TokenType::AS)
+            .Case("break", TokenType::BREAK)
+            .Case("continue", TokenType::CONTINUE)
+            .Case("elif", TokenType::ELIF)
+            .Case("let", TokenType::LET)
+            .Case("fn", TokenType::FN)
+            .Case("return", TokenType::RETURN)
+            .Case("if", TokenType::IF)
+            .Case("else", TokenType::ELSE)
+            .Case("while", TokenType::WHILE)
+            .Case("struct", TokenType::STRUCT)
+            .Case("for", TokenType::FOR)
+            .Case("alias", TokenType::ALIAS)
+            .Default(TokenType::IDENTIFIER);
+        return {text, line_, static_cast<uint32_t>(start - line_start_) + 1, type};
     }
 
     Token number(const char* start) {
+        // 1. 读取整数部分
         while (cur_ptr_ < end_ptr_ && (GTraits.table[(uint8_t)*cur_ptr_] & CharTraits::IsDigit)) cur_ptr_++;
+
+        // 2. 读取小数部分
         if (cur_ptr_ < end_ptr_ && *cur_ptr_ == '.' && (cur_ptr_ + 1 < end_ptr_) && (GTraits.table[(uint8_t)cur_ptr_[1]] & CharTraits::IsDigit)) {
-            cur_ptr_++; while (cur_ptr_ < end_ptr_ && (GTraits.table[(uint8_t)*cur_ptr_] & CharTraits::IsDigit)) cur_ptr_++;
+            cur_ptr_++;
+            while (cur_ptr_ < end_ptr_ && (GTraits.table[(uint8_t)*cur_ptr_] & CharTraits::IsDigit)) cur_ptr_++;
         }
+
+        // 3. 读取类型后缀 (例如 f32, u64, i8)
+        while (cur_ptr_ < end_ptr_ &&
+               ((GTraits.table[(uint8_t)*cur_ptr_] & CharTraits::IsAlpha) ||
+                (GTraits.table[(uint8_t)*cur_ptr_] & CharTraits::IsDigit))) {
+            cur_ptr_++;
+        }
+
         return { {start, static_cast<size_t>(cur_ptr_ - start)}, line_, static_cast<uint32_t>(start - line_start_) + 1, TokenType::NUMBER };
     }
 
@@ -158,4 +194,5 @@ private:
 };
 
 } // namespace StuScript
+
 #endif

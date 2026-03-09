@@ -10,7 +10,6 @@
 
 namespace StuScript {
 
-// --- 符号表条目 ---
 struct Symbol {
     Type type;
     bool is_lvalue;
@@ -19,47 +18,34 @@ struct Symbol {
 class Sema : public ASTVisitor<Sema> {
 public:
     explicit Sema(ASTContext& ctx, DiagEngine& diag) : ctx_(ctx), diag_(diag) {
-        // 确保全局作用域存在。SmallVector 预留 8 层嵌套深度在栈上
         scopes_.emplace_back();
     }
 
-    // 核心入口：返回 bool 表示语义分析是否完全通过
     bool analyze(const llvm::SmallVectorImpl<ASTNode*>& program) {
-        // 第一遍：预收集所有顶级定义，支持函数/结构体的相互引用
         for (auto* node : program) {
             if (node->kind == ASTKind::StructDecl) collectStruct(node);
             else if (node->kind == ASTKind::FnDecl) collectFunction(node);
         }
-
-        // 第二遍：递归检查所有具体逻辑
         for (auto* node : program) {
             visit(node);
         }
-
-        // 如果 DiagEngine 记录了 Error 级别的错误，分析即为失败
         return !diag_.hasError();
     }
 
 private:
     ASTContext& ctx_;
     DiagEngine& diag_;
-
-    // 作用域栈：使用 llvm::SmallVector 管理嵌套，使用 llvm::StringMap 优化字符串查找
     llvm::SmallVector<llvm::StringMap<Symbol>, 8> scopes_;
 
-    // 结构体元数据注册表
     struct StructInfo {
         llvm::StringMap<uint32_t> fieldToIndex;
         llvm::SmallVector<Type, 4> fieldTypes;
     };
     llvm::StringMap<StructInfo> structRegistry_;
 
-    // --- 内部辅助 ---
-
     void pushScope() { scopes_.emplace_back(); }
     void popScope() { scopes_.pop_back(); }
 
-    // RAII 作用域管理守卫
     struct ScopeGuard {
         Sema& s;
         ScopeGuard(Sema& sema) : s(sema) { s.pushScope(); }
@@ -68,12 +54,10 @@ private:
 
     void defineSymbol(llvm::StringRef name, Type ty, bool is_lvalue) {
         if (scopes_.empty()) return;
-        // StringMap 的插入效率极高
         scopes_.back().insert({name, Symbol{ty, is_lvalue}});
     }
 
     Symbol* resolveSymbol(llvm::StringRef name) {
-        // 从当前作用域向全局作用域逆向查找
         for (int i = static_cast<int>(scopes_.size()) - 1; i >= 0; --i) {
             auto it = scopes_[i].find(name);
             if (it != scopes_[i].end()) return &(it->second);
@@ -81,14 +65,14 @@ private:
         return nullptr;
     }
 
-    // 基础类型名映射：确保多语言诊断时显示干净的类型名称
     std::string_view getTypeName(const Type& t) {
         if (!t.name.empty()) return std::string_view(t.name.data(), t.name.size());
-        switch (t.kind) {
-            case Type::I32:    return "i32";
-            case Type::I64:    return "i64";
-            case Type::F32:    return "f32";
-            case Type::F64:    return "f64";
+switch (t.kind) {
+            case Type::I8:  return "i8";   case Type::U8:  return "u8";
+            case Type::I16: return "i16";  case Type::U16: return "u16";
+            case Type::I32: return "i32";  case Type::U32: return "u32";
+            case Type::I64: return "i64";  case Type::U64: return "u64";
+            case Type::F32: return "f32";  case Type::F64: return "f64";
             case Type::Bool:   return "bool";
             case Type::Void:   return "void";
             case Type::String: return "string";
@@ -108,22 +92,17 @@ private:
 
     void collectFunction(ASTNode* n) {
         auto& data = n->as.fn_decl;
-        // 函数名作为 RValue 存入全局作用域
         defineSymbol(data.name, data.ret_type, false);
     }
 
 public:
-    // --- 访问者实现 ---
-
     void visitVarDecl(ASTNode* n) {
         auto& data = n->as.var_decl;
         if (data.init) {
             visit(data.init);
-            // 自动类型推导
             if (data.type_ann.kind == Type::Unknown) {
                 data.type_ann = data.init->resolved_ty;
             }
-            // 显式类型检查
             else if (data.init->resolved_ty.kind != Type::Unknown && data.type_ann != data.init->resolved_ty) {
                 diag_.report(n->token.line, n->token.column, DiagCode::S_TypeMismatch, DiagLevel::Error,
                              getTypeName(data.type_ann), getTypeName(data.init->resolved_ty));
@@ -153,6 +132,41 @@ public:
         n->is_lvalue = sym->is_lvalue;
     }
 
+    // --- 新增：处理 as 类型强转的语义分析 ---
+    void visitCast(ASTNode* n) {
+        auto* srcNode = n->as.cast.expr;
+visit(srcNode); 
+
+        Type srcTy = srcNode->resolved_ty;
+        Type dstTy = n->as.cast.target_type;
+
+        if (srcTy.kind == Type::Unknown) return;
+
+        bool is_valid = false;
+        // 1. 同类型转换或数值类型互转 (i8-u64, f32-f64)
+        if (srcTy == dstTy || (srcTy.isNumeric() && dstTy.isNumeric())) {
+            is_valid = true;
+        }
+        // 2. 指针之间的重解释 (Bitcast)
+        else if (srcTy.isPointer() && dstTy.isPointer()) {
+            is_valid = true;
+        }
+        // 3. 指针与 64 位整数互转 (用于 HPC 偏移计算)
+        else if ((srcTy.isPointer() && dstTy.getBitWidth() == 64) ||
+                 (srcTy.kind == Type::I64 && dstTy.isPointer()) ||
+                 (srcTy.kind == Type::U64 && dstTy.isPointer())) {
+            is_valid = true;
+        }
+
+        if (!is_valid) {
+            diag_.report(n->token.line, n->token.column, DiagCode::S_TypeMismatch, DiagLevel::Error,
+                         getTypeName(srcTy), getTypeName(dstTy));
+        }
+        n->resolved_ty = dstTy;
+        n->is_lvalue = false;
+    }
+
+    // 纯粹的二元运算，剥离了 ArrayAccess
     void visitBinary(ASTNode* n) {
         visit(n->as.binary.left);
         visit(n->as.binary.right);
@@ -167,7 +181,7 @@ public:
 
         if (n->token.type == TokenType::EQUAL) {
             if (!L->is_lvalue) {
-                diag_.report(n->token.line, n->token.column, DiagCode::S_NotAnLValue, DiagLevel::Error);
+diag_.report(n->token.line, n->token.column, DiagCode::S_NotAnLValue, DiagLevel::Error);
             }
             if (L->resolved_ty != R->resolved_ty) {
                 diag_.report(n->token.line, n->token.column, DiagCode::S_TypeMismatch, DiagLevel::Error,
@@ -175,23 +189,45 @@ public:
             }
             n->resolved_ty = L->resolved_ty;
             n->is_lvalue = true;
-        } else if (n->token.type == TokenType::LBRACKET) {
-            if (L->resolved_ty.pointer_level == 0) {
-                diag_.report(n->token.line, n->token.column, DiagCode::S_InvalidDereference, DiagLevel::Error);
-                n->resolved_ty = Type::getBasic(Type::Unknown);
-            } else {
-                n->resolved_ty = L->resolved_ty;
-                n->resolved_ty.pointer_level--;
-            }
-            n->is_lvalue = true;
         } else {
             if (L->resolved_ty != R->resolved_ty) {
-                diag_.report(n->token.line, n->token.column, DiagCode::S_TypeMismatch, DiagLevel::Error,
+diag_.report(n->token.line, n->token.column, DiagCode::S_TypeMismatch, DiagLevel::Error,
                              getTypeName(L->resolved_ty), getTypeName(R->resolved_ty));
             }
             n->resolved_ty = L->resolved_ty;
             n->is_lvalue = false;
         }
+    }
+
+    // 专设的 ArrayAccess 检查逻辑
+    void visitArrayAccess(ASTNode* n) {
+        visit(n->as.binary.left);  // Array
+visit(n->as.binary.right); // Index
+
+        auto* L = n->as.binary.left;
+        auto* R = n->as.binary.right;
+
+        if (L->resolved_ty.kind == Type::Unknown || R->resolved_ty.kind == Type::Unknown) {
+            n->resolved_ty = Type::getBasic(Type::Unknown);
+            return;
+        }
+
+        // 数组下标在 HPC 中必须是整数类型
+        if (!R->resolved_ty.isInteger()) {
+            diag_.report(n->token.line, n->token.column, DiagCode::S_TypeMismatch, DiagLevel::Error,
+                         "integer index", getTypeName(R->resolved_ty));
+        }
+        if (L->resolved_ty.pointer_level == 0) {
+            diag_.report(n->token.line, n->token.column, DiagCode::S_InvalidDereference, DiagLevel::Error);
+            n->resolved_ty = Type::getBasic(Type::Unknown);
+        } else {
+            // 完美推导：*f32 -> 降级为 f32
+            n->resolved_ty = L->resolved_ty;
+            n->resolved_ty.pointer_level--;
+        }
+
+        // 核心：标记为左值，Codegen 才会去 load 它！
+        n->is_lvalue = true;
     }
 
     void visitMember(ASTNode* n) {
@@ -246,10 +282,12 @@ public:
         } else if (n->token.type == TokenType::AMPERSAND) {
             if (!n->as.unary.target->is_lvalue) {
                 diag_.report(n->token.line, n->token.column, DiagCode::S_NotAnLValue, DiagLevel::Error);
+                n->resolved_ty = Type::getBasic(Type::Unknown);
+            } else {
+                n->resolved_ty = targetTy;
+                n->resolved_ty.pointer_level++;
+                n->is_lvalue = false;
             }
-            n->resolved_ty = targetTy;
-            n->resolved_ty.pointer_level++;
-            n->is_lvalue = false;
         } else {
             n->resolved_ty = targetTy;
             n->is_lvalue = false;
@@ -263,10 +301,30 @@ public:
 
     void visitLiteral(ASTNode* n) {
         if (n->token.type == TokenType::NUMBER) {
-            if (n->token.lexeme.find('.') != llvm::StringRef::npos) {
-                n->resolved_ty = Type::getBasic(Type::F32);
+llvm::StringRef lexeme = n->token.lexeme;
+            // 提取数值与后缀 (如 100u64)
+            size_t suffix_pos = lexeme.find_first_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
+            llvm::StringRef num_part = (suffix_pos == llvm::StringRef::npos) ? lexeme : lexeme.substr(0, suffix_pos);
+            llvm::StringRef suffix = (suffix_pos == llvm::StringRef::npos) ? "" : lexeme.substr(suffix_pos);
+            bool has_dot = num_part.find('.') != llvm::StringRef::npos;
+
+            if (suffix.empty()) {
+                n->resolved_ty = Type::getBasic(has_dot ? Type::F64 : Type::I32);
             } else {
-                n->resolved_ty = Type::getBasic(Type::I32);
+                if (suffix == "f32")      n->resolved_ty = Type::getBasic(Type::F32);
+                else if (suffix == "f64") n->resolved_ty = Type::getBasic(Type::F64);
+                else if (suffix == "i8")  n->resolved_ty = Type::getBasic(Type::I8);
+                else if (suffix == "u8")  n->resolved_ty = Type::getBasic(Type::U8);
+                else if (suffix == "i16") n->resolved_ty = Type::getBasic(Type::I16);
+                else if (suffix == "u16") n->resolved_ty = Type::getBasic(Type::U16);
+                else if (suffix == "i32") n->resolved_ty = Type::getBasic(Type::I32);
+                else if (suffix == "u32") n->resolved_ty = Type::getBasic(Type::U32);
+                else if (suffix == "i64") n->resolved_ty = Type::getBasic(Type::I64);
+                else if (suffix == "u64") n->resolved_ty = Type::getBasic(Type::U64);
+                else {
+                    diag_.report(n->token.line, n->token.column, DiagCode::S_TypeMismatch, DiagLevel::Error, "Valid numeric suffix", suffix);
+                    n->resolved_ty = Type::getBasic(Type::Unknown);
+                }
             }
         } else if (n->token.type == TokenType::STRING) {
             n->resolved_ty = Type::getBasic(Type::String);
@@ -275,19 +333,48 @@ public:
     }
 
     void visitIf(ASTNode* n) {
-        visit(n->as.if_stmt.condition);
-        visit(n->as.if_stmt.then_stmt);
-        if (n->as.if_stmt.else_stmt) visit(n->as.if_stmt.else_stmt);
+        for (auto& branch : n->as.if_stmt.branches) {
+            if (branch.condition) {
+                visit(branch.condition);
+                // 确保 condition 返回的是布尔型或数字型
+                if (branch.condition->resolved_ty.kind == Type::Struct) {
+                    diag_.report(n->token.line, n->token.column, DiagCode::S_TypeMismatch, DiagLevel::Error,
+                                 "bool/numeric", getTypeName(branch.condition->resolved_ty));
+                }
+            }
+            visit(branch.body);
+        }
+    }
+
+    void visitFor(ASTNode* n) {
+        ScopeGuard guard(*this);
+        if (n->as.for_stmt.init) visit(n->as.for_stmt.init);
+        if (n->as.for_stmt.condition) {
+            visit(n->as.for_stmt.condition);
+            if (n->as.for_stmt.condition->resolved_ty.kind == Type::Struct) {
+                diag_.report(n->token.line, n->token.column, DiagCode::S_TypeMismatch, DiagLevel::Error,
+                             "bool/numeric", getTypeName(n->as.for_stmt.condition->resolved_ty));
+            }
+        }
+        if (n->as.for_stmt.update) visit(n->as.for_stmt.update);
+        visit(n->as.for_stmt.body);
     }
 
     void visitWhile(ASTNode* n) {
         visit(n->as.while_stmt.condition);
+        if (n->as.while_stmt.condition->resolved_ty.kind == Type::Struct) {
+            diag_.report(n->token.line, n->token.column, DiagCode::S_TypeMismatch, DiagLevel::Error,
+                         "bool/numeric", getTypeName(n->as.while_stmt.condition->resolved_ty));
+        }
         visit(n->as.while_stmt.body);
     }
 
     void visitReturn(ASTNode* n) {
         if (n->as.return_value) visit(n->as.return_value);
     }
+
+    void visitBreak(ASTNode* n) {}
+    void visitContinue(ASTNode* n) {}
 
     void visitCall(ASTNode* n) {
         visit(n->as.call.callee);

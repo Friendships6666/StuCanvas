@@ -1,149 +1,157 @@
 #include <iostream>
-#include <cstdio>
-#include <string_view>
+#include <string>
 
-// 引入编译器各组件
+// LLVM 核心
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/TargetParser/Host.h"
+
+// StuScript 组件
 #include "StuScript/lexer.hpp"
 #include "StuScript/ast.hpp"
 #include "StuScript/parser.hpp"
 #include "StuScript/Sema.hpp"
 #include "StuScript/Diagnostic.hpp"
+#include "StuScript/Codegen.hpp"
 
 using namespace StuScript;
 
-// --- 1. 国际化展示层 (展示层才允许 I/O 操作) ---
-enum class Lang { CN, EN };
-
-void translateAndPrint(const Diagnostic& d, Lang lang) {
-    // 高性能安全打印：处理非空结尾的 std::string_view
-    auto safe_print = [](std::string_view sv) {
-        if (sv.empty()) printf("?");
-        else printf("%.*s", static_cast<int>(sv.size()), sv.data());
-    };
-
-    if (lang == Lang::CN) {
-        printf("错误 [%u:%u] (代码 %u): ", d.line, d.col, static_cast<uint16_t>(d.code));
-        switch (d.code) {
-            case DiagCode::P_UnexpectedToken:
-                printf("意外的符号 '"); safe_print(d.args[0]); printf("'"); break;
-            case DiagCode::S_UndefinedVariable:
-                printf("变量 '"); safe_print(d.args[0]); printf("' 未定义"); break;
-            case DiagCode::S_TypeMismatch:
-                printf("类型不匹配: 期望 '"); safe_print(d.args[0]);
-                printf("', 实际为 '"); safe_print(d.args[1]); printf("'"); break;
-            case DiagCode::S_MemberNotFound:
-                printf("结构体 '"); safe_print(d.args[0]);
-                printf("' 中找不到成员 '"); safe_print(d.args[1]); printf("'"); break;
-            case DiagCode::S_NotAnLValue:
-                printf("赋值错误: 左侧必须是一个可写入的变量"); break;
-            case DiagCode::S_InvalidDereference:
-                printf("无法解引用: 对象不是指针类型"); break;
-            default: printf("语义解析阶段发现异常"); break;
-        }
-    } else {
-        printf("Error [%u:%u] (Code %u): ", d.line, d.col, static_cast<uint16_t>(d.code));
-        // ... 此处可扩展英文、日文等 10 种语言分支
-        printf("General compilation error.");
+// 辅助：打印编译错误
+void dumpDiagnostics(const DiagEngine& diag) {
+    for (const auto& d : diag.getDiagnostics()) {
+        printf("Error [%u:%u] (Code %u): %.*s %.*s\n",
+               d.line, d.col, (uint32_t)d.code,
+               (int)d.args[0].size(), d.args[0].data(),
+               (int)d.args[1].size(), d.args[1].data());
     }
-    printf("\n");
 }
 
-// --- 2. AST 打印机 (用于验证 Sema 注入的元数据) ---
-class MetadataPrinter : public ASTVisitor<MetadataPrinter> {
-public:
-    void visitVarDecl(ASTNode* n) {
-        printf("  [VarDecl] %.*s (Type: ", (int)n->as.var_decl.name.size(), n->as.var_decl.name.data());
-        printType(n->resolved_ty);
-        printf(", %s)\n", n->is_lvalue ? "LValue" : "RValue");
-    }
+// 核心：运行 LLVM 优化流水线 (O3)
+void runOptimizations(llvm::Module& M) {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
 
-    void visitMember(ASTNode* n) {
-        printf("    [MemberAccess] .%.*s (GEP_INDEX: %u)\n",
-               (int)n->as.member.member_name.size(), n->as.member.member_name.data(),
-               n->as.member.index);
-        visit(n->as.member.object);
-    }
+    std::string Error;
+    auto Triple = llvm::sys::getDefaultTargetTriple();
+    auto Target = llvm::TargetRegistry::lookupTarget(Triple, Error);
 
-    void visitFnDecl(ASTNode* n) {
-        printf("[Function] %.*s\n", (int)n->as.fn_decl.name.size(), n->as.fn_decl.name.data());
-        visit(n->as.fn_decl.body);
-    }
+    llvm::TargetOptions opt;
+    auto CPU = "generic";
+    auto Features = "";
+    auto TM = Target->createTargetMachine(Triple, CPU, Features, opt, llvm::Reloc::PIC_);
 
-    void visitBlock(ASTNode* n) { for (auto* s : n->as.block) visit(s); }
-    void visitBinary(ASTNode* n) { visit(n->as.binary.left); visit(n->as.binary.right); }
+    llvm::LoopAnalysisManager LAM;
+    llvm::FunctionAnalysisManager FAM;
+    llvm::CGSCCAnalysisManager CGAM;
+    llvm::ModuleAnalysisManager MAM;
 
-private:
-    void printType(const Type& t) {
-        for (int i = 0; i < t.pointer_level; ++i) printf("*");
-        if (!t.name.empty()) printf("%.*s", (int)t.name.size(), t.name.data());
-        else printf("basic_type");
-    }
-};
+    llvm::PassBuilder PB(TM);
 
-// --- 3. 驱动流水线 ---
-void runTest(const std::string& label, std::string_view source) {
-    printf("\n>>> 测试场景: %s <<<\n", label.data());
+    PB.registerModuleAnalyses(MAM);
+    PB.registerCGSCCAnalyses(CGAM);
+    PB.registerFunctionAnalyses(FAM);
+    PB.registerLoopAnalyses(LAM);
+    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
-    ASTContext ctx;
-    DiagEngine diag;
-
-    // 1. Lexer
-    Lexer lexer(llvm::StringRef(source.data(), source.size()));
-    llvm::SmallVector<Token, 128> tokens;
-    lexer.scanAll(tokens);
-
-    // 2. Parser (禁用异常，返回列表)
-    Parser parser(tokens, ctx, diag);
-    llvm::SmallVector<ASTNode*, 16> program;
-    auto vec = parser.parseProgram();
-    for (auto* n : vec) program.push_back(n);
-
-    // 3. Sema (仅在语法无错时进行)
-    if (!diag.hasError()) {
-        Sema sema(ctx, diag);
-        if (sema.analyze(program)) {
-            printf("[*] 语义分析通过! 元数据提取如下:\n");
-            MetadataPrinter printer;
-            for (auto* n : program) printer.visit(n);
-        }
-    }
-
-    // 4. 展示所有收集到的诊断信息 (多语言)
-    if (diag.hasError()) {
-        printf("[!] 发现语义/语法错误:\n");
-        for (const auto& d : diag.getDiagnostics()) {
-            translateAndPrint(d, Lang::CN);
-        }
-    }
-    printf("------------------------------------------\n");
+    llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3);
+    MPM.run(M, MAM);
 }
 
 int main() {
-    // 情况 A: 典型的 HPC 内存操作 (应成功)
-    runTest("合法指针与结构体逻辑", R"(
-        struct Vec3 { x: f32; y: f32; z: f32; }
-        fn kernel(p: *Vec3) -> void {
-            p.*.y = 10.5;
-            let val: f32 = p.*.x;
-        }
-    )");
+    // 综合测试源码：涵盖各种 as 类型转换与数组/指针交互
+    std::string source = R"(
+    struct Vector3 {
+        x: f32;
+        y: f32;
+        z: f32;
+    }
 
-    // 情况 B: 类型不匹配 (应报错)
-    runTest("类型检查拦截", R"(
-        fn main() -> void {
-            let a: i32 = 42;
-            let b: f32 = a;
-        }
-    )");
+    // 综合测试函数
+    fn process_data(data: *f32, count: i32) -> void {
+        // 1. 测试指针强转：将 f32 指针重解释为 Vector3 指针 (HPC 中常见的 SOA 到 AOS 转换或流式读取)
+        let vec_ptr = data as *Vector3;
 
-    // 情况 C: 成员不存在 (应报错并显示具体成员名)
-    runTest("结构体成员验证", R"(
-        struct Point { x: i32; }
-        fn main() -> void {
-            let p: Point;
-            p.z = 100;
+        let high_prec_accum: f64 = 0.0;
+
+        for (let i = 0; i < count; i = i + 1) {
+            // 2. 测试整型扩展：i32 扩展为 i64 用于安全的 64 位数组寻址
+            let idx64 = i as i64;
+
+            // 3. 测试整型到浮点转换
+            let offset_val = i as f32;
+
+            // 4. 测试精度提升：f32 -> f64，用于防止累加丢失精度
+            let current_val = data[idx64];
+            let val64 = current_val as f64;
+
+            high_prec_accum = high_prec_accum + val64 + (offset_val as f64);
         }
-    )");
+
+        // 5. 测试浮点截断 (f64 -> f32)
+        // 假设将计算完毕的结果强制写回首地址
+        data[0] = high_prec_accum as f32;
+
+        // 6. 测试黑魔法内存清零：通过将 *f32 视为 *i32 快速写入位模式
+        // 在实际 VM 或硬件中常用于 bitwise 操作
+        let int_ptr = data as *i32;
+        int_ptr[1] = 0; // 等价于 data[1] = 0.0，但绕过了浮点流水线
+    }
+)";
+
+    // --- 1. 前端阶段 ---
+    ASTContext astCtx;
+    DiagEngine diag;
+
+    Lexer lexer(source);
+    llvm::SmallVector<Token, 128> tokens;
+    lexer.scanAll(tokens);
+
+    Parser parser(tokens, astCtx, diag);
+    auto rawProgram = parser.parseProgram();
+    llvm::SmallVector<ASTNode*, 32> program;
+    for (auto* n : rawProgram) program.push_back(n);
+
+    if (diag.hasError()) {
+        std::cerr << "\n[!] Syntax Error detected!\n";
+        dumpDiagnostics(diag);
+        return 1;
+    }
+
+    Sema sema(astCtx, diag);
+    if (!sema.analyze(program)) {
+        std::cerr << "\n[!] Semantic Error detected!\n";
+        dumpDiagnostics(diag);
+        return 1;
+    }
+
+    // --- 2. IR 生成阶段 ---
+    llvm::LLVMContext llvmCtx;
+    llvm::Module myModule("StuScript_Cast_Test", llvmCtx);
+    Codegen generator(llvmCtx, myModule, diag);
+
+    if (!generator.generate(program)) {
+        std::cerr << "\n[!] Codegen failed or Module verification failed!\n";
+        return 1;
+    }
+
+    // std::cout << "\n=== [ 原始 LLVM IR ] ===\n";
+    // myModule.print(llvm::outs(), nullptr);
+
+    // --- 3. 优化阶段 ---
+    runOptimizations(myModule);
+
+    std::cout << "\n=== [ 优化后的 LLVM IR (O3) ] ===\n";
+    // 你会在这里观察到：
+    // 1. i32 as i64 变成了 sext (或因为循环归纳变量直接被 LLVM 优化为 64 位)
+    // 2. as f64 变成了 fpext
+    // 3. as *i32 和 as *Vector3 在 LLVM 15+ (Opaque Pointers) 时代会完全“消失”
+    //    而在 load/store 时会直接体现为 store i32 0, ptr %...
+    myModule.print(llvm::outs(), nullptr);
 
     return 0;
 }

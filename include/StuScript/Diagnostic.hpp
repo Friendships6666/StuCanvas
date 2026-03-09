@@ -24,7 +24,8 @@ enum class DiagCode : uint16_t {
     S_TypeMismatch,            // 类型不匹配 (参数0: 期望类型, 参数1: 实际类型)
     S_NotAnLValue,             // 非左值不可赋值
     S_InvalidDereference,      // 非指针不可解引用
-    S_MemberNotFound           // 结构体成员不存在 (参数0: 结构体名, 参数1: 成员名)
+    S_MemberNotFound,           // 结构体成员不存在 (参数0: 结构体名, 参数1: 成员名)
+    S_UnexpectedJump
 };
 
 enum class DiagLevel : uint8_t { Note, Warning, Error, Fatal };

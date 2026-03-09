@@ -199,7 +199,7 @@ Index of this file:
 #ifndef IMGUI_DISABLE
 #include "imgui_internal.h"
 
-// System includes
+// System include
 #include <stdint.h>     // intptr_t
 
 // Visual Studio warnings
