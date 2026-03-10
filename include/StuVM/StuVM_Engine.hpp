@@ -62,7 +62,7 @@ constexpr uint64_t PAGE_MASK = 0xFFF;
 class MMU {
 private:
     struct Page {
-        alignas(64) uint8_t data[PAGE_SIZE];
+        alignas(64) uint8_t data[PAGE_SIZE]{};
         uint8_t perms; // 权限位：1=R, 2=W, 4=X
         Page(uint8_t p) : perms(p) { std::memset(data, 0, PAGE_SIZE); }
     };
