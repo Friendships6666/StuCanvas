@@ -52,7 +52,7 @@ int main() {
     double input_param_id = 1.0; // 模拟某种输入 ID
 
     // 存储结果的变量 (必须是 POD)
-    Point3D<double> best_p;
+    Point3D<double> best_p{};
     double best_dist;
 
     std::cout << "--- 第一次运行 (Cold Start: 缓存缺失) ---" << std::endl;
@@ -89,6 +89,7 @@ int main() {
             FindNearestPoint(points, query, best_p, best_dist);
         }
     }
+    std::printf("结果: (%.2f, %.2f, %.2f), 距离: %.4f\n\n", best_p.x, best_p.y, best_p.z, best_dist);
 
     return 0;
 }
