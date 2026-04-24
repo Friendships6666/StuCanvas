@@ -1,54 +1,93 @@
-// main.cpp
 #include <iostream>
 #include <vector>
-#include "include/stucanvas/geometry/graph.hpp"
+#include <chrono>
+#include <random>
+
+// 引入 StuCanvas 核心头文件
 #include "include/stucanvas/types/point.hpp"
-#include "include/stucanvas/types/mesh.hpp"
-#include "include/stucanvas/reconstruction/quick_hull_3d.hpp"
-#include "include/stucanvas/reconstruction/export/off.hpp"
+#include "include/stucanvas/cache/macros.hpp"
+
+using namespace StuCanvas;
+
+// 简单的计时工具
+struct BenchTimer {
+    std::string name;
+    std::chrono::high_resolution_clock::time_point start;
+    BenchTimer(std::string n) : name(n), start(std::chrono::high_resolution_clock::now()) {}
+    ~BenchTimer() {
+        auto end = std::chrono::high_resolution_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() / 1000000.0;
+        std::printf("[%s] 耗时: %.4f ms\n", name.c_str(), ms);
+    }
+};
+
+// 模拟一个重型计算函数
+void FindNearestPoint(const std::vector<Point3D<double>>& cloud,
+                      Point3D<double> target,
+                      Point3D<double>& out_result,
+                      double& out_dist)
+{
+    double min_dist_sq = std::numeric_limits<double>::max();
+    for (const auto& p : cloud) {
+        double dx = p.x - target.x;
+        double dy = p.y - target.y;
+        double dz = p.z - target.z;
+        double d2 = dx*dx + dy*dy + dz*dz;
+        if (d2 < min_dist_sq) {
+            min_dist_sq = d2;
+            out_result = p;
+        }
+    }
+    out_dist = std::sqrt(min_dist_sq);
+}
 
 int main() {
-    using namespace StuCanvas;
+    // 1. 准备数据 (1万个随机点)
+    std::vector<Point3D<double>> points;
+    std::mt19937 gen(42); // 固定种子保证数据一致性
+    std::uniform_real_distribution<double> dist(-100, 100);
+    for(int i=0; i<10000; ++i) points.push_back({dist(gen), dist(gen), dist(gen)});
 
-    // 1. 创建图并设置世界空间和分辨率
-    Graph<double> graph;
-    graph.world_space_3d = {-4.0, -4.0, -4.0, 4.0, 4.0, 4.0}; // x_min, y_min, z_min, x_max, y_max, z_max
-    graph.resolution_3d = {100, 100, 100};                       // 绘制分辨率（影响采样点密度）
+    Point3D<double> query = {0.0, 0.0, 0.0};
+    double input_param_id = 1.0; // 模拟某种输入 ID
 
-    // 2. 创建立方体中心点
-    uint64_t center_id = graph.CreateFreePoint_3D(0.0, 0.0, 0.0, "cube_center");
+    // 存储结果的变量 (必须是 POD)
+    Point3D<double> best_p;
+    double best_dist;
 
-    // 3. 使用单节点柏拉图书创建正六面体（type=6，即立方体）
-    uint64_t cube_id = graph.CreatePlatonicSolid_3D(center_id, 1.0, 12, "unit_cube");
-
-    // 4. 运行图计算（求解器 + 绘制器），生成表面采样点云
-    graph.Compute(); // 单线程即可
-
-    // 5. 从立方体节点提取采样点云，用作 QuickHull 的输入
-    Node<double>* cube_node = graph.GetNode(cube_id);
-    const std::vector<Point3D<double>>& cube_surface_points = cube_node->result_points_3d;
-
-    std::cout << "Number of surface points: " << cube_surface_points.size() << std::endl;
-
-    if (cube_surface_points.size() < 4) {
-        std::cerr << "Too few surface points to compute convex hull.\n";
-        return 1;
+    std::cout << "--- 第一次运行 (Cold Start: 缓存缺失) ---" << std::endl;
+    {
+        BenchTimer t("First Run");
+        // 使用宏：输入 input_param_id，输出变量 best_p 和 best_dist
+        STU_CACHE_BLOCK("nearest_point_test", STU_IN(input_param_id), STU_OUT(best_p, best_dist))
+        {
+            std::cout << "[Logic] 缓存未命中，正在执行重型搜索算法..." << std::endl;
+            FindNearestPoint(points, query, best_p, best_dist);
+        }
     }
+    std::printf("结果: (%.2f, %.2f, %.2f), 距离: %.4f\n\n", best_p.x, best_p.y, best_p.z, best_dist);
 
-    // 6. 调用自实现的 QuickHull 3D（使用你修正后的版本）
-    QuickHull3D<double> qhull;
-    Mesh3D<double> convex_hull = qhull.Compute(cube_surface_points);
+    std::cout << "--- 第二次运行 (Cache Hit: 命中缓存) ---" << std::endl;
+    {
+        BenchTimer t("Second Run");
+        // 相同的 Label 和相同的 INPUT，大括号内的代码将完全不执行
+        STU_CACHE_BLOCK("nearest_point_test", STU_IN(input_param_id), STU_OUT(best_p, best_dist))
+        {
+            std::cout << "[Logic] 你不应该看到这句话！" << std::endl;
+            FindNearestPoint(points, query, best_p, best_dist);
+        }
+    }
+    std::printf("结果: (%.2f, %.2f, %.2f), 距离: %.4f\n\n", best_p.x, best_p.y, best_p.z, best_dist);
 
-    std::cout << "Convex hull vertices: " << convex_hull.vertices.size()
-              << ", faces: " << convex_hull.indices.size() / 3 << std::endl;
-
-    // 7. 导出为 OFF 文件
-    bool ok = Export::ToOFF("cube_hull.off", convex_hull);
-    if (ok) {
-        std::cout << "Successfully exported convex hull to cube_hull.off\n";
-    } else {
-        std::cerr << "Failed to export OFF file.\n";
-        return 1;
+    std::cout << "--- 第三次运行 (Parameter Changed: 缓存失效) ---" << std::endl;
+    input_param_id = 2.0; // 修改输入参数
+    {
+        BenchTimer t("Third Run");
+        STU_CACHE_BLOCK("nearest_point_test", STU_IN(input_param_id), STU_OUT(best_p, best_dist))
+        {
+            std::cout << "[Logic] 输入已变，重新执行计算..." << std::endl;
+            FindNearestPoint(points, query, best_p, best_dist);
+        }
     }
 
     return 0;
