@@ -26,9 +26,9 @@ public:
     using Mesh3  = Mesh3D<T>;
 
     Mesh3 Compute(const std::vector<Point3>& points) {
-        std::cout << "[QuickHull3D] Computing convex hull for " << points.size() << " points.\n";
+        // std::cout << "[QuickHull3D] Computing convex hull for " << points.size() << " points.\n";
         if (points.size() < 4) {
-            std::cout << "[QuickHull3D] Less than 4 points, returning empty mesh.\n";
+            // std::cout << "[QuickHull3D] Less than 4 points, returning empty mesh.\n";
             return Mesh3{};
         }
         return compute_hull(points);
@@ -37,6 +37,18 @@ public:
 private:
     ConvexHullDS3D<T> hull;
     const std::vector<Point3>* pts = nullptr;
+
+    T global_tol = 1e-5;
+
+    // 字典序决胜：在距离相同时，强制选择坐标字典序最大的点，必定滑向绝对角点
+    bool lexicographically_greater(const Point3& p, const Point3& ref) const {
+        if (p.x > ref.x + global_tol) return true;
+        if (std::abs(p.x - ref.x) <= global_tol) {
+            if (p.y > ref.y + global_tol) return true;
+            if (std::abs(p.y - ref.y) <= global_tol && p.z > ref.z + global_tol) return true;
+        }
+        return false;
+    }
 
     std::vector<typename std::list<Index>::iterator> face_iter;
 
@@ -85,7 +97,7 @@ private:
             if (unassigned_points[i]) remaining_points.push_back(static_cast<Index>(i));
         }
 
-        std::cout << "[QuickHull3D] Assigning " << remaining_points.size() << " remaining points to initial faces...\n";
+        // std::cout << "[QuickHull3D] Assigning " << remaining_points.size() << " remaining points to initial faces...\n";
         assign_points_to_faces(initial_faces, remaining_points);
 
         std::list<Index> pending_faces;
@@ -112,8 +124,8 @@ private:
             Index eye_pt_idx = farthest_point(f);
             if (eye_pt_idx == INVALID_INDEX) continue;
 
-            std::cout << "[QuickHull3D] Iteration " << iter_count << " | Processing face " << f
-                      << " | Farthest point idx: " << eye_pt_idx << " " << pt_str(pts->at(eye_pt_idx)) << "\n";
+            // std::cout << "[QuickHull3D] Iteration " << iter_count << " | Processing face " << f
+            //           << " | Farthest point idx: " << eye_pt_idx << " " << pt_str(pts->at(eye_pt_idx)) << "\n";
 
             remove_from_list(face.outside_points, eye_pt_idx);
 
@@ -121,8 +133,8 @@ private:
             std::vector<std::pair<Index, int>> border_edges;
             find_visible_set(f, eye_pt_idx, visible_faces, border_edges);
 
-            std::cout << "  -> Found " << visible_faces.size() << " visible faces, "
-                      << border_edges.size() << " border edges.\n";
+            // std::cout << "  -> Found " << visible_faces.size() << " visible faces, "
+            //           << border_edges.size() << " border edges.\n";
 
             if (border_edges.empty()) {
                 std::cerr << "  -> WARNING: No border edges found! Skipping point.\n";
@@ -153,7 +165,7 @@ private:
             std::vector<Index> new_faces = hull.star_hole(border_edges, new_vertex);
             face_iter.resize(hull.faces.size(), pending_faces.end());
 
-            std::cout << "  -> Created " << new_faces.size() << " new faces.\n";
+            // std::cout << "  -> Created " << new_faces.size() << " new faces.\n";
 
             assign_points_to_faces(new_faces, global_outside);
 
@@ -165,7 +177,7 @@ private:
             }
         }
 
-        std::cout << "[QuickHull3D] Core algorithm finished after " << iter_count << " iterations.\n";
+        // std::cout << "[QuickHull3D] Core algorithm finished after " << iter_count << " iterations.\n";
         return extract_mesh();
     }
 
@@ -178,48 +190,64 @@ bool build_initial_tetrahedron() {
         size_t n = points.size();
         if (n < 4) return false;
 
-        // 1) 寻找六个极值点 (加入字典序 Tie-breaker，专治对齐坐标轴的共面点)
+        // 0) 根据点云包围盒动态计算鲁棒误差 (极大增强浮点稳定性)
+        T min_x = points[0].x, max_x = points[0].x;
+        T min_y = points[0].y, max_y = points[0].y;
+        T min_z = points[0].z, max_z = points[0].z;
+        for (const auto& p : points) {
+            if (p.x < min_x) min_x = p.x;
+            if (p.x > max_x) max_x = p.x;
+            if (p.y < min_y) min_y = p.y;
+            if (p.y > max_y) max_y = p.y;
+            if (p.z < min_z) min_z = p.z;
+            if (p.z > max_z) max_z = p.z;
+        }
+        T max_span = std::max({max_x - min_x, max_y - min_y, max_z - min_z});
+        global_tol = max_span * static_cast<T>(1e-5);
+        if (global_tol < EPS) global_tol = EPS;
+
+        // 辅助 Lambda: 带误差吸收和字典序的极小值判定
+        auto tie_break_min = [&](T val, T ref, T sec, T ref_sec, T thd, T ref_thd) {
+            if (val < ref - global_tol) return true;
+            if (std::abs(val - ref) <= global_tol) {
+                if (sec < ref_sec - global_tol) return true;
+                if (std::abs(sec - ref_sec) <= global_tol && thd < ref_thd - global_tol) return true;
+            }
+            return false;
+        };
+
+        // 辅助 Lambda: 带误差吸收和字典序的极大值判定
+        auto tie_break_max = [&](T val, T ref, T sec, T ref_sec, T thd, T ref_thd) {
+            if (val > ref + global_tol) return true;
+            if (std::abs(val - ref) <= global_tol) {
+                if (sec > ref_sec + global_tol) return true;
+                if (std::abs(sec - ref_sec) <= global_tol && thd > ref_thd + global_tol) return true;
+            }
+            return false;
+        };
+
+        // 1) 寻找六个极值点 (强制滑向绝对角点)
         Index extremes[6] = {0,0,0,0,0,0};
         for (size_t i = 1; i < n; ++i) {
             const Point3& p = points[i];
 
-            // 辅助 Lambda：判断是否需要更新最小值（加入次要和第三级比较）
-            auto check_min = [&](T val, T ref_val, T sec, T ref_sec, T thd, T ref_thd) {
-                if (val < ref_val - EPS) return true;
-                if (std::abs(val - ref_val) <= EPS) {
-                    if (sec < ref_sec - EPS) return true;
-                    if (std::abs(sec - ref_sec) <= EPS && thd < ref_thd - EPS) return true;
-                }
-                return false;
-            };
-
-            // 辅助 Lambda：判断是否需要更新最大值
-            auto check_max = [&](T val, T ref_val, T sec, T ref_sec, T thd, T ref_thd) {
-                if (val > ref_val + EPS) return true;
-                if (std::abs(val - ref_val) <= EPS) {
-                    if (sec > ref_sec + EPS) return true;
-                    if (std::abs(sec - ref_sec) <= EPS && thd > ref_thd + EPS) return true;
-                }
-                return false;
-            };
-
             const Point3& e0 = points[extremes[0]];
-            if (check_min(p.x, e0.x, p.y, e0.y, p.z, e0.z)) extremes[0] = i; // min x
+            if (tie_break_min(p.x, e0.x, p.y, e0.y, p.z, e0.z)) extremes[0] = i;
 
             const Point3& e1 = points[extremes[1]];
-            if (check_max(p.x, e1.x, p.y, e1.y, p.z, e1.z)) extremes[1] = i; // max x
+            if (tie_break_max(p.x, e1.x, p.y, e1.y, p.z, e1.z)) extremes[1] = i;
 
             const Point3& e2 = points[extremes[2]];
-            if (check_min(p.y, e2.y, p.z, e2.z, p.x, e2.x)) extremes[2] = i; // min y
+            if (tie_break_min(p.y, e2.y, p.z, e2.z, p.x, e2.x)) extremes[2] = i;
 
             const Point3& e3 = points[extremes[3]];
-            if (check_max(p.y, e3.y, p.z, e3.z, p.x, e3.x)) extremes[3] = i; // max y
+            if (tie_break_max(p.y, e3.y, p.z, e3.z, p.x, e3.x)) extremes[3] = i;
 
             const Point3& e4 = points[extremes[4]];
-            if (check_min(p.z, e4.z, p.x, e4.x, p.y, e4.y)) extremes[4] = i; // min z
+            if (tie_break_min(p.z, e4.z, p.x, e4.x, p.y, e4.y)) extremes[4] = i;
 
             const Point3& e5 = points[extremes[5]];
-            if (check_max(p.z, e5.z, p.x, e5.x, p.y, e5.y)) extremes[5] = i; // max z
+            if (tie_break_max(p.z, e5.z, p.x, e5.x, p.y, e5.y)) extremes[5] = i;
         }
 
         // 2) 从这六个点中找出最远点对 (作为前两个顶点)
@@ -238,7 +266,7 @@ bool build_initial_tetrahedron() {
         }
         if (max_dist_sq < EPS) return false;
 
-        // 3) 寻找第三个点：距离直线 (v0,v1) 最远的点
+        // 3) 寻找第三个点：距离直线 (v0,v1) 最远的点，结合字典序决胜
         Point3 dir = sub(points[v1], points[v0]);
         T dir_len_sq = length_sq(dir);
         Index v2 = INVALID_INDEX;
@@ -247,14 +275,17 @@ bool build_initial_tetrahedron() {
             if (i == v0 || i == v1) continue;
             T d_sq = (dir_len_sq > EPS) ? length_sq(cross(sub(points[i], points[v0]), dir)) / dir_len_sq
                                         : length_sq(sub(points[i], points[v0]));
-            if (d_sq > max_line_dist_sq) {
+
+            if (d_sq > max_line_dist_sq + global_tol) {
                 max_line_dist_sq = d_sq;
                 v2 = i;
+            } else if (std::abs(d_sq - max_line_dist_sq) <= global_tol && v2 != INVALID_INDEX) {
+                if (lexicographically_greater(points[i], points[v2])) v2 = i;
             }
         }
         if (v2 == INVALID_INDEX || max_line_dist_sq < EPS) return false;
 
-        // 4) 寻找第四个点：距离平面 (v0,v1,v2) 最远的点
+        // 4) 寻找第四个点：距离平面 (v0,v1,v2) 最远的点，结合字典序决胜
         Point3 normal = cross(sub(points[v1], points[v0]), sub(points[v2], points[v0]));
         T normal_len = length(normal);
         if (normal_len < EPS) return false;
@@ -264,23 +295,26 @@ bool build_initial_tetrahedron() {
         T max_plane_dist = -1;
         for (size_t i = 0; i < n; ++i) {
             if (i == v0 || i == v1 || i == v2) continue;
-            T d = dot(normal, sub(points[i], points[v0]));
-            if (std::abs(d) > max_plane_dist) {
-                max_plane_dist = std::abs(d);
+            T d = std::abs(dot(normal, sub(points[i], points[v0])));
+
+            if (d > max_plane_dist + global_tol) {
+                max_plane_dist = d;
                 v3 = i;
+            } else if (std::abs(d - max_plane_dist) <= global_tol && v3 != INVALID_INDEX) {
+                if (lexicographically_greater(points[i], points[v3])) v3 = i;
             }
         }
         if (v3 == INVALID_INDEX || max_plane_dist < EPS) return false;
 
-        std::cout << "[QuickHull3D] Initial tetrahedron vertices: \n"
-                  << "  v0: " << pt_str(points[v0]) << "\n"
-                  << "  v1: " << pt_str(points[v1]) << "\n"
-                  << "  v2: " << pt_str(points[v2]) << "\n"
-                  << "  v3: " << pt_str(points[v3]) << "\n";
+        // std::cout << "[QuickHull3D] Initial tetrahedron vertices: \n"
+        //           << "  v0: " << pt_str(points[v0]) << "\n"
+        //           << "  v1: " << pt_str(points[v1]) << "\n"
+        //           << "  v2: " << pt_str(points[v2]) << "\n"
+        //           << "  v3: " << pt_str(points[v3]) << "\n";
 
-        // 5) 确保四面体方向（如果法线指向内侧，翻转平面朝向使其朝外）
+        // 5) 确保四面体方向朝外
         if (dot(normal, sub(points[v3], points[v0])) > 0) {
-            std::cout << "  -> Flipped initial face orientation to point outwards.\n";
+            // std::cout << "  -> Flipped initial face orientation to point outwards.\n";
             std::swap(v2, v1);
         }
 
@@ -296,7 +330,6 @@ bool build_initial_tetrahedron() {
         Index f2 = hull.add_face(h_v3, h_v2, h_v1);
         Index f3 = hull.add_face(h_v3, h_v0, h_v2);
 
-        // 设置邻居关系 (基于 CGAL 的标准四面体邻接)
         hull.set_neighbor(f0, 0, f1);
         hull.set_neighbor(f0, 1, f2);
         hull.set_neighbor(f0, 2, f3);
@@ -350,22 +383,26 @@ bool build_initial_tetrahedron() {
     }
 
     Index farthest_point(Index f) {
-        const auto& outside = hull.faces[f].outside_points;
-        if (outside.empty()) return INVALID_INDEX;
-        Point3 plane_p = pts->at(hull.point_index(hull.faces[f].vertices[0]));
-        Point3 n = compute_normal(f);
-        Index best_idx = INVALID_INDEX;
-        T max_dist = -1;
-        for (Index pi : outside) {
-            const Point3& p = pts->at(pi);
-            T dist = dot(n, sub(p, plane_p));
-            if (dist > max_dist) {
-                max_dist = dist;
+    const auto& outside = hull.faces[f].outside_points;
+    if (outside.empty()) return INVALID_INDEX;
+    Point3 plane_p = pts->at(hull.point_index(hull.faces[f].vertices[0]));
+    Point3 n = compute_normal(f);
+    Index best_idx = INVALID_INDEX;
+    T max_dist = -1;
+    for (Index pi : outside) {
+        const Point3& p = pts->at(pi);
+        T dist = dot(n, sub(p, plane_p));
+        if (dist > max_dist + global_tol) {
+            max_dist = dist;
+            best_idx = pi;
+        } else if (std::abs(dist - max_dist) <= global_tol && best_idx != INVALID_INDEX) {
+            if (lexicographically_greater(p, pts->at(best_idx))) {
                 best_idx = pi;
             }
         }
-        return best_idx;
     }
+    return best_idx;
+}
 
     void remove_from_list(std::list<Index>& lst, Index val) {
         for (auto it = lst.begin(); it != lst.end(); ++it) {
@@ -481,8 +518,8 @@ bool build_initial_tetrahedron() {
             }
         }
 
-        std::cout << "[QuickHull3D] Extracted Mesh: " << result.vertices.size()
-                  << " vertices, " << alive_faces << " faces.\n";
+        // std::cout << "[QuickHull3D] Extracted Mesh: " << result.vertices.size()
+        //           << " vertices, " << alive_faces << " faces.\n";
         return result;
     }
 

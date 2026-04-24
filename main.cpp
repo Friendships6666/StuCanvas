@@ -19,7 +19,7 @@ int main() {
     uint64_t center_id = graph.CreateFreePoint_3D(0.0, 0.0, 0.0, "cube_center");
 
     // 3. 使用单节点柏拉图书创建正六面体（type=6，即立方体）
-    uint64_t cube_id = graph.CreatePlatonicSolid_3D(center_id, 1.0, 6, "unit_cube");
+    uint64_t cube_id = graph.CreatePlatonicSolid_3D(center_id, 1.0, 12, "unit_cube");
 
     // 4. 运行图计算（求解器 + 绘制器），生成表面采样点云
     graph.Compute(); // 单线程即可
