@@ -1,342 +1,492 @@
-/***************************************************************************
-* Copyright (c) 2026 Tian Yuxuan (Friendships666)                          *
-*                                                                          *
-* Distributed under the terms of the MIT License.                          *
-*                                                                          *
-* The full license is in the file LICENSE, distributed with this software. *
-***************************************************************************/
-
+// include/stucanvas/reconstruction/quick_hull_3d.hpp
 #pragma once
 
 #include <vector>
+#include <list>
+#include <queue>
+#include <map>
+#include <algorithm>
 #include <cmath>
 #include <limits>
-#include <queue>
-#include <algorithm>
+#include <utility>
+#include <iostream> // For logging
+#include <sstream>
 
 #include "../types/point.hpp"
-#include "../types/tri_mesh_halfedge_3d.hpp"
 #include "../types/mesh.hpp"
+#include "../types/convex_hull_ds.hpp"
 
-namespace StuCanvas
-{
-    template <typename T>
-    class QuickHull3D
-    {
-    public:
-        using Index = uint32_t;
-        static constexpr T EPSILON = static_cast<T>(1e-6); // 容差防止浮点数精度崩溃
+namespace StuCanvas {
 
-        /**
-         * @brief 执行 3D QuickHull 算法，生成凸包网格
-         * @param points 输入的点云数据
-         * @return 生成的水密凸包三角网格 (Mesh3D)
-         */
-        Mesh3D<T> Compute(const std::vector<Point3D<T>>& points)
-        {
-            if (points.size() < 4) return Mesh3D<T>(); // 点太少，无法构成 3D 体积
+template <typename T>
+class QuickHull3D {
+public:
+    using Index = uint32_t;
+    using Point3 = Point3D<T>;
+    using Mesh3  = Mesh3D<T>;
 
-            mesh.Reserve(points.size(), points.size() * 3, points.size() * 2);
-            face_infos.clear();
+    Mesh3 Compute(const std::vector<Point3>& points) {
+        std::cout << "[QuickHull3D] Computing convex hull for " << points.size() << " points.\n";
+        if (points.size() < 4) {
+            std::cout << "[QuickHull3D] Less than 4 points, returning empty mesh.\n";
+            return Mesh3{};
+        }
+        return compute_hull(points);
+    }
 
-            // 1. 初始化：寻找极值点构建初始四面体
-            if (!BuildInitialTetrahedron(points))
-            {
-                return Mesh3D<T>(); // 点云共面或退化，直接返回空
-            }
+private:
+    ConvexHullDS3D<T> hull;
+    const std::vector<Point3>* pts = nullptr;
 
-            // 2. 主循环：利用冲突图不断向外扩展凸包
-            while (!active_faces.empty())
-            {
-                Index curr_face = active_faces.front();
-                active_faces.pop();
+    std::vector<typename std::list<Index>::iterator> face_iter;
 
-                // 如果面已经被删除，或没有冲突点，跳过
-                if (mesh.faces[curr_face].is_deleted || face_infos[curr_face].conflict_points.empty())
-                    continue;
+    static constexpr T EPS = static_cast<T>(1e-9);
 
-                // 提取距离最远的点（Eye Point）
-                Index eye_pt = face_infos[curr_face].farthest_pt_idx;
+    static std::string pt_str(const Point3& p) {
+        std::ostringstream oss;
+        oss << "(" << p.x << ", " << p.y << ", " << p.z << ")";
+        return oss.str();
+    }
 
-                // 寻找可见面和地平线
-                ProcessEyePoint(eye_pt, curr_face, points);
-            }
+    static Point3 sub(const Point3& a, const Point3& b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
+    static T dot(const Point3& a, const Point3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+    static Point3 cross(const Point3& a, const Point3& b) {
+        return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
+    }
+    static T length_sq(const Point3& v) { return dot(v, v); }
+    static T length(const Point3& v) { return std::sqrt(length_sq(v)); }
 
-            // 3. 提取最终结果为 Mesh3D
-            return ExtractMesh();
+    static bool is_positive_side(const Point3& plane_normal, const Point3& plane_point, const Point3& query) {
+        return dot(plane_normal, sub(query, plane_point)) > EPS;
+    }
+
+    Point3 compute_normal(Index fi) const {
+        const auto& f = hull.faces[fi];
+        Point3 a = pts->at(hull.point_index(f.vertices[0]));
+        Point3 b = pts->at(hull.point_index(f.vertices[1]));
+        Point3 c = pts->at(hull.point_index(f.vertices[2]));
+        return cross(sub(b, a), sub(c, a));
+    }
+
+    Mesh3 compute_hull(const std::vector<Point3>& points) {
+        pts = &points;
+        hull.bind_points(points);
+
+        if (!build_initial_tetrahedron()) {
+            std::cerr << "[QuickHull3D] ERROR: Failed to build initial tetrahedron. Points may be coplanar.\n";
+            return Mesh3{};
         }
 
-    private:
-        // ==========================================
-        // 内部数据结构 (冲突图相关)
-        // ==========================================
+        unassigned_points.assign(points.size(), true);
+        for (Index vi : initial_vertices) { unassigned_points[vi] = false; }
 
-        struct ConflictPoint {
-            Index pt_idx;
-            T dist; // 未归一化的距离
-        };
-
-        struct FaceInfo {
-            Point3D<T> normal; // 未归一化的法向量
-            std::vector<ConflictPoint> conflict_points;
-            T max_dist = -1;
-            Index farthest_pt_idx = TriMeshHalfEdge3D<T>::INVALID_IDX;
-        };
-
-        TriMeshHalfEdge3D<T> mesh;
-        std::vector<FaceInfo> face_infos;
-        std::queue<Index> active_faces; // 存有冲突点的活跃面队列
-
-        // ==========================================
-        // 向量数学辅助 (内联加速)
-        // ==========================================
-        inline Point3D<T> Sub(const Point3D<T>& a, const Point3D<T>& b) const {
-            return {a.x - b.x, a.y - b.y, a.z - b.z};
-        }
-        inline T Dot(const Point3D<T>& a, const Point3D<T>& b) const {
-            return a.x * b.x + a.y * b.y + a.z * b.z;
-        }
-        inline Point3D<T> Cross(const Point3D<T>& a, const Point3D<T>& b) const {
-            return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-        }
-        inline T LengthSq(const Point3D<T>& a) const {
-            return Dot(a, a);
+        std::list<Index> remaining_points;
+        for (size_t i = 0; i < points.size(); ++i) {
+            if (unassigned_points[i]) remaining_points.push_back(static_cast<Index>(i));
         }
 
-        // ==========================================
-        // 核心流程
-        // ==========================================
+        std::cout << "[QuickHull3D] Assigning " << remaining_points.size() << " remaining points to initial faces...\n";
+        assign_points_to_faces(initial_faces, remaining_points);
 
-        bool BuildInitialTetrahedron(const std::vector<Point3D<T>>& points)
-        {
-            // 找 6 个极值点 (MinX, MaxX, MinY, MaxY, MinZ, MaxZ)
-            Index ex[6] = {0, 0, 0, 0, 0, 0};
-            for (Index i = 1; i < points.size(); ++i) {
-                if (points[i].x < points[ex[0]].x) ex[0] = i;
-                if (points[i].x > points[ex[1]].x) ex[1] = i;
-                if (points[i].y < points[ex[2]].y) ex[2] = i;
-                if (points[i].y > points[ex[3]].y) ex[3] = i;
-                if (points[i].z < points[ex[4]].z) ex[4] = i;
-                if (points[i].z > points[ex[5]].z) ex[5] = i;
+        std::list<Index> pending_faces;
+        face_iter.resize(hull.faces.size(), pending_faces.end());
+
+        for (Index fi : initial_faces) {
+            if (!hull.faces[fi].outside_points.empty()) {
+                pending_faces.push_back(fi);
+                face_iter[fi] = std::prev(pending_faces.end());
             }
-
-            // 寻找距离最远的两个点 V0, V1
-            Index v0 = 0, v1 = 0;
-            T max_dist_sq = -1;
-            for (int i = 0; i < 6; ++i) {
-                for (int j = i + 1; j < 6; ++j) {
-                    T d = LengthSq(Sub(points[ex[i]], points[ex[j]]));
-                    if (d > max_dist_sq) { max_dist_sq = d; v0 = ex[i]; v1 = ex[j]; }
-                }
-            }
-            if (max_dist_sq < EPSILON) return false;
-
-            // 寻找距离直线 V0-V1 最远的点 V2
-            Index v2 = 0;
-            max_dist_sq = -1;
-            Point3D<T> dir01 = Sub(points[v1], points[v0]);
-            for (Index i = 0; i < points.size(); ++i) {
-                // 叉乘的模长正比于点到直线的距离
-                T d = LengthSq(Cross(Sub(points[i], points[v0]), dir01));
-                if (d > max_dist_sq) { max_dist_sq = d; v2 = i; }
-            }
-            if (max_dist_sq < EPSILON) return false;
-
-            // 寻找距离平面 V0-V1-V2 最远的点 V3
-            Index v3 = 0;
-            T max_dist = -1;
-            Point3D<T> plane_n = Cross(Sub(points[v1], points[v0]), Sub(points[v2], points[v0]));
-            for (Index i = 0; i < points.size(); ++i) {
-                T d = std::abs(Dot(plane_n, Sub(points[i], points[v0]))); // 使用未归一化法向量
-                if (d > max_dist) { max_dist = d; v3 = i; }
-            }
-            if (max_dist < EPSILON) return false;
-
-            // 构建四面体并对齐法线朝外
-            Point3D<T> center = {
-                (points[v0].x + points[v1].x + points[v2].x + points[v3].x) / 4,
-                (points[v0].y + points[v1].y + points[v2].y + points[v3].y) / 4,
-                (points[v0].z + points[v1].z + points[v2].z + points[v3].z) / 4
-            };
-
-            Index m_v0 = mesh.AddVertex(points[v0]);
-            Index m_v1 = mesh.AddVertex(points[v1]);
-            Index m_v2 = mesh.AddVertex(points[v2]);
-            Index m_v3 = mesh.AddVertex(points[v3]);
-
-            auto AddOrientedFace = [&](Index a, Index b, Index c) {
-                Point3D<T> n = Cross(Sub(mesh.vertices[b].position, mesh.vertices[a].position),
-                                     Sub(mesh.vertices[c].position, mesh.vertices[a].position));
-                Index face_idx = (Dot(n, Sub(mesh.vertices[a].position, center)) < 0) ?
-                                 mesh.AddFace(a, c, b) : mesh.AddFace(a, b, c);
-                RegisterNewFace(face_idx);
-                return face_idx;
-            };
-
-            Index f0 = AddOrientedFace(m_v0, m_v1, m_v2);
-            Index f1 = AddOrientedFace(m_v0, m_v3, m_v1);
-            Index f2 = AddOrientedFace(m_v0, m_v2, m_v3);
-            Index f3 = AddOrientedFace(m_v1, m_v3, m_v2);
-
-            // 初始化冲突图：分配所有点
-            std::vector<Index> initial_faces = {f0, f1, f2, f3};
-            for (Index i = 0; i < points.size(); ++i) {
-                if (i == v0 || i == v1 || i == v2 || i == v3) continue;
-                AssignPointToFaces(i, points[i], initial_faces);
-            }
-
-            return true;
         }
 
-        void ProcessEyePoint(Index eye_pt, Index start_face, const std::vector<Point3D<T>>& points)
-        {
-            // 1. BFS 寻找所有对 Eye Point 可见的面
+        int iter_count = 0;
+        while (!pending_faces.empty()) {
+            iter_count++;
+            Index f = pending_faces.front();
+            pending_faces.pop_front();
+            face_iter[f] = pending_faces.end();
+
+            auto& face = hull.faces[f];
+            if (face.info == -1) continue; // Skip if it was deleted
+            if (face.outside_points.empty()) continue;
+
+            Index eye_pt_idx = farthest_point(f);
+            if (eye_pt_idx == INVALID_INDEX) continue;
+
+            std::cout << "[QuickHull3D] Iteration " << iter_count << " | Processing face " << f
+                      << " | Farthest point idx: " << eye_pt_idx << " " << pt_str(pts->at(eye_pt_idx)) << "\n";
+
+            remove_from_list(face.outside_points, eye_pt_idx);
+
             std::vector<Index> visible_faces;
-            std::queue<Index> q;
-            std::vector<bool> visited(mesh.faces.size(), false);
+            std::vector<std::pair<Index, int>> border_edges;
+            find_visible_set(f, eye_pt_idx, visible_faces, border_edges);
 
-            q.push(start_face);
-            visited[start_face] = true;
+            std::cout << "  -> Found " << visible_faces.size() << " visible faces, "
+                      << border_edges.size() << " border edges.\n";
 
-            while (!q.empty())
-            {
-                Index f = q.front(); q.pop();
-                visible_faces.push_back(f);
+            if (border_edges.empty()) {
+                std::cerr << "  -> WARNING: No border edges found! Skipping point.\n";
+                continue;
+            }
 
-                auto adj = mesh.GetAdjacentFaces(f);
-                for (Index n_f : adj) {
-                    if (n_f != TriMeshHalfEdge3D<T>::INVALID_IDX && !mesh.faces[n_f].is_deleted && !visited[n_f]) {
-                        Index v_start = mesh.GetFaceVertices(n_f)[0];
-                        // 距离判定 (未归一化)
-                        if (Dot(face_infos[n_f].normal, Sub(points[eye_pt], mesh.vertices[v_start].position)) > EPSILON) {
-                            visited[n_f] = true;
-                            q.push(n_f);
-                        }
-                    }
+            std::list<Index> global_outside;
+
+            // =================================================================
+            // [极其关键的修复]：遍历所有的可见面，收集它们的外部点，并全部标记为删除
+            // 绝不能跳过起步面 f，f 也必须被删除！
+            // 之前的 `if (vf == f) continue;` 导致了严重的内穿插拓扑错误。
+            // =================================================================
+            for (Index vf : visible_faces) {
+                auto& vface = hull.faces[vf];
+                if (!vface.outside_points.empty()) {
+                    global_outside.splice(global_outside.end(), vface.outside_points);
                 }
-            }
-
-            // 2. 寻找地平线 (Horizon Edges)
-            std::vector<std::pair<Index, Index>> horizon_edges;
-            for (Index f : visible_faces) {
-                Index he0 = mesh.faces[f].edge;
-                Index he = he0;
-                do {
-                    Index twin = mesh.edges[he].twin;
-                    Index twin_f = (twin != TriMeshHalfEdge3D<T>::INVALID_IDX) ? mesh.edges[twin].face : TriMeshHalfEdge3D<T>::INVALID_IDX;
-
-                    bool twin_visible = false;
-                    if (twin_f != TriMeshHalfEdge3D<T>::INVALID_IDX && !mesh.faces[twin_f].is_deleted) {
-                        Index v_start = mesh.GetFaceVertices(twin_f)[0];
-                        if (Dot(face_infos[twin_f].normal, Sub(points[eye_pt], mesh.vertices[v_start].position)) > EPSILON) {
-                            twin_visible = true;
-                        }
-                    }
-
-                    if (!twin_visible) {
-                        // 地平线边: v0 -> v1
-                        Index v0 = mesh.edges[he].origin_vertex;
-                        Index v1 = mesh.edges[mesh.edges[he].next].origin_vertex;
-                        horizon_edges.push_back({v0, v1});
-
-                        // 【关键】切断旧的 twin 链接，以便新面构建时重新缝合
-                        if (twin != TriMeshHalfEdge3D<T>::INVALID_IDX) {
-                            mesh.edges[twin].twin = TriMeshHalfEdge3D<T>::INVALID_IDX;
-                        }
-                    }
-                    he = mesh.edges[he].next;
-                } while (he != he0);
-            }
-
-            // 3. 删除可见面，收集孤儿点
-            std::vector<Index> orphans;
-            for (Index f : visible_faces) {
-                for (const auto& cp : face_infos[f].conflict_points) {
-                    if (cp.pt_idx != eye_pt) orphans.push_back(cp.pt_idx);
+                if (face_iter[vf] != pending_faces.end()) {
+                    pending_faces.erase(face_iter[vf]);
+                    face_iter[vf] = pending_faces.end();
                 }
-                face_infos[f].conflict_points.clear();
-                mesh.DeleteFace(f);
+                vface.info = -1; // 彻底标记可见面（包含f）为已删除
             }
 
-            // 4. 创建新网格
-            Index new_v = mesh.AddVertex(points[eye_pt]);
-            std::vector<Index> new_faces;
-            for (const auto& edge : horizon_edges) {
-                // 原边为 v0->v1 (以洞口视角是逆时针)，新面需要 v1->v0->eye 保持法线向外
-                Index nf = mesh.AddFace(edge.second, edge.first, new_v);
-                RegisterNewFace(nf);
-                new_faces.push_back(nf);
-            }
+            Index new_vertex = hull.add_vertex(eye_pt_idx);
 
-            // 5. 将孤儿点重新分配给新面
-            for (Index pt : orphans) {
-                AssignPointToFaces(pt, points[pt], new_faces);
-            }
-        }
+            std::vector<Index> new_faces = hull.star_hole(border_edges, new_vertex);
+            face_iter.resize(hull.faces.size(), pending_faces.end());
 
-        void RegisterNewFace(Index face_idx)
-        {
-            if (face_idx >= face_infos.size()) {
-                face_infos.resize(face_idx + 1);
-            }
-            auto fvs = mesh.GetFaceVertices(face_idx);
-            Point3D<T> p0 = mesh.vertices[fvs[0]].position;
-            Point3D<T> p1 = mesh.vertices[fvs[1]].position;
-            Point3D<T> p2 = mesh.vertices[fvs[2]].position;
+            std::cout << "  -> Created " << new_faces.size() << " new faces.\n";
 
-            // 缓存未归一化的法线
-            face_infos[face_idx].normal = Cross(Sub(p1, p0), Sub(p2, p0));
-            face_infos[face_idx].max_dist = -1;
-            face_infos[face_idx].farthest_pt_idx = TriMeshHalfEdge3D<T>::INVALID_IDX;
-            face_infos[face_idx].conflict_points.clear();
-        }
+            assign_points_to_faces(new_faces, global_outside);
 
-        void AssignPointToFaces(Index pt_idx, const Point3D<T>& pt_pos, const std::vector<Index>& target_faces)
-        {
-            for (Index f : target_faces) {
-                Index v_start = mesh.GetFaceVertices(f)[0];
-                // 使用点乘计算未归一化的有向距离
-                T dist = Dot(face_infos[f].normal, Sub(pt_pos, mesh.vertices[v_start].position));
-
-                if (dist > EPSILON) {
-                    face_infos[f].conflict_points.push_back({pt_idx, dist});
-                    if (dist > face_infos[f].max_dist) {
-                        face_infos[f].max_dist = dist;
-                        face_infos[f].farthest_pt_idx = pt_idx;
-                    }
-                    // 分配给第一个可见面就退出 (降低内存与耗时)
-                    if (face_infos[f].conflict_points.size() == 1 && dist == face_infos[f].max_dist) {
-                        active_faces.push(f);
-                    }
-                    break;
+            for (Index nf : new_faces) {
+                if (!hull.faces[nf].outside_points.empty()) {
+                    pending_faces.push_back(nf);
+                    face_iter[nf] = std::prev(pending_faces.end());
                 }
             }
         }
 
-        Mesh3D<T> ExtractMesh()
-        {
-            Mesh3D<T> out_mesh;
-            // 建立旧顶点索引 -> 新顶点索引的映射
-            std::vector<Index> v_map(mesh.vertices.size(), TriMeshHalfEdge3D<T>::INVALID_IDX);
-            uint32_t current_idx = 0;
+        std::cout << "[QuickHull3D] Core algorithm finished after " << iter_count << " iterations.\n";
+        return extract_mesh();
+    }
 
-            for (size_t i = 0; i < mesh.faces.size(); ++i) {
-                if (!mesh.faces[i].is_deleted) {
-                    auto fvs = mesh.GetFaceVertices(i);
-                    uint32_t mapped_indices[3];
-                    for (int k = 0; k < 3; ++k) {
-                        Index v_origin = fvs[k];
-                        if (v_map[v_origin] == TriMeshHalfEdge3D<T>::INVALID_IDX) {
-                            v_map[v_origin] = current_idx++;
-                            // 加入到最终的 Mesh3D
-                            out_mesh.vertices.push_back(Vertex3D<T>(mesh.vertices[v_origin].position));
-                        }
-                        mapped_indices[k] = v_map[v_origin];
-                    }
-                    out_mesh.AddTriangle(mapped_indices[0], mapped_indices[1], mapped_indices[2]);
+    std::vector<Index> initial_vertices;
+    std::vector<Index> initial_faces;
+    std::vector<bool> unassigned_points;
+
+bool build_initial_tetrahedron() {
+        const auto& points = *pts;
+        size_t n = points.size();
+        if (n < 4) return false;
+
+        // 1) 寻找六个极值点 (加入字典序 Tie-breaker，专治对齐坐标轴的共面点)
+        Index extremes[6] = {0,0,0,0,0,0};
+        for (size_t i = 1; i < n; ++i) {
+            const Point3& p = points[i];
+
+            // 辅助 Lambda：判断是否需要更新最小值（加入次要和第三级比较）
+            auto check_min = [&](T val, T ref_val, T sec, T ref_sec, T thd, T ref_thd) {
+                if (val < ref_val - EPS) return true;
+                if (std::abs(val - ref_val) <= EPS) {
+                    if (sec < ref_sec - EPS) return true;
+                    if (std::abs(sec - ref_sec) <= EPS && thd < ref_thd - EPS) return true;
+                }
+                return false;
+            };
+
+            // 辅助 Lambda：判断是否需要更新最大值
+            auto check_max = [&](T val, T ref_val, T sec, T ref_sec, T thd, T ref_thd) {
+                if (val > ref_val + EPS) return true;
+                if (std::abs(val - ref_val) <= EPS) {
+                    if (sec > ref_sec + EPS) return true;
+                    if (std::abs(sec - ref_sec) <= EPS && thd > ref_thd + EPS) return true;
+                }
+                return false;
+            };
+
+            const Point3& e0 = points[extremes[0]];
+            if (check_min(p.x, e0.x, p.y, e0.y, p.z, e0.z)) extremes[0] = i; // min x
+
+            const Point3& e1 = points[extremes[1]];
+            if (check_max(p.x, e1.x, p.y, e1.y, p.z, e1.z)) extremes[1] = i; // max x
+
+            const Point3& e2 = points[extremes[2]];
+            if (check_min(p.y, e2.y, p.z, e2.z, p.x, e2.x)) extremes[2] = i; // min y
+
+            const Point3& e3 = points[extremes[3]];
+            if (check_max(p.y, e3.y, p.z, e3.z, p.x, e3.x)) extremes[3] = i; // max y
+
+            const Point3& e4 = points[extremes[4]];
+            if (check_min(p.z, e4.z, p.x, e4.x, p.y, e4.y)) extremes[4] = i; // min z
+
+            const Point3& e5 = points[extremes[5]];
+            if (check_max(p.z, e5.z, p.x, e5.x, p.y, e5.y)) extremes[5] = i; // max z
+        }
+
+        // 2) 从这六个点中找出最远点对 (作为前两个顶点)
+        Index v0 = 0, v1 = 0;
+        T max_dist_sq = -1;
+        for (int i = 0; i < 6; ++i) {
+            for (int j = i+1; j < 6; ++j) {
+                Index a = extremes[i], b = extremes[j];
+                if (a == b) continue;
+                T dsq = length_sq(sub(points[a], points[b]));
+                if (dsq > max_dist_sq) {
+                    max_dist_sq = dsq;
+                    v0 = a; v1 = b;
                 }
             }
-            return out_mesh;
         }
-    };
-}
+        if (max_dist_sq < EPS) return false;
+
+        // 3) 寻找第三个点：距离直线 (v0,v1) 最远的点
+        Point3 dir = sub(points[v1], points[v0]);
+        T dir_len_sq = length_sq(dir);
+        Index v2 = INVALID_INDEX;
+        T max_line_dist_sq = -1;
+        for (size_t i = 0; i < n; ++i) {
+            if (i == v0 || i == v1) continue;
+            T d_sq = (dir_len_sq > EPS) ? length_sq(cross(sub(points[i], points[v0]), dir)) / dir_len_sq
+                                        : length_sq(sub(points[i], points[v0]));
+            if (d_sq > max_line_dist_sq) {
+                max_line_dist_sq = d_sq;
+                v2 = i;
+            }
+        }
+        if (v2 == INVALID_INDEX || max_line_dist_sq < EPS) return false;
+
+        // 4) 寻找第四个点：距离平面 (v0,v1,v2) 最远的点
+        Point3 normal = cross(sub(points[v1], points[v0]), sub(points[v2], points[v0]));
+        T normal_len = length(normal);
+        if (normal_len < EPS) return false;
+        normal.x /= normal_len; normal.y /= normal_len; normal.z /= normal_len;
+
+        Index v3 = INVALID_INDEX;
+        T max_plane_dist = -1;
+        for (size_t i = 0; i < n; ++i) {
+            if (i == v0 || i == v1 || i == v2) continue;
+            T d = dot(normal, sub(points[i], points[v0]));
+            if (std::abs(d) > max_plane_dist) {
+                max_plane_dist = std::abs(d);
+                v3 = i;
+            }
+        }
+        if (v3 == INVALID_INDEX || max_plane_dist < EPS) return false;
+
+        std::cout << "[QuickHull3D] Initial tetrahedron vertices: \n"
+                  << "  v0: " << pt_str(points[v0]) << "\n"
+                  << "  v1: " << pt_str(points[v1]) << "\n"
+                  << "  v2: " << pt_str(points[v2]) << "\n"
+                  << "  v3: " << pt_str(points[v3]) << "\n";
+
+        // 5) 确保四面体方向（如果法线指向内侧，翻转平面朝向使其朝外）
+        if (dot(normal, sub(points[v3], points[v0])) > 0) {
+            std::cout << "  -> Flipped initial face orientation to point outwards.\n";
+            std::swap(v2, v1);
+        }
+
+        hull = ConvexHullDS3D<T>();
+        hull.bind_points(*pts);
+        Index h_v0 = hull.add_vertex(v0);
+        Index h_v1 = hull.add_vertex(v1);
+        Index h_v2 = hull.add_vertex(v2);
+        Index h_v3 = hull.add_vertex(v3);
+
+        Index f0 = hull.add_face(h_v0, h_v1, h_v2);
+        Index f1 = hull.add_face(h_v3, h_v1, h_v0);
+        Index f2 = hull.add_face(h_v3, h_v2, h_v1);
+        Index f3 = hull.add_face(h_v3, h_v0, h_v2);
+
+        // 设置邻居关系 (基于 CGAL 的标准四面体邻接)
+        hull.set_neighbor(f0, 0, f1);
+        hull.set_neighbor(f0, 1, f2);
+        hull.set_neighbor(f0, 2, f3);
+
+        hull.set_neighbor(f1, 0, f2);
+        hull.set_neighbor(f1, 1, f0);
+        hull.set_neighbor(f1, 2, f3);
+
+        hull.set_neighbor(f2, 0, f3);
+        hull.set_neighbor(f2, 1, f0);
+        hull.set_neighbor(f2, 2, f1);
+
+        hull.set_neighbor(f3, 0, f1);
+        hull.set_neighbor(f3, 1, f0);
+        hull.set_neighbor(f3, 2, f2);
+
+        hull.vertices[h_v0].face = f0;
+        hull.vertices[h_v1].face = f0;
+        hull.vertices[h_v2].face = f0;
+        hull.vertices[h_v3].face = f1;
+
+        initial_faces = {f0, f1, f2, f3};
+        initial_vertices = {v0, v1, v2, v3};
+
+        return true;
+    }
+
+    void assign_points_to_faces(const std::vector<Index>& face_list, std::list<Index>& point_set) {
+        for (auto pt_it = point_set.begin(); pt_it != point_set.end(); ) {
+            Index pt_idx = *pt_it;
+            const Point3& p = pts->at(pt_idx);
+            Index best_face = INVALID_INDEX;
+            T max_dist = -1;
+
+            for (Index fi : face_list) {
+                if (hull.faces[fi].info == -1) continue;
+                Point3 n = compute_normal(fi);
+                T dist = dot(n, sub(p, pts->at(hull.point_index(hull.faces[fi].vertices[0]))));
+                if (dist > max_dist) {
+                    max_dist = dist;
+                    best_face = fi;
+                }
+            }
+            if (best_face != INVALID_INDEX && max_dist > EPS) {
+                hull.faces[best_face].outside_points.push_back(pt_idx);
+                pt_it = point_set.erase(pt_it);
+            } else {
+                ++pt_it;
+            }
+        }
+    }
+
+    Index farthest_point(Index f) {
+        const auto& outside = hull.faces[f].outside_points;
+        if (outside.empty()) return INVALID_INDEX;
+        Point3 plane_p = pts->at(hull.point_index(hull.faces[f].vertices[0]));
+        Point3 n = compute_normal(f);
+        Index best_idx = INVALID_INDEX;
+        T max_dist = -1;
+        for (Index pi : outside) {
+            const Point3& p = pts->at(pi);
+            T dist = dot(n, sub(p, plane_p));
+            if (dist > max_dist) {
+                max_dist = dist;
+                best_idx = pi;
+            }
+        }
+        return best_idx;
+    }
+
+    void remove_from_list(std::list<Index>& lst, Index val) {
+        for (auto it = lst.begin(); it != lst.end(); ++it) {
+            if (*it == val) {
+                lst.erase(it);
+                return;
+            }
+        }
+    }
+
+    void find_visible_set(Index start_face, Index eye_pt_idx,
+                          std::vector<Index>& visible,
+                          std::vector<std::pair<Index, int>>& border_edges) {
+        const Point3& eye = pts->at(eye_pt_idx);
+        visible.clear();
+        border_edges.clear();
+
+        std::vector<int> visited(hull.faces.size(), 0);
+        std::queue<Index> q;
+        q.push(start_face);
+        visited[start_face] = 1;
+        visible.push_back(start_face);
+
+        while (!q.empty()) {
+            Index cf = q.front(); q.pop();
+            for (int i = 0; i < 3; ++i) {
+                Index nf = hull.faces[cf].neighbors[i];
+                if (nf == ConvexHullDS3D<T>::INVALID_IDX) continue;
+                if (hull.faces[nf].info == -1) continue;
+
+                if (visited[nf] == 0) {
+                    Point3 nn = compute_normal(nf);
+                    T dist = dot(nn, sub(eye, pts->at(hull.point_index(hull.faces[nf].vertices[0]))));
+                    if (dist > EPS) {
+                        visited[nf] = 1;
+                        visible.push_back(nf);
+                        q.push(nf);
+                    } else {
+                        visited[nf] = 2;
+                        border_edges.push_back({cf, i});
+                    }
+                } else if (visited[nf] == 2) {
+                    border_edges.push_back({cf, i});
+                }
+            }
+        }
+
+        std::map<Index, std::pair<Index, int>> vertex_to_edge;
+        size_t original_be_size = border_edges.size();
+        for (const auto& be : border_edges) {
+            Index f = be.first;
+            int i = be.second;
+            Index v_start = hull.edge_origin(f, i);
+            vertex_to_edge[v_start] = be;
+        }
+
+        border_edges.clear();
+        if (vertex_to_edge.empty()) return;
+
+        Index start_v = vertex_to_edge.begin()->first;
+        Index cur_v = start_v;
+        const size_t max_steps = vertex_to_edge.size() * 2;
+
+        for (size_t step = 0; step < max_steps; ++step) {
+            auto it = vertex_to_edge.find(cur_v);
+            if (it == vertex_to_edge.end()) {
+                std::cerr << "  -> ERROR: Border loop broken at vertex " << cur_v << "\n";
+                break;
+            }
+            const auto& be = it->second;
+            border_edges.push_back(be);
+            Index f = be.first;
+            int i = be.second;
+            cur_v = hull.edge_dest(f, i);
+            if (cur_v == start_v) break;
+        }
+
+        if (border_edges.size() != vertex_to_edge.size() || vertex_to_edge.size() != original_be_size) {
+            std::cerr << "  -> ERROR: Invalid border loop! Orig size: " << original_be_size
+                      << ", Map: " << vertex_to_edge.size() << ", Sorted: " << border_edges.size() << "\n";
+            border_edges.clear();
+        }
+    }
+
+    Mesh3 extract_mesh() {
+        Mesh3 result;
+        std::vector<Index> used_vertex_map(hull.vertices.size(), INVALID_INDEX);
+        Index cur_vi = 0;
+
+        int alive_faces = 0;
+        for (size_t fi = 0; fi < hull.faces.size(); ++fi) {
+            if (hull.faces[fi].info != -1) {
+                alive_faces++;
+                for (int k = 0; k < 3; ++k) {
+                    Index vi = hull.faces[fi].vertices[k];
+                    if (used_vertex_map[vi] == INVALID_INDEX) {
+                        used_vertex_map[vi] = cur_vi++;
+                        const Point3& p = pts->at(hull.point_index(vi));
+                        result.vertices.push_back(Vertex3D<T>(p));
+                    }
+                }
+            }
+        }
+
+        for (size_t fi = 0; fi < hull.faces.size(); ++fi) {
+            if (hull.faces[fi].info != -1) {
+                Index i0 = used_vertex_map[hull.faces[fi].vertices[0]];
+                Index i1 = used_vertex_map[hull.faces[fi].vertices[1]];
+                Index i2 = used_vertex_map[hull.faces[fi].vertices[2]];
+                result.indices.push_back(i0);
+                result.indices.push_back(i1);
+                result.indices.push_back(i2);
+            }
+        }
+
+        std::cout << "[QuickHull3D] Extracted Mesh: " << result.vertices.size()
+                  << " vertices, " << alive_faces << " faces.\n";
+        return result;
+    }
+
+    static constexpr Index INVALID_INDEX = std::numeric_limits<Index>::max();
+};
+
+} // namespace StuCanvas
