@@ -1974,7 +1974,7 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
     return ids;
 }
 
-        uint64_t CreateCone_3D(uint64_t apex_id, uint64_t base_center_id, T radius, std::string name = "Unnamed_Cone") {
+        uint64_t CreateCone_3D(uint64_t apex_id, uint64_t base_center_id, T radius, std::string node_name = "Unnamed_Cone") {
             Node<T>* n_apex = GetNode(apex_id);
             Node<T>* n_base = GetNode(base_center_id);
 
@@ -1983,7 +1983,7 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
 
             auto& node = node_pool.emplace_back();
             node.type = NodeType::CONE_3D;
-            node.name = name;
+            node.name = node_name;
             node.parents.push_back(apex_id);
             node.parents.push_back(base_center_id);
             node.data.cone_3d.r = radius;
@@ -2055,7 +2055,7 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
         }
 
 
-        uint64_t CreateCircle_3D(uint64_t center_id, uint64_t normal_pt_id, T radius, std::string name = "Unnamed_Circle3D") {
+        uint64_t CreateCircle_3D(uint64_t center_id, uint64_t normal_pt_id, T radius, std::string node_name = "Unnamed_Circle3D") {
             Node<T>* n_center = GetNode(center_id);
             Node<T>* n_normal = GetNode(normal_pt_id);
 
@@ -2064,7 +2064,7 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
 
             auto& node = node_pool.emplace_back();
             node.type = NodeType::CIRCLE_3D;
-            node.name = name;
+            node.name = node_name;
             node.parents = {center_id, normal_pt_id};
             node.data.circle_3d.r = radius;
 
