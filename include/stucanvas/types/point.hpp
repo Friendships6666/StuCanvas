@@ -27,7 +27,11 @@ namespace StuCanvas
         using value_type = T;
         T x, y;
 
-        Point2D(T _x = 0, T _y = 0) : x(_x), y(_y) {}
+        // 恢复平凡默认构造函数，实现 POD 核心要求
+        Point2D() = default;
+
+        // 移除默认参数，将其纯粹作为带参构造函数
+        constexpr Point2D(T _x, T _y) : x(_x), y(_y) {}
     };
 
     // ==========================================
@@ -39,10 +43,12 @@ namespace StuCanvas
         using value_type = T;
         T x, y, z;
 
-        Point3D(T _x = 0, T _y = 0, T _z = 0) : x(_x), y(_y), z(_z) {}
+        Point3D() = default;
+
+        constexpr Point3D(T _x, T _y, T _z) : x(_x), y(_y), z(_z) {}
 
         // 维度提升：从 2D 点构造 3D 点 (z = 0)
-        Point3D(const Point2D<T>& p2d)
+        constexpr Point3D(const Point2D<T>& p2d)
             : x(p2d.x), y(p2d.y), z(static_cast<T>(0)) {}
     };
 
@@ -54,18 +60,21 @@ namespace StuCanvas
     {
         using value_type = T;
         T x, y;
-        float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f; // 颜色分量直接展开
+        // 注意：移除这里的 "= 1.0f" 默认初始化，保证内存布局的纯粹性
+        float r{}, g{}, b{}, a{};
 
         ColorPoint2D() = default;
-        ColorPoint2D(T _x, T _y, float _r = 1.0f, float _g = 1.0f, float _b = 1.0f, float _a = 1.0f)
+
+        // 在构造函数中补回默认参数
+        constexpr ColorPoint2D(T _x, T _y, float _r = 1.0f, float _g = 1.0f, float _b = 1.0f, float _a = 1.0f)
             : x(_x), y(_y), r(_r), g(_g), b(_b), a(_a) {}
 
         // 从普通 2D 点构造颜色点
-        ColorPoint2D(const Point2D<T>& p, float _r = 1.0f, float _g = 1.0f, float _b = 1.0f, float _a = 1.0f)
+        constexpr ColorPoint2D(const Point2D<T>& p, float _r = 1.0f, float _g = 1.0f, float _b = 1.0f, float _a = 1.0f)
             : x(p.x), y(p.y), r(_r), g(_g), b(_b), a(_a) {}
 
         // 显式转换为普通 2D 点（丢失颜色数据）
-        explicit operator Point2D<T>() const { return { x, y }; }
+        explicit constexpr operator Point2D<T>() const { return { x, y }; }
     };
 
     // ==========================================
@@ -76,26 +85,27 @@ namespace StuCanvas
     {
         using value_type = T;
         T x, y, z;
-        float r = 1.0f, g = 1.0f, b = 1.0f, a = 1.0f; // 颜色分量直接展开
+        float r{}, g{}, b{}, a{};
 
         ColorPoint3D() = default;
-        ColorPoint3D(T _x, T _y, T _z, float _r = 1.0f, float _g = 1.0f, float _b = 1.0f, float _a = 1.0f)
+
+        constexpr ColorPoint3D(T _x, T _y, T _z, float _r = 1.0f, float _g = 1.0f, float _b = 1.0f, float _a = 1.0f)
             : x(_x), y(_y), z(_z), r(_r), g(_g), b(_b), a(_a) {}
 
         // 从普通 3D 点构造颜色点
-        ColorPoint3D(const Point3D<T>& p, float _r = 1.0f, float _g = 1.0f, float _b = 1.0f, float _a = 1.0f)
+        constexpr ColorPoint3D(const Point3D<T>& p, float _r = 1.0f, float _g = 1.0f, float _b = 1.0f, float _a = 1.0f)
             : x(p.x), y(p.y), z(p.z), r(_r), g(_g), b(_b), a(_a) {}
 
         // 维度提升：从 ColorPoint2D 构造 (z = 0, 继承颜色)
-        ColorPoint3D(const ColorPoint2D<T>& p2d)
+        constexpr ColorPoint3D(const ColorPoint2D<T>& p2d)
             : x(p2d.x), y(p2d.y), z(static_cast<T>(0)), r(p2d.r), g(p2d.g), b(p2d.b), a(p2d.a) {}
 
         // 维度提升：从普通 2D 点构造
-        ColorPoint3D(const Point2D<T>& p2d, float _r = 1.0f, float _g = 1.0f, float _b = 1.0f, float _a = 1.0f)
+        constexpr ColorPoint3D(const Point2D<T>& p2d, float _r = 1.0f, float _g = 1.0f, float _b = 1.0f, float _a = 1.0f)
             : x(p2d.x), y(p2d.y), z(static_cast<T>(0)), r(_r), g(_g), b(_b), a(_a) {}
 
         // 显式转换为普通 3D 点（丢失颜色数据）
-        explicit operator Point3D<T>() const { return { x, y, z }; }
+        explicit constexpr operator Point3D<T>() const { return { x, y, z }; }
     };
 
 } // namespace StuCanvas
