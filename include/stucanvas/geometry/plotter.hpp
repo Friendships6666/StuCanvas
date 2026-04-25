@@ -1032,7 +1032,7 @@ namespace StuCanvas
             );
 
             // 区间算术剪枝：如果区间不包含 0 或已中毒，则直接跳过该区域
-            if (res_iv.is_poisoned() || !StuCanvas::utils::possible_root(res_iv)) return;
+            if (res_iv.is_poisoned() || !StuCanvas::utils::possible_root<T>(res_iv)) return;
 
             T w = x1 - x0, hb = y1 - y0, db = z1 - z0;
 
@@ -1204,7 +1204,7 @@ namespace StuCanvas
             );
 
             // 如果区间不包含 0，或者已经因为高度剪枝被标记为 poisoned，直接跳过
-            if (res_iv.is_poisoned() || !StuCanvas::utils::possible_root(res_iv)) return;
+            if (res_iv.is_poisoned() || !utils::possible_root<T>(res_iv)) return;
 
             T w = x1 - x0, hb = y1 - y0, db = z1 - z0;
 

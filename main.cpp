@@ -1,95 +1,103 @@
 #include <iostream>
-#include <vector>
+#include <fstream>
 #include <chrono>
-#include <random>
+#include <iomanip>
 
-// 引入 StuCanvas 核心头文件
-#include "include/stucanvas/types/point.hpp"
-#include "include/stucanvas/cache/macros.hpp"
+// 包含项目核心头文件
+#include "include/stucanvas/geometry/graph.hpp"
+#include "include/stucanvas/geometry/solver.hpp"
+#include "include/stucanvas/geometry/plotter.hpp"
+#include "include/stucanvas/reconstruction/statistics.hpp"
+#include "include/stucanvas/reconstruction/voxel_boolean_3d.hpp"
 
 using namespace StuCanvas;
-
-// 简单的计时工具
-struct BenchTimer {
-    std::string name;
-    std::chrono::high_resolution_clock::time_point start;
-    BenchTimer(std::string n) : name(n), start(std::chrono::high_resolution_clock::now()) {}
-    ~BenchTimer() {
-        auto end = std::chrono::high_resolution_clock::now();
-        auto ms = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() / 1000000.0;
-        std::printf("[%s] 耗时: %.4f ms\n", name.c_str(), ms);
-    }
-};
-
-// 模拟一个重型计算函数
-void FindNearestPoint(const std::vector<Point3D<double>>& cloud,
-                      Point3D<double> target,
-                      Point3D<double>& out_result,
-                      double& out_dist)
-{
-    double min_dist_sq = std::numeric_limits<double>::max();
-    for (const auto& p : cloud) {
-        double dx = p.x - target.x;
-        double dy = p.y - target.y;
-        double dz = p.z - target.z;
-        double d2 = dx*dx + dy*dy + dz*dz;
-        if (d2 < min_dist_sq) {
-            min_dist_sq = d2;
-            out_result = p;
-        }
-    }
-    out_dist = std::sqrt(min_dist_sq);
-}
+using namespace std::chrono;
 
 int main() {
-    // 1. 准备数据 (1万个随机点)
-    std::vector<Point3D<double>> points;
-    std::mt19937 gen(42); // 固定种子保证数据一致性
-    std::uniform_real_distribution<double> dist(-100, 100);
-    for(int i=0; i<10000; ++i) points.push_back({dist(gen), dist(gen), dist(gen)});
+    // 1. 初始化 Graph 环境
+    Graph<double> graph;
+    graph.world_space_3d = {-10.0, -10.0, -10.0, 10.0, 10.0, 10.0}; // 世界范围
+    graph.resolution_3d = {200, 200, 200}; // 设置分辨率 (200^3 体素采样)
 
-    Point3D<double> query = {0.0, 0.0, 0.0};
-    double input_param_id = 1.0; // 模拟某种输入 ID
+    // 2. 创建依赖点
+    uint64_t p_origin = graph.CreateFreePoint_3D(0, 0, 0, "Center");
+    uint64_t p_top    = graph.CreateFreePoint_3D(0, 0, 8, "Apex/Top");
+    uint64_t p_norm   = graph.CreateFreePoint_3D(0, 1, 0, "Normal_Ref");
 
-    // 存储结果的变量 (必须是 POD)
-    Point3D<double> best_p{};
-    double best_dist;
+    // 3. 创建几何物体
+    // 圆锥面 (顶点, 底面中心, 半径)
+    uint64_t cone_id = graph.CreateCone_3D(p_top, p_origin, 4.0, "Surface_Cone");
 
-    std::cout << "--- 第一次运行 (Cold Start: 缓存缺失) ---" << std::endl;
-    {
-        BenchTimer t("First Run");
-        // 使用宏：输入 input_param_id，输出变量 best_p 和 best_dist
-        STU_CACHE_BLOCK("nearest_point_test", STU_IN(input_param_id), STU_OUT(best_p, best_dist))
-        {
-            std::cout << "[Logic] 缓存未命中，正在执行重型搜索算法..." << std::endl;
-            FindNearestPoint(points, query, best_p, best_dist);
+    // 圆柱面 (底面, 顶面, 半径)
+    uint64_t cyl_id  = graph.CreateCylinder_3D(p_origin, p_top, 2.5, "Surface_Cylinder");
+
+    // 3D 空间圆 (中心, 法向参考点, 半径)
+    uint64_t circ_id = graph.CreateCircle_3D(p_origin, p_norm, 5.0, "Curve_Circle");
+
+    // 4. 执行并行计算并计时
+    std::cout << "[Step 1] Starting Graph Computation..." << std::endl;
+    auto start_time = high_resolution_clock::now();
+
+    // 使用所有核心进行并行计算
+    graph.Compute(std::thread::hardware_concurrency());
+
+    auto end_time = high_resolution_clock::now();
+    auto duration = duration_cast<milliseconds>(end_time - start_time);
+    std::cout << "Computation finished in: " << duration.count() << " ms" << std::endl;
+
+    // 5. 统计与点云输出
+    std::ofstream outFile("points.txt");
+    if (!outFile) return -1;
+    outFile << std::fixed << std::setprecision(6);
+
+    uint64_t target_nodes[] = {cone_id, cyl_id, circ_id};
+    for (uint64_t id : target_nodes) {
+        auto* node = graph.GetNode(id);
+        const auto& cloud = node->result_points_3d;
+
+        // 计算平均间距 (利用 statistics.hpp)
+        double avg_dist = CalculateAverageDistance(cloud);
+
+        std::cout << "Node [" << node->name << "]: "
+                  << cloud.size() << " points, Avg Spacing: " << avg_dist << std::endl;
+
+        // 输出到文件
+        outFile << "# Node: " << node->name << "\n";
+        for (const auto& p : cloud) {
+            outFile << p.x << " " << p.y << " " << p.z << "\n";
         }
     }
-    std::printf("结果: (%.2f, %.2f, %.2f), 距离: %.4f\n\n", best_p.x, best_p.y, best_p.z, best_dist);
 
-    std::cout << "--- 第二次运行 (Cache Hit: 命中缓存) ---" << std::endl;
-    {
-        BenchTimer t("Second Run");
-        // 相同的 Label 和相同的 INPUT，大括号内的代码将完全不执行
-        STU_CACHE_BLOCK("nearest_point_test", STU_IN(input_param_id), STU_OUT(best_p, best_dist))
-        {
-            std::cout << "[Logic] 你不应该看到这句话！" << std::endl;
-            FindNearestPoint(points, query, best_p, best_dist);
-        }
-    }
-    std::printf("结果: (%.2f, %.2f, %.2f), 距离: %.4f\n\n", best_p.x, best_p.y, best_p.z, best_dist);
+    // 6. 执行布尔运算 (Reconstruction 系统)
+    // 示例：从圆柱中挖掉圆锥的部分 (Difference)
+    std::cout << "[Step 2] Performing Voxel Boolean (Difference)..." << std::endl;
 
-    std::cout << "--- 第三次运行 (Parameter Changed: 缓存失效) ---" << std::endl;
-    input_param_id = 2.0; // 修改输入参数
-    {
-        BenchTimer t("Third Run");
-        STU_CACHE_BLOCK("nearest_point_test", STU_IN(input_param_id), STU_OUT(best_p, best_dist))
-        {
-            std::cout << "[Logic] 输入已变，重新执行计算..." << std::endl;
-            FindNearestPoint(points, query, best_p, best_dist);
-        }
+    auto bool_start = high_resolution_clock::now();
+
+    const auto& cone_cloud = graph.GetNode(cone_id)->result_points_3d;
+    const auto& cyl_cloud  = graph.GetNode(cyl_id)->result_points_3d;
+
+    // 体素大小建议设为世界跨度/分辨率 (例如 20/200 = 0.1)
+    double voxel_size = 0.1;
+
+    // 执行：圆柱 - 圆锥
+    auto result_cloud = Reconstruction::VoxelBoolean3D<double>::Difference(
+        cyl_cloud, cone_cloud, voxel_size
+    );
+
+    auto bool_end = high_resolution_clock::now();
+    std::cout << "Boolean operation finished in: "
+              << duration_cast<milliseconds>(bool_end - bool_start).count() << " ms" << std::endl;
+    std::cout << "Result Cloud Size: " << result_cloud.size() << " points." << std::endl;
+
+    // 7. 保存布尔运算结果
+    outFile << "# Boolean Result (Cylinder - Cone)\n";
+    for (const auto& p : result_cloud) {
+        outFile << p.x << " " << p.y << " " << p.z << "\n";
     }
-    std::printf("结果: (%.2f, %.2f, %.2f), 距离: %.4f\n\n", best_p.x, best_p.y, best_p.z, best_dist);
+
+    outFile.close();
+    std::cout << "All points saved to points.txt" << std::endl;
 
     return 0;
 }

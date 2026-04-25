@@ -261,6 +261,9 @@ namespace StuCanvas
                 T cx;
                 T cy;
                 T cz;
+                T nx;
+                T ny;
+                T nz;
                 T r;
             } circle_3d;
             struct {
@@ -2065,7 +2068,8 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
             auto& node = node_pool.emplace_back();
             node.type = NodeType::CIRCLE_3D;
             node.name = node_name;
-            node.parents = {center_id, normal_pt_id};
+            node.parents.push_back(center_id);
+            node.parents.push_back(normal_pt_id);
             node.data.circle_3d.r = radius;
 
             uint64_t new_id = node.id;
