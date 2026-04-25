@@ -73,6 +73,7 @@ namespace StuCanvas
 
         CIRCLE_2D = WORLD_2D | CAT_CURVE | 0x0001,
         ARC_2D = WORLD_2D | CAT_CURVE | 0x0002,
+        RECT_2D = WORLD_2D | CAT_CURVE | 0x0006, // 新增：2D 矩形
 
 
         POINT_3D_FREE = WORLD_3D | CAT_POINT | 0x0001,
@@ -92,6 +93,9 @@ namespace StuCanvas
         PLANE_TANGENT_3D = WORLD_3D | CAT_SURFACE | 0x0004,
         PLANE_3D_TRAINGLE = WORLD_3D | CAT_SURFACE | 0x0005,
         CURVE_3D_INTERSECTION = WORLD_3D | CAT_CURVE | 0x0001,
+        CUBOID_3D = WORLD_3D | CAT_SURFACE | 0x0006, // 新增：3D 长方体
+        CONE_3D = WORLD_3D | CAT_SURFACE | 0x0007,
+        CIRCLE_3D = WORLD_3D | CAT_CURVE | 0x0002,
 
 
         SCALAR = WORLD_META | CAT_SCALAR | 0x0001,
@@ -214,6 +218,11 @@ namespace StuCanvas
                 T z;
             } point_3d;
 
+            struct {
+                T cx, cy, cz; // 中心点坐标 (由 Solver 更新)
+                T dx, dy, dz; // X, Y, Z 三个方向的半延伸长度
+            } cuboid_3d;
+
             struct
             {
                 T x0;
@@ -232,12 +241,32 @@ namespace StuCanvas
                 T z1;
             } line_3d;
 
+
+            struct {
+                T apex_x, apex_y, apex_z; // 顶点 (由 Solver 更新)
+                T base_x, base_y, base_z; // 底面圆心 (由 Solver 更新)
+                T r;                      // 底面半径
+            } cone_3d;
+
             struct
             {
                 T cx;
                 T cy;
                 T r;
             } circle_2d;
+
+
+            struct
+            {
+                T cx;
+                T cy;
+                T cz;
+                T r;
+            } circle_3d;
+            struct {
+                T cx, cy;      // 中心点 (由 Solver 更新)
+                T width, height; // 宽和高
+            } rect_2d;         // 新增：矩形数据
 
             struct {
                 T cx, cy, cz; // 中心点 (由 Solver 更新)
@@ -263,6 +292,13 @@ namespace StuCanvas
                 T start_angle;
                 T end_angle;
             } arc_2d;
+
+
+            struct {
+                T p1x, p1y, p1z; // 起点中心
+                T p2x, p2y, p2z; // 终点中心
+                T r;             // 半径
+            } cylinder_3d;
 
             struct
             {
@@ -300,8 +336,6 @@ namespace StuCanvas
         utils::BlockDeque<uint64_t, 16> children;
         std::vector<Point2D<T>> result_points_2d;
         std::vector<Point3D<T>> result_points_3d;
-        std::vector<Mesh2D<T>> result_meshes_2d;
-        std::vector<Mesh3D<T>> result_meshes_3d;
         SolverFuncPtr<T> solver = nullptr;
         PlotterFuncPtr<T> plotter = nullptr;
 
@@ -1680,8 +1714,8 @@ namespace StuCanvas
         {
             // 1. 获取并校验四个点
             Node<T>* ns[4] = { GetNode(p1_id), GetNode(p2_id), GetNode(p3_id), GetNode(p4_id) };
-            for(int i=0; i<4; ++i) {
-                if (!(is_3d(ns[i]->type) && is_point(ns[i]->type))) {
+            for(auto & n : ns) {
+                if (!(is_3d(n->type) && is_point(n->type))) {
                     throw std::invalid_argument("All arguments must be 3D Point objects.");
                 }
             }
@@ -1692,9 +1726,9 @@ namespace StuCanvas
             node.name = node_name;
 
             // 建立 4 个父节点依赖
-            for(int i=0; i<4; ++i) {
-                node.parents.push_back(ns[i]->id);
-                ns[i]->children.push_back(node.id);
+            for(auto & n : ns) {
+                node.parents.push_back(n->id);
+                n->children.push_back(node.id);
             }
 
             uint64_t new_id = node.id;
@@ -1762,5 +1796,288 @@ namespace StuCanvas
 
             return new_id;
         }
+
+
+
+        uint64_t CreateRectangle_2D(uint64_t center_id, T width, T height, std::string node_name = "Unnamed") {
+            Node<T>* center_node = GetNode(center_id);
+
+            // 校验输入：中心点必须是 2D 点
+            if (!is_2d(center_node->type) || !is_point(center_node->type)) {
+                throw std::invalid_argument("Rectangle center must be a 2D Point.");
+            }
+
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::RECT_2D;
+            node.name = node_name;
+            node.parents.emplace_back(center_id);
+
+            // 存储初始尺寸
+            node.data.rect_2d.width = width;
+            node.data.rect_2d.height = height;
+
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+
+            // 建立父子依赖
+            center_node->children.emplace_back(new_id);
+
+            // 绑定 Solver 和 Plotter
+            node.solver = SolveRectangle_2D<T>;
+            node.plotter = PlotRectangle_2D<T>;
+            node.set_mask(NodeMask::DIRTY);
+
+            return new_id;
+        }
+
+
+
+        std::vector<uint64_t> GroupCreateRectangle_2D(uint64_t center_id, T width, T height,
+                                                      std::string node_name = "Unnamed_Rect")
+        {
+            std::vector<uint64_t> created_ids;
+            created_ids.reserve(8); // 4点 + 4线
+
+            // 1. 获取中心点当前的物理坐标
+            Node<T>* center_node = GetNode(center_id);
+            T cx = center_node->data.point_2d.x;
+            T cy = center_node->data.point_2d.y;
+
+            // 2. 计算四个顶点的坐标
+            T half_w = width / static_cast<T>(2.0);
+            T half_h = height / static_cast<T>(2.0);
+
+            T x_min = cx - half_w;
+            T x_max = cx + half_w;
+            T y_min = cy - half_h;
+            T y_max = cy + half_h;
+
+            // 3. 创建四个自由点节点 (顶点)
+            // 顺序：左下 -> 右下 -> 右上 -> 左上
+            uint64_t v0 = CreateFreePoint_2D(x_min, y_min, node_name + "_V0");
+            uint64_t v1 = CreateFreePoint_2D(x_max, y_min, node_name + "_V1");
+            uint64_t v2 = CreateFreePoint_2D(x_max, y_max, node_name + "_V2");
+            uint64_t v3 = CreateFreePoint_2D(x_min, y_max, node_name + "_V3");
+
+            created_ids.push_back(v0);
+            created_ids.push_back(v1);
+            created_ids.push_back(v2);
+            created_ids.push_back(v3);
+
+            // 4. 创建四条线段节点连接顶点
+            uint64_t s0 = CreateSegment_2D(v0, v1, node_name + "_Edge0");
+            uint64_t s1 = CreateSegment_2D(v1, v2, node_name + "_Edge1");
+            uint64_t s2 = CreateSegment_2D(v2, v3, node_name + "_Edge2");
+            uint64_t s3 = CreateSegment_2D(v3, v0, node_name + "_Edge3");
+
+            created_ids.push_back(s0);
+            created_ids.push_back(s1);
+            created_ids.push_back(s2);
+            created_ids.push_back(s3);
+
+            return created_ids;
+        }
+
+
+        uint64_t CreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz, std::string node_name = "Unnamed_Cuboid") {
+            Node<T>* center_node = GetNode(center_id);
+
+            if (!is_3d(center_node->type) || !is_point(center_node->type)) {
+                throw std::invalid_argument("Cuboid center must be a 3D Point.");
+            }
+
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::CUBOID_3D;
+            node.name = node_name;
+            node.parents.emplace_back(center_id);
+
+            // 存储延伸参数
+            node.data.cuboid_3d.dx = dx;
+            node.data.cuboid_3d.dy = dy;
+            node.data.cuboid_3d.dz = dz;
+
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+            center_node->children.emplace_back(new_id);
+
+            // 绑定专用求解器与打点器
+            node.solver = SolveCuboid_3D<T>;
+            node.plotter = PlotCuboid_3D<T>;
+            node.set_mask(NodeMask::DIRTY);
+
+            return new_id;
+        }
+
+        /**
+ * @brief 组合模式创建 3D 长方体
+ *
+ * 生成结构：
+ * - 8 个 Point3D_Free (顶点)
+ * - 12 个 Line3D_Segment (棱边)
+ * - 12 个 Triangle_3D (面，每个矩形面拆分为2个三角形)
+ *
+ * @return std::vector<uint64_t> 包含所有生成的子节点 ID [8点, 12线, 12面]
+ */
+std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
+                                           std::string node_name = "Unnamed_GroupCuboid")
+{
+    std::vector<uint64_t> ids;
+    ids.reserve(32); // 8 + 12 + 12
+
+    // 1. 获取中心点位置
+    Node<T>* center_node = GetNode(center_id);
+    T cx = center_node->data.point_3d.x;
+    T cy = center_node->data.point_3d.y;
+    T cz = center_node->data.point_3d.z;
+
+    // 2. 创建 8 个顶点 (POINT_3D_FREE)
+    // 索引约定：0-3 为底面 (z-dz)，4-7 为顶面 (z+dz)
+    uint64_t v[8];
+    v[0] = CreateFreePoint_3D(cx - dx, cy - dy, cz - dz, node_name + "_V0");
+    v[1] = CreateFreePoint_3D(cx + dx, cy - dy, cz - dz, node_name + "_V1");
+    v[2] = CreateFreePoint_3D(cx + dx, cy + dy, cz - dz, node_name + "_V2");
+    v[3] = CreateFreePoint_3D(cx - dx, cy + dy, cz - dz, node_name + "_V3");
+    v[4] = CreateFreePoint_3D(cx - dx, cy - dy, cz + dz, node_name + "_V4");
+    v[5] = CreateFreePoint_3D(cx + dx, cy - dy, cz + dz, node_name + "_V5");
+    v[6] = CreateFreePoint_3D(cx + dx, cy + dy, cz + dz, node_name + "_V6");
+    v[7] = CreateFreePoint_3D(cx - dx, cy + dy, cz + dz, node_name + "_V7");
+
+    for (int i = 0; i < 8; ++i) ids.push_back(v[i]);
+
+    // 3. 创建 12 条棱边 (LINE_3D_SEGMENT)
+    auto add_edge = [&](int i, int j) {
+        ids.push_back(CreateSegment_3D(v[i], v[j], node_name + "_Edge"));
+    };
+    // 底面 4 条
+    add_edge(0, 1); add_edge(1, 2); add_edge(2, 3); add_edge(3, 0);
+    // 顶面 4 条
+    add_edge(4, 5); add_edge(5, 6); add_edge(6, 7); add_edge(7, 4);
+    // 垂直 4 条
+    add_edge(0, 4); add_edge(1, 5); add_edge(2, 6); add_edge(3, 7);
+
+    // 4. 创建 12 个三角形面 (PLANE_3D_TRIANGLE)
+    // 每个矩形面由 2 个三角形组成
+    auto add_rect_face = [&](int i, int j, int k, int l) {
+        // 三角形 1
+        ids.push_back(CreateTriangle_3D(v[i], v[j], v[k], node_name + "_Face"));
+        // 三角形 2
+        ids.push_back(CreateTriangle_3D(v[i], v[k], v[l], node_name + "_Face"));
+    };
+
+    add_rect_face(0, 3, 2, 1); // 底面
+    add_rect_face(4, 5, 6, 7); // 顶面
+    add_rect_face(0, 1, 5, 4); // 前面
+    add_rect_face(1, 2, 6, 5); // 右面
+    add_rect_face(2, 3, 7, 6); // 后面
+    add_rect_face(3, 0, 4, 7); // 左面
+
+    return ids;
+}
+
+        uint64_t CreateCone_3D(uint64_t apex_id, uint64_t base_center_id, T radius, std::string name = "Unnamed_Cone") {
+            Node<T>* n_apex = GetNode(apex_id);
+            Node<T>* n_base = GetNode(base_center_id);
+
+            if (!is_3d(n_apex->type) || !is_3d(n_base->type))
+                throw std::invalid_argument("Apex and Base Center must be 3D Points.");
+
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::CONE_3D;
+            node.name = name;
+            node.parents.push_back(apex_id);
+            node.parents.push_back(base_center_id);
+            node.data.cone_3d.r = radius;
+
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+            n_apex->children.push_back(new_id);
+            n_base->children.push_back(new_id);
+
+            node.solver = SolveCone_3D<T>;
+            node.plotter = PlotCone_3D<T>;
+            node.set_mask(NodeMask::DIRTY);
+            return new_id;
+        }
+
+
+        /**
+         * @brief 创建 3D 圆柱面节点 (端点 A 到 端点 B 模式)
+         *
+         * @param p1_id 第一个端点（中心点）的 ID
+         * @param p2_id 第二个端点（中心点）的 ID
+         * @param radius 圆柱半径 R
+         * @param node_name 节点名称
+         * @return uint64_t 新创建的圆柱节点 ID
+         */
+        uint64_t CreateCylinder_3D(uint64_t p1_id, uint64_t p2_id, T radius, std::string node_name = "Unnamed_Cylinder")
+        {
+            // 1. 获取并校验两个父节点（端点）
+            Node<T>* n1 = GetNode(p1_id);
+            Node<T>* n2 = GetNode(p2_id);
+
+            // 校验：必须都是 3D 点
+            if (!(is_3d(n1->type) && is_point(n1->type)) ||
+                !(is_3d(n2->type) && is_point(n2->type)))
+            {
+                throw std::invalid_argument("Cylinder endpoints must be 3D Point objects.");
+            }
+
+            // 2. 在内存池中创建新节点
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::CYLINDER_3D;
+            node.name = node_name;
+
+            // 3. 建立依赖关系 (Parents/Children)
+            // 圆柱节点依赖于这两个点
+            node.parents.push_back(p1_id);
+            node.parents.push_back(p2_id);
+
+            // 存储半径参数
+            node.data.cylinder_3d.r = radius;
+
+            // 4. 注册 ID 映射
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+
+            // 将圆柱节点添加为两个端点节点的子节点
+            n1->children.push_back(new_id);
+            n2->children.push_back(new_id);
+
+            // 5. 绑定求解器与打点器
+            // 注意：对应的 SolveCylinder_3D 和 PlotCylinder_3D 需在 solver.hpp 和 plotter.hpp 中实现
+            node.solver  = SolveCylinder_3D<T>;
+            node.plotter = PlotCylinder_3D<T>;
+
+            // 6. 标记为脏，确保下次 Compute 时执行计算
+            node.set_mask(NodeMask::DIRTY);
+
+            return new_id;
+        }
+
+
+        uint64_t CreateCircle_3D(uint64_t center_id, uint64_t normal_pt_id, T radius, std::string name = "Unnamed_Circle3D") {
+            Node<T>* n_center = GetNode(center_id);
+            Node<T>* n_normal = GetNode(normal_pt_id);
+
+            if (!is_3d(n_center->type) || !is_3d(n_normal->type))
+                throw std::invalid_argument("Center and Normal Point must be 3D Points.");
+
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::CIRCLE_3D;
+            node.name = name;
+            node.parents = {center_id, normal_pt_id};
+            node.data.circle_3d.r = radius;
+
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+            n_center->children.push_back(new_id);
+            n_normal->children.push_back(new_id);
+
+            node.solver = SolveCircle_3D<T>;
+            node.plotter = PlotCircle_3D<T>;
+            node.set_mask(NodeMask::DIRTY);
+            return new_id;
+        }
+
     };
 }

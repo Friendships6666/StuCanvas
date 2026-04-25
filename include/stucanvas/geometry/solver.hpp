@@ -3,9 +3,9 @@
 #include "cmath"
 #include "../utils/flat_map.hpp"
 #include "../types/point.hpp"
+
 namespace StuCanvas
 {
-
     template <typename T>
     struct Graph;
     template <typename T>
@@ -665,7 +665,7 @@ namespace StuCanvas
         // --- 1. 基础物理依赖校验 ---
         if (self.parents.size() < 2) return;
 
-        Node<T>* obj_node = graph.GetNode(self.parents[0]);   // 被切的目标物体
+        Node<T>* obj_node = graph.GetNode(self.parents[0]); // 被切的目标物体
         Node<T>* pivot_node = graph.GetNode(self.parents[1]); // 切点(吸附点)
 
         const auto& pts = obj_node->result_points_3d;
@@ -679,14 +679,16 @@ namespace StuCanvas
         // --- 2. 邻域搜寻 (K-Nearest Neighbors) ---
         // 选取 100 个点以获得稳定的统计特征，抵消八叉树采样的格栅效应
         const size_t K = std::min(pts.size(), (size_t)100);
-        struct Neighbor {
+        struct Neighbor
+        {
             size_t idx;
             T dist_sq;
         };
         std::vector<Neighbor> neighbors;
         neighbors.reserve(pts.size());
 
-        for (size_t i = 0; i < pts.size(); ++i) {
+        for (size_t i = 0; i < pts.size(); ++i)
+        {
             T dx = pts[i].x - px;
             T dy = pts[i].y - py;
             T dz = pts[i].z - pz;
@@ -695,29 +697,37 @@ namespace StuCanvas
 
         // 仅对前 K 个最近的点进行部分排序，优化离线计算性能
         std::partial_sort(neighbors.begin(), neighbors.begin() + K, neighbors.end(),
-            [](const Neighbor& a, const Neighbor& b) {
-                return a.dist_sq < b.dist_sq;
-            });
+                          [](const Neighbor& a, const Neighbor& b)
+                          {
+                              return a.dist_sq < b.dist_sq;
+                          });
 
         // --- 3. 计算重心与协方差矩阵 ---
         T avg_x = 0, avg_y = 0, avg_z = 0;
-        for (size_t i = 0; i < K; ++i) {
+        for (size_t i = 0; i < K; ++i)
+        {
             const auto& p = pts[neighbors[i].idx];
-            avg_x += p.x; avg_y += p.y; avg_z += p.z;
+            avg_x += p.x;
+            avg_y += p.y;
+            avg_z += p.z;
         }
         avg_x /= static_cast<T>(K);
         avg_y /= static_cast<T>(K);
         avg_z /= static_cast<T>(K);
 
         // 构建对称协方差矩阵
-        T cov[3][3] = { {0, 0, 0}, {0, 0, 0}, {0, 0, 0} };
-        for (size_t i = 0; i < K; ++i) {
+        T cov[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+        for (size_t i = 0; i < K; ++i)
+        {
             const auto& p = pts[neighbors[i].idx];
             T dx = p.x - avg_x;
             T dy = p.y - avg_y;
             T dz = p.z - avg_z;
-            cov[0][0] += dx * dx; cov[0][1] += dx * dy; cov[0][2] += dx * dz;
-            cov[1][1] += dy * dy; cov[1][2] += dy * dz;
+            cov[0][0] += dx * dx;
+            cov[0][1] += dx * dy;
+            cov[0][2] += dx * dz;
+            cov[1][1] += dy * dy;
+            cov[1][2] += dy * dz;
             cov[2][2] += dz * dz;
         }
         // 补全对称位
@@ -727,16 +737,27 @@ namespace StuCanvas
 
         // --- 4. 雅可比旋转法 (Jacobi Eigenvalue Algorithm) ---
         // 目标：将 cov 矩阵对角化，求出 3 个相互正交的特征向量
-        T V[3][3] = { {1,0,0}, {0,1,0}, {0,0,1} }; // 存储特征向量的矩阵
+        T V[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}; // 存储特征向量的矩阵
         const int max_iterations = 50; // 对于 3x3 矩阵，50次迭代足以达到机器精度
         const T eps = std::numeric_limits<T>::epsilon();
 
-        for (int iter = 0; iter < max_iterations; ++iter) {
+        for (int iter = 0; iter < max_iterations; ++iter)
+        {
             // 4a. 寻找矩阵中绝对值最大的非对角元素 cov[p][q]
             int p = 0, q = 1;
             T max_val = std::abs(cov[0][1]);
-            if (std::abs(cov[0][2]) > max_val) { p = 0; q = 2; max_val = std::abs(cov[0][2]); }
-            if (std::abs(cov[1][2]) > max_val) { p = 1; q = 2; max_val = std::abs(cov[1][2]); }
+            if (std::abs(cov[0][2]) > max_val)
+            {
+                p = 0;
+                q = 2;
+                max_val = std::abs(cov[0][2]);
+            }
+            if (std::abs(cov[1][2]) > max_val)
+            {
+                p = 1;
+                q = 2;
+                max_val = std::abs(cov[1][2]);
+            }
 
             // 如果最大的非对角元素已经足够小，说明已经完成对角化
             if (max_val < eps * 1e-4) break;
@@ -747,8 +768,10 @@ namespace StuCanvas
             T sin_t = std::sin(theta);
 
             // 4c. 更新协方差矩阵 (旋转变换：D = J^T * Cov * J)
-            T app = cos_t * cos_t * cov[p][p] - static_cast<T>(2.0) * sin_t * cos_t * cov[p][q] + sin_t * sin_t * cov[q][q];
-            T aqq = sin_t * sin_t * cov[p][p] + static_cast<T>(2.0) * sin_t * cos_t * cov[p][q] + cos_t * cos_t * cov[q][q];
+            T app = cos_t * cos_t * cov[p][p] - static_cast<T>(2.0) * sin_t * cos_t * cov[p][q] + sin_t * sin_t * cov[q]
+                [q];
+            T aqq = sin_t * sin_t * cov[p][p] + static_cast<T>(2.0) * sin_t * cos_t * cov[p][q] + cos_t * cos_t * cov[q]
+                [q];
             T apq = (cos_t * cos_t - sin_t * sin_t) * cov[p][q] + sin_t * cos_t * (cov[p][p] - cov[q][q]);
 
             cov[p][p] = app;
@@ -756,8 +779,10 @@ namespace StuCanvas
             cov[p][q] = cov[q][p] = 0; // 强制置零
 
             // 更新其余不直接参与旋转的元素
-            for (int i = 0; i < 3; ++i) {
-                if (i != p && i != q) {
+            for (int i = 0; i < 3; ++i)
+            {
+                if (i != p && i != q)
+                {
                     T aip = cov[i][p];
                     T aiq = cov[i][q];
                     cov[i][p] = cov[p][i] = cos_t * aip - sin_t * aiq;
@@ -766,7 +791,8 @@ namespace StuCanvas
             }
 
             // 4d. 更新特征向量矩阵 V (累积旋转)
-            for (int i = 0; i < 3; ++i) {
+            for (int i = 0; i < 3; ++i)
+            {
                 T vip = V[i][p];
                 T viq = V[i][q];
                 V[i][p] = cos_t * vip - sin_t * viq;
@@ -776,9 +802,10 @@ namespace StuCanvas
 
         // --- 5. 排序特征向量，提取切平面基底 ---
         // 对角线上的元素 cov[i][i] 即为特征值 (方差)
-        T eigenvalues[3] = { cov[0][0], cov[1][1], cov[2][2] };
-        int order[3] = { 0, 1, 2 };
-        std::sort(order, order + 3, [&](int a, int b) {
+        T eigenvalues[3] = {cov[0][0], cov[1][1], cov[2][2]};
+        int order[3] = {0, 1, 2};
+        std::sort(order, order + 3, [&](int a, int b)
+        {
             return eigenvalues[a] > eigenvalues[b];
         });
 
@@ -791,13 +818,17 @@ namespace StuCanvas
         // 为了确保平面覆盖视野，计算世界空间的对角线跨度
         const auto& ws = graph.world_space_3d;
         T diag_sq = std::pow(ws.x_max - ws.x_min, 2) +
-                    std::pow(ws.y_max - ws.y_min, 2) +
-                    std::pow(ws.z_max - ws.z_min, 2);
+            std::pow(ws.y_max - ws.y_min, 2) +
+            std::pow(ws.z_max - ws.z_min, 2);
         T stretch_factor = std::sqrt(diag_sq) * static_cast<T>(5.0); // 5倍余量保证无限感
 
         // 应用拉伸
-        ux *= stretch_factor; uy *= stretch_factor; uz *= stretch_factor;
-        vx *= stretch_factor; vy *= stretch_factor; vz *= stretch_factor;
+        ux *= stretch_factor;
+        uy *= stretch_factor;
+        uz *= stretch_factor;
+        vx *= stretch_factor;
+        vy *= stretch_factor;
+        vz *= stretch_factor;
 
         // --- 7. 数据落盘与对齐 ---
         auto& plane_data = self.data.plane_3d;
@@ -815,8 +846,6 @@ namespace StuCanvas
         plane_data.vx = vx;
         plane_data.vy = vy;
         plane_data.vz = vz;
-
-
     }
 
 
@@ -843,9 +872,11 @@ namespace StuCanvas
         const T eps = std::numeric_limits<T>::epsilon();
         const T min_limit = eps * static_cast<T>(10.0);
 
-        auto safe_diff = [&](T a, T b) -> T {
+        auto safe_diff = [&](T a, T b) -> T
+        {
             T diff = a - b;
-            if (std::abs(diff) < eps) {
+            if (std::abs(diff) < eps)
+            {
                 return (diff >= 0) ? min_limit : -min_limit;
             }
             return diff;
@@ -870,14 +901,17 @@ namespace StuCanvas
         T ny = d.uz * d.ux - d.ux * d.vz;
         T nz = d.ux * d.vy - d.uy * d.ux;
 
-        if ((nx*nx + ny*ny + nz*nz) < eps) {
+        if ((nx * nx + ny * ny + nz * nz) < eps)
+        {
             // 如果三点共线，强制微调 V 向量使其产生极小面积
             if (std::abs(d.ux) < std::abs(d.uy)) d.vx += min_limit;
             else d.vy += min_limit;
         }
     }
+
     template <typename T>
-void SolvePlatonicSolid_3D(Graph<T>& graph, Node<T>& self) {
+    void SolvePlatonicSolid_3D(Graph<T>& graph, Node<T>& self)
+    {
         if (self.parents.empty()) return;
 
         // 获取中心点
@@ -907,53 +941,57 @@ void SolvePlatonicSolid_3D(Graph<T>& graph, Node<T>& self) {
 
         // 1. 获取四个点的坐标
         Point3D<T> p[4];
-        for(int i=0; i<4; ++i) {
+        for (int i = 0; i < 4; ++i)
+        {
             auto* n = graph.GetNode(self.parents[i]);
-            p[i] = { n->data.point_3d.x, n->data.point_3d.y, n->data.point_3d.z };
+            p[i] = {n->data.point_3d.x, n->data.point_3d.y, n->data.point_3d.z};
         }
 
         // 2. 建立线性方程组：2(x_i - x_1)x + 2(y_i - y_1)y + 2(z_i - z_1)z = (x_i^2+y_i^2+z_i^2) - (x_1^2+y_1^2+z_1^2)
         // 令 A * [cx, cy, cz]^T = B
         T a[3][3], b[3];
-        T s1 = p[0].x*p[0].x + p[0].y*p[0].y + p[0].z*p[0].z;
+        T s1 = p[0].x * p[0].x + p[0].y * p[0].y + p[0].z * p[0].z;
 
-        for (int i = 0; i < 3; ++i) {
-            a[i][0] = 2 * (p[i+1].x - p[0].x);
-            a[i][1] = 2 * (p[i+1].y - p[0].y);
-            a[i][2] = 2 * (p[i+1].z - p[0].z);
-            b[i] = (p[i+1].x*p[i+1].x + p[i+1].y*p[i+1].y + p[i+1].z*p[i+1].z) - s1;
+        for (int i = 0; i < 3; ++i)
+        {
+            a[i][0] = 2 * (p[i + 1].x - p[0].x);
+            a[i][1] = 2 * (p[i + 1].y - p[0].y);
+            a[i][2] = 2 * (p[i + 1].z - p[0].z);
+            b[i] = (p[i + 1].x * p[i + 1].x + p[i + 1].y * p[i + 1].y + p[i + 1].z * p[i + 1].z) - s1;
         }
 
         // 3. 计算行列式 (Cramer's rule)
         T det = a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
-                a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
-                a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+            a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+            a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
 
         // 4. 机器精度钳制 (针对退化情况：如四点共面)
         const T eps = std::numeric_limits<T>::epsilon();
-        if (std::abs(det) < eps) {
+        if (std::abs(det) < eps)
+        {
             det = (det >= 0) ? eps * 10 : -eps * 10;
         }
 
         // 5. 计算圆心 (利用行列式代换)
-        auto get_det = [&](T c0, T c1, T c2) {
+        auto get_det = [&](T c0, T c1, T c2)
+        {
             return c0 * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
-                   a[0][1] * (c1 * a[2][2] - a[1][2] * c2) +
-                   a[0][2] * (c1 * a[2][1] - a[1][1] * c2);
+                a[0][1] * (c1 * a[2][2] - a[1][2] * c2) +
+                a[0][2] * (c1 * a[2][1] - a[1][1] * c2);
         };
 
         // cx = det(B, col2, col3) / det ... 依此类推
         T cx = (b[0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
-                a[0][1] * (b[1] * a[2][2] - a[1][2] * b[2]) +
-                a[0][2] * (b[1] * a[2][1] - a[1][1] * b[2])) / det;
+            a[0][1] * (b[1] * a[2][2] - a[1][2] * b[2]) +
+            a[0][2] * (b[1] * a[2][1] - a[1][1] * b[2])) / det;
 
         T cy = (a[0][0] * (b[1] * a[2][2] - a[1][2] * b[2]) -
-                b[0] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
-                a[0][2] * (a[1][0] * b[2] - b[1] * a[2][0])) / det;
+            b[0] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+            a[0][2] * (a[1][0] * b[2] - b[1] * a[2][0])) / det;
 
         T cz = (a[0][0] * (a[1][1] * b[2] - b[1] * a[2][1]) -
-                a[0][1] * (a[1][0] * b[2] - b[1] * a[2][0]) +
-                b[0] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])) / det;
+            a[0][1] * (a[1][0] * b[2] - b[1] * a[2][0]) +
+            b[0] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])) / det;
 
         // 6. 写入结果
         self.data.sphere_3d.cx = cx;
@@ -964,21 +1002,24 @@ void SolvePlatonicSolid_3D(Graph<T>& graph, Node<T>& self) {
         T dx = cx - p[0].x;
         T dy = cy - p[0].y;
         T dz = cz - p[0].z;
-        self.data.sphere_3d.r = std::sqrt(dx*dx + dy*dy + dz*dz);
+        self.data.sphere_3d.r = std::sqrt(dx * dx + dy * dy + dz * dz);
     }
+
     namespace utils
     {
-        template<typename T>
-        struct IntersectionCell {
+        template <typename T>
+        struct IntersectionCell
+        {
             uint32_t unique_parents = 0; // 有多少个不同的父对象经过了这里
             uint32_t last_p_idx = 0xFFFFFFFF; // 上一个贡献计数的父对象索引
-            uint32_t total_points = 0;   // 总采样点数（用于算重心）
+            uint32_t total_points = 0; // 总采样点数（用于算重心）
             T sum_x = 0;
             T sum_y = 0;
         };
     }
+
     template <typename T>
-        void SolveIntersectionPoint_2D(Graph<T>& graph, Node<T>& self)
+    void SolveIntersectionPoint_2D(Graph<T>& graph, Node<T>& self)
     {
         const uint32_t num_parents = static_cast<uint32_t>(self.parents.size());
         if (num_parents < 2) return;
@@ -992,11 +1033,12 @@ void SolvePlatonicSolid_3D(Graph<T>& graph, Node<T>& self) {
         if (dx <= 0 || dy <= 0) return;
 
         // 2. 定义格栅单元结构
-        struct IntersectionCell2D {
-            uint32_t unique_votes = 0;        // 有多少个不同的父对象占领了此格
+        struct IntersectionCell2D
+        {
+            uint32_t unique_votes = 0; // 有多少个不同的父对象占领了此格
             uint32_t last_voter_idx = 0xFFFFFFFF; // 记录上一个投票者，防止单个对象刷票
-            uint32_t point_count = 0;         // 落入此格的总采样点数
-            T sum_x = 0;                      // 坐标累加，用于计算重心
+            uint32_t point_count = 0; // 落入此格的总采样点数
+            T sum_x = 0; // 坐标累加，用于计算重心
             T sum_y = 0;
         };
 
@@ -1020,7 +1062,8 @@ void SolvePlatonicSolid_3D(Graph<T>& graph, Node<T>& self) {
                 auto& cell = grid[key];
 
                 // 核心逻辑：如果此物体在这个格子里还没投过票
-                if (cell.last_voter_idx != p_idx) {
+                if (cell.last_voter_idx != p_idx)
+                {
                     cell.unique_votes++;
                     cell.last_voter_idx = p_idx;
                 }
@@ -1051,8 +1094,9 @@ void SolvePlatonicSolid_3D(Graph<T>& graph, Node<T>& self) {
                 T cand_y = cell.sum_y / cell.point_count;
 
                 // 在所有可能的交点中，寻找离当前猜测点（历史位置）最近的那一个
-                T d2 = (cand_x - gx)*(cand_x - gx) + (cand_y - gy)*(cand_y - gy);
-                if (d2 < min_dist_sq) {
+                T d2 = (cand_x - gx) * (cand_x - gx) + (cand_y - gy) * (cand_y - gy);
+                if (d2 < min_dist_sq)
+                {
                     min_dist_sq = d2;
                     best_pt = {cand_x, cand_y};
                     found = true;
@@ -1061,19 +1105,23 @@ void SolvePlatonicSolid_3D(Graph<T>& graph, Node<T>& self) {
         }
 
         // --- 第三阶段：状态更新与轮换 ---
-        if (found) {
+        if (found)
+        {
             // 找到交点：执行“传送”
             self.data.snap_2d.x = best_pt.x;
             self.data.snap_2d.y = best_pt.y;
             // 轮换逻辑：当前位置作为下一次 Compute 的猜测点，实现持续追踪
             self.data.snap_2d.guess_x = best_pt.x;
             self.data.snap_2d.guess_y = best_pt.y;
-        } else {
+        }
+        else
+        {
             // 未找到交点：保持在原猜测位置（可能几何体移开了）
             self.data.snap_2d.x = gx;
             self.data.snap_2d.y = gy;
         }
     }
+
     namespace utils
     {
         /**
@@ -1091,7 +1139,7 @@ void SolvePlatonicSolid_3D(Graph<T>& graph, Node<T>& self) {
         };
     }
 
-template <typename T>
+    template <typename T>
     void SolveIntersectionCurve_3D(Graph<T>& graph, Node<T>& self)
     {
         const uint32_t num_parents = static_cast<uint32_t>(self.parents.size());
@@ -1104,14 +1152,16 @@ template <typename T>
         const T dz = (ws.z_max - ws.z_min) / res.z;
         if (dx <= 0 || dy <= 0 || dz <= 0) return;
 
-        struct IntersectionCell {
+        struct IntersectionCell
+        {
             uint32_t unique_votes = 0;
             uint32_t last_voter_idx = 0xFFFFFFFF;
             uint32_t total_points = 0;
             T sx = 0, sy = 0, sz = 0;
         };
 
-        auto get_key = [](int64_t ix, int64_t iy, int64_t iz) -> uint64_t {
+        auto get_key = [](int64_t ix, int64_t iy, int64_t iz) -> uint64_t
+        {
             uint64_t ux = static_cast<uint64_t>(ix + 1000000) & 0x1FFFFF;
             uint64_t uy = static_cast<uint64_t>(iy + 1000000) & 0x1FFFFF;
             uint64_t uz = static_cast<uint64_t>(iz + 1000000) & 0x1FFFFF;
@@ -1135,7 +1185,8 @@ template <typename T>
                 uint64_t key = get_key(ix, iy, iz);
                 auto& cell = grid[key];
 
-                if (cell.last_voter_idx != p_idx) {
+                if (cell.last_voter_idx != p_idx)
+                {
                     cell.unique_votes++;
                     cell.last_voter_idx = p_idx;
                 }
@@ -1165,5 +1216,90 @@ template <typename T>
             }
         }
     }
-}
 
+
+    template <typename T>
+    void SolveRectangle_2D(Graph<T>& graph, Node<T>& self)
+    {
+        if (self.parents.empty()) return;
+
+        // 获取父节点（中心点）
+        Node<T>* center = graph.GetNode(self.parents[0]);
+
+        // 同步中心点坐标到矩形数据块中
+        self.data.rect_2d.cx = center->data.point_2d.x;
+        self.data.rect_2d.cy = center->data.point_2d.y;
+    }
+
+    template <typename T>
+    void SolveCuboid_3D(Graph<T>& graph, Node<T>& self)
+    {
+        if (self.parents.empty()) return;
+        Node<T>* center = graph.GetNode(self.parents[0]);
+
+        // 同步中心位置
+        self.data.cuboid_3d.cx = center->data.point_3d.x;
+        self.data.cuboid_3d.cy = center->data.point_3d.y;
+        self.data.cuboid_3d.cz = center->data.point_3d.z;
+    }
+
+
+    template <typename T>
+    void SolveCone_3D(Graph<T>& graph, Node<T>& self)
+    {
+        if (self.parents.size() < 2) return;
+        auto* apex = graph.GetNode(self.parents[0]);
+        auto* base = graph.GetNode(self.parents[1]);
+
+        self.data.cone_3d.apex_x = apex->data.point_3d.x;
+        self.data.cone_3d.apex_y = apex->data.point_3d.y;
+        self.data.cone_3d.apex_z = apex->data.point_3d.z;
+
+        self.data.cone_3d.base_x = base->data.point_3d.x;
+        self.data.cone_3d.base_y = base->data.point_3d.y;
+        self.data.cone_3d.base_z = base->data.point_3d.z;
+    }
+
+
+    /**
+ * @brief 3D 圆柱面求解器
+ * 从两个父节点(Point3D)提取坐标并存入 cylinder_3d 数据结构
+ */
+    template <typename T>
+    void SolveCylinder_3D(Graph<T>& graph, Node<T>& self)
+    {
+        if (self.parents.size() < 2) return;
+
+        // 获取两个端点节点
+        Node<T>* n1 = graph.GetNode(self.parents[0]);
+        Node<T>* n2 = graph.GetNode(self.parents[1]);
+
+        // 同步物理坐标
+        auto& d = self.data.cylinder_3d;
+        d.p1x = n1->data.point_3d.x;
+        d.p1y = n1->data.point_3d.y;
+        d.p1z = n1->data.point_3d.z;
+
+        d.p2x = n2->data.point_3d.x;
+        d.p2y = n2->data.point_3d.y;
+        d.p2z = n2->data.point_3d.z;
+    }
+
+
+    template <typename T>
+    void SolveCircle_3D(Graph<T>& graph, Node<T>& self)
+    {
+        if (self.parents.size() < 2) return;
+        auto* center = graph.GetNode(self.parents[0]);
+        auto* normal = graph.GetNode(self.parents[1]);
+
+        auto& d = self.data.circle_3d;
+        d.cx = center->data.point_3d.x;
+        d.cy = center->data.point_3d.y;
+        d.cz = center->data.point_3d.z;
+
+        d.nx = normal->data.point_3d.x;
+        d.ny = normal->data.point_3d.y;
+        d.nz = normal->data.point_3d.z;
+    }
+}

@@ -1970,4 +1970,218 @@ namespace StuCanvas
             return false;
         }
     }
+
+
+
+
+    namespace utils
+    {
+
+        template <typename T>
+        Interval<T> sqr_diff(const Interval<T>& I, T c) {
+
+            T d0 = I.lower - c;
+            T d1 = I.upper - c;
+
+            // 如果 c 在区间 [lower, upper] 之间，极小值必为 0
+            if (d0 * d1 <= 0) {
+                return Interval<T>(
+                    static_cast<T>(0),
+                    max(d0 * d0, d1 * d1)
+                );
+            }
+            // 否则，在区间两端点取极值
+            return Interval<T>(
+                min(d0 * d0, d1 * d1),
+                max(d0 * d0, d1 * d1)
+            );
+        }
+
+        /**
+         * @brief 特化原子函数：计算圆形的隐函数区间
+         * f(x, y) = (x-a)^2 + (y-b)^2 - r_sq
+         */
+        template <typename T>
+        Interval<T> evaluate_circle_implicit(
+            const Interval<T>& IX, const Interval<T>& IY,
+            T a, T b, T r_sq)
+        {
+            // 利用加法的独立性，将两个原子平方位移区间合并
+            Interval<T> res = sqr_diff(IX, a) + sqr_diff(IY, b);
+
+            // 减去常量 r^2
+            res.lower -= r_sq;
+            res.upper -= r_sq;
+            return res;
+        }
+
+
+
+        template <typename T>
+        Interval<T> evaluate_sphere_implicit(
+            const Interval<T>& IX, const Interval<T>& IY, const Interval<T>& IZ,
+            T a, T b, T c, T r_sq)
+        {
+            // 1. 分别求出 X, Y, Z 方向的精确平方差区间并相加
+            Interval<T> dist_sq = sqr_diff(IX, a) + sqr_diff(IY, b) + sqr_diff(IZ, c);
+
+            // 2. 减去常量 R^2
+            dist_sq.lower -= r_sq;
+            dist_sq.upper -= r_sq;
+
+            return dist_sq;
+        }
+
+
+
+        template <typename T>
+        Interval<T> evaluate_cone_implicit(
+            const Interval<T>& IX, const Interval<T>& IY, const Interval<T>& IZ,
+            T ax, T ay, T az,
+            T uax, T uay, T uaz,
+            T factor, T h)
+        {
+            // 1. 计算 W = P - A 的三个独立分量区间
+            Interval<T> WX = IX - ax;
+            Interval<T> WY = IY - ay;
+            Interval<T> WZ = IZ - az;
+
+            // 2. 计算 w · d (投影高度区间)
+            // 分离标量乘法，保证线性投影区间的 100% 精确度
+            T d0 = WX.lower * uax, d1 = WX.upper * uax;
+            Interval<T> PX = {std::min(d0, d1), std::max(d0, d1)};
+
+            d0 = WY.lower * uay; d1 = WY.upper * uay;
+            Interval<T> PY = {std::min(d0, d1), std::max(d0, d1)};
+
+            d0 = WZ.lower * uaz; d1 = WZ.upper * uaz;
+            Interval<T> PZ = {std::min(d0, d1), std::max(d0, d1)};
+
+            Interval<T> PROJ = PX + PY + PZ;
+
+            // 3. 极其强大的高度剪枝逻辑：
+            // 如果整个包围盒的投影范围完全在 [0, H] 之外，直接返回 poisoned
+            if (PROJ.upper < 0 || PROJ.lower > h) {
+                return Interval<T>::poisoned();
+            }
+
+            // 4. 计算 ||w||^2 (精确距离区间)
+            Interval<T> W_SQ = sqr_diff(IX, ax) + sqr_diff(IY, ay) + sqr_diff(IZ, az);
+
+            // 5. 计算 PROJ^2
+            T p0 = PROJ.lower * PROJ.lower;
+            T p1 = PROJ.upper * PROJ.upper;
+            Interval<T> P_SQ = (PROJ.lower * PROJ.upper <= 0) ?
+                                Interval<T>(0, std::max(p0, p1)) :
+                                Interval<T>(std::min(p0, p1), std::max(p0, p1));
+
+            // 6. 合并计算 f = W_SQ - factor * P_SQ
+            T p_high = P_SQ.upper * factor;
+            T p_low = P_SQ.lower * factor;
+
+            return Interval<T>{W_SQ.lower - p_high, W_SQ.upper - p_low};
+
+
+
+
+
+        }
+
+
+
+
+        template <typename T>
+        Interval<T> evaluate_cylinder_implicit(
+            const Interval<T>& IX, const Interval<T>& IY, const Interval<T>& IZ,
+            T p1x, T p1y, T p1z,
+            T uax, T uay, T uaz,
+            T r_sq, T h)
+        {
+            // 1. 计算 w = P - P1
+            Interval<T> WX = IX - p1x;
+            Interval<T> WY = IY - p1y;
+            Interval<T> WZ = IZ - p1z;
+
+            // 2. 计算投影高度 proj = w · d (线性组合，100%精确)
+            T d0 = WX.lower * uax, d1 = WX.upper * uax;
+            Interval<T> PX = {std::min(d0, d1), std::max(d0, d1)};
+            d0 = WY.lower * uay, d1 = WY.upper * uay;
+            Interval<T> PY = {std::min(d0, d1), std::max(d0, d1)};
+            d0 = WZ.lower * uaz, d1 = WZ.upper * uaz;
+            Interval<T> PZ = {std::min(d0, d1), std::max(d0, d1)};
+
+            Interval<T> PROJ = PX + PY + PZ;
+
+            // 3. 高度剪枝：如果包围盒完全在圆柱两端盖之外，直接丢弃
+            if (PROJ.upper < 0 || PROJ.lower > h) {
+                return Interval<T>::poisoned();
+            }
+
+            // 4. 计算 ||w||^2 (使用 sqr_diff 保证原子性)
+            Interval<T> W_SQ = sqr_diff(IX, p1x) + sqr_diff(IY, p1y) + sqr_diff(IZ, p1z);
+
+            // 5. 计算 proj^2
+            T p_low = PROJ.lower * PROJ.lower, p_high = PROJ.upper * PROJ.upper;
+            Interval<T> PROJ_SQ = (PROJ.lower * PROJ.upper <= 0) ?
+                                   Interval<T>(0, std::max(p_low, p_high)) :
+                                   Interval<T>(std::min(p_low, p_high), std::max(p_low, p_high));
+
+            // 6. f = W_SQ - PROJ_SQ - r_sq
+            return W_SQ - PROJ_SQ - r_sq;
+        }
+
+
+
+         template <typename T>
+Interval<T> evaluate_circle_3d_sos_implicit(
+        const Interval<T>& IX, const Interval<T>& IY, const Interval<T>& IZ,
+        T cx, T cy, T cz, T nx, T ny, T nz, T r_sq)
+    {
+
+
+        // --- 1. 计算球面约束区间 S ---
+        // S = (x-cx)^2 + (y-cy)^2 + (z-cz)^2 - r_sq
+        // 使用 sqr_diff 保证 (I-c)^2 的评估是绝对原子且精确的
+        Interval<T> dist_sq = sqr_diff(IX, cx) + sqr_diff(IY, cy) + sqr_diff(IZ, cz);
+        Interval<T> S = { dist_sq.lower - r_sq, dist_sq.upper - r_sq };
+
+        // --- 2. 计算平面约束区间 P ---
+        // P = (x-cx)*nx + (y-cy)*ny + (z-cz)*nz
+        Interval<T> WX = IX - cx;
+        Interval<T> WY = IY - cy;
+        Interval<T> WZ = IZ - cz;
+
+        // 线性函数的区间运算在端点取得，是 100% 精确的
+        auto dot_part = [](const Interval<T>& W, T n) {
+            T v1 = W.lower * n;
+            T v2 = W.upper * n;
+            return Interval<T>(std::min(v1, v2), std::max(v1, v2));
+        };
+        Interval<T> P = dot_part(WX, nx) + dot_part(WY, ny) + dot_part(WZ, nz);
+
+        // --- 3. 严格执行平方和合并 F = S^2 + P^2 ---
+        // 定义严格的区间平方函数
+        auto strict_interval_sqr = [](const Interval<T>& V) {
+            // 如果区间跨越 0，则平方后的下界必然为 0
+            if (V.lower <= 0 && V.upper >= 0) {
+                return Interval<T>(
+                    static_cast<T>(0),
+                    std::max(V.lower * V.lower, V.upper * V.upper)
+                );
+            }
+            // 否则，平方后的区间由两端点的平方值决定
+            T v1 = V.lower * V.lower;
+            T v2 = V.upper * V.upper;
+            return Interval<T>(std::min(v1, v2), std::max(v1, v2));
+        };
+
+        Interval<T> S_sq = strict_interval_sqr(S);
+        Interval<T> P_sq = strict_interval_sqr(P);
+
+        // 返回 F = S_sq + P_sq
+        // 注意：这里存在微小的过度估计，因为同一个点 P 不一定能同时使 S 和 P 取得各自的最小值。
+        // 但这是区间算术处理这类问题的最严密上限。
+        return S_sq + P_sq;
+    }
+    }
 }

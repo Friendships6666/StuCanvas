@@ -7,7 +7,7 @@
 ***************************************************************************/
 #pragma once
 #include "../types/point.hpp"
-#include "utils/interval.hpp"
+#include "../utils/interval.hpp"
 #include "../utils/parallel_for.hpp"
 
 namespace StuCanvas

@@ -8,6 +8,8 @@
 #include "../types/point.hpp"
 #include "vector"
 #include "utils/platonic_data.hpp"
+#include "../utils/math_traits.hpp"
+#include "../utils/interval.hpp"
 
 namespace StuCanvas
 {
@@ -94,9 +96,9 @@ namespace StuCanvas
         const T x_s = ld.x0 + t1 * dx, y_s = ld.y0 + t1 * dy, z_s = ld.z0 + t1 * dz;
         const T x_e = ld.x0 + t2 * dx, y_e = ld.y0 + t2 * dy, z_e = ld.z0 + t2 * dz;
 
-        const T sx = 0.5*(ws.x_max - ws.x_min) / graph.resolution_3d.x;
-        const T sy = 0.5*(ws.y_max - ws.y_min) / graph.resolution_3d.y;
-        const T sz = 0.5*(ws.z_max - ws.z_min) / graph.resolution_3d.z;
+        const T sx = 0.5 * (ws.x_max - ws.x_min) / graph.resolution_3d.x;
+        const T sy = 0.5 * (ws.y_max - ws.y_min) / graph.resolution_3d.y;
+        const T sz = 0.5 * (ws.z_max - ws.z_min) / graph.resolution_3d.z;
 
         const auto num_points = static_cast<size_t>(ceil(std::max({
             abs(x_e - x_s) / sx, abs(y_e - y_s) / sy, abs(z_e - z_s) / sz
@@ -160,27 +162,6 @@ namespace StuCanvas
     namespace utils
     {
         template <typename T>
-        struct Interval
-        {
-            T low, high;
-            Interval operator+(const Interval& o) const { return {low + o.low, high + o.high}; }
-            Interval operator-(T s) const { return {low - s, high - s}; }
-
-            Interval sqr() const
-            {
-                using std::max;
-                using std::min;
-                T a = low * low;
-                T b = high * high;
-                if (low <= 0 && high >= 0) return {static_cast<T>(0), max(a, b)};
-                return {min(a, b), max(a, b)};
-            }
-
-            [[nodiscard]] bool contains_zero() const { return low <= 0 && high >= 0; }
-        };
-
-
-        template <typename T>
         void lerp_and_push(std::vector<Point2D<T>>& res, T x1, T y1, T x2, T y2, T v1, T v2)
         {
             if ((v1 > 0 && v2 <= 0) || (v1 < 0 && v2 >= 0))
@@ -191,45 +172,57 @@ namespace StuCanvas
         }
     }
 
+    /**
+     * @brief 使用原子级特化区间函数绘制 2D 圆形
+     * 核心提升：evaluate_circle_implicit 消除了 (x-a)*(x-a) 的变量相关性冗余
+     */
     template <typename T>
     void PlotCircle_2D(Graph<T>& graph, Node<T>& self)
     {
-        using namespace utils;
-        // 注意：ExecuteNodeUpdate 已经清空了 result_points_2d
-
+        // 1. 基础几何参数提取
         const T cx = self.data.circle_2d.cx;
         const T cy = self.data.circle_2d.cy;
         const T r_sq = self.data.circle_2d.r * self.data.circle_2d.r;
 
+        // 2. 视口与物理分辨率获取
         const auto& ws = graph.world_space_2d;
-        const T dx_px = 0.5*(ws.x_max - ws.x_min) / graph.resolution_2d.x;
-        const T dy_px = 0.5*(ws.y_max - ws.y_min) / graph.resolution_2d.y;
+        const T dx_px = 0.5 * (ws.x_max - ws.x_min) / graph.resolution_2d.x;
+        const T dy_px = 0.5 * (ws.y_max - ws.y_min) / graph.resolution_2d.y;
 
-        // 性能关键：四叉树细分的终止阈值设置为 10 个像素的宽度
+        // 设置四叉树终止阈值：10 个物理像素宽度
         const T threshold_x = dx_px * static_cast<T>(10.0);
         const T threshold_y = dy_px * static_cast<T>(10.0);
 
-        // 缓存采样点数值（建议后期将 map 换成 FlatMap 以进一步提升速度）
+        // 3. 采样点缓存逻辑（用于精密插值阶段）
+        // 建议：由于 evaluate_circle_implicit 非常精确，四叉树深度会更合理，Map 的压力会减小
         std::map<std::pair<T, T>, T> cache;
         auto eval_f = [&](T x, T y)
         {
             auto it = cache.find({x, y});
             if (it != cache.end()) return it->second;
+            // 标量隐函数：f = (x-cx)^2 + (y-cy)^2 - r^2
             T val = (x - cx) * (x - cx) + (y - cy) * (y - cy) - r_sq;
             return cache[{x, y}] = val;
         };
 
+        // 4. 四叉树递归逻辑
         auto quadtree_prune = [&](auto& self_ref, T x0, T y0, T x1, T y1) -> void
         {
-            // 1. 区间算术剪枝 (Pruning)
-            Interval<T> IX = {x0, x1};
-            Interval<T> IY = {y0, y1};
-            if (!((IX - cx).sqr() + (IY - cy).sqr() - r_sq).contains_zero()) return;
+            // --- 核心改动：调用原子级区间评估函数 ---
+            // 该函数在 IX 包含 cx 时能准确识别出极小值为 0，不会产生 IA 膨胀
+            auto res_iv = StuCanvas::utils::evaluate_circle_implicit(
+                StuCanvas::Interval<T>(x0, x1),
+                StuCanvas::Interval<T>(y0, y1),
+                cx, cy, r_sq
+            );
+
+            // 区间算术剪枝：如果不跨越 0，则该区域绝对不包含圆周
+            if (res_iv.lower > 0 || res_iv.upper < 0) return;
 
             T w = x1 - x0;
             T h = y1 - y0;
 
-            // 2. 终止判定：如果当前方格大于 10 像素，则继续细分
+            // 递归分发
             if (w > threshold_x || h > threshold_y)
             {
                 T mx = x0 + w / 2;
@@ -241,8 +234,7 @@ namespace StuCanvas
                 return;
             }
 
-            // 3. 像素级采样阶段：此时 w, h 约为 10 像素大小
-            // 对齐到物理像素边界
+            // 5. 像素级采样阶段：此时当前区域约为 10x10 像素大小
             T ax0 = std::floor((x0 - ws.x_min) / dx_px) * dx_px + ws.x_min;
             T ay0 = std::floor((y0 - ws.y_min) / dy_px) * dy_px + ws.y_min;
             T ax1 = std::ceil((x1 - ws.x_min) / dx_px) * dx_px + ws.x_min;
@@ -252,21 +244,19 @@ namespace StuCanvas
             {
                 for (T py = ay0; py < ay1; py += dy_px)
                 {
-                    // 采样像素四角
+                    // 采样像素四个角
                     T v_bl = eval_f(px, py);
                     T v_br = eval_f(px + dx_px, py);
                     T v_tl = eval_f(px, py + dy_px);
                     T v_tr = eval_f(px + dx_px, py + dy_px);
 
-                    using std::min;
-                    using std::max;
-                    T min_v = min({v_bl, v_br, v_tl, v_tr});
-                    T max_v = max({v_bl, v_br, v_tl, v_tr});
+                    T min_v = std::min({v_bl, v_br, v_tl, v_tr});
+                    T max_v = std::max({v_bl, v_br, v_tl, v_tr});
 
-                    // 介值定理判定像素是否穿过曲线
+                    // 介值定理：判定像素是否跨越零点
                     if (min_v <= 0 && max_v >= 0)
                     {
-                        // 二次细分：半像素步长 (1 个像素拆为 4 个子格)
+                        // 像素内 2x2 子采样以获得平滑结果
                         T hx = px + dx_px * 0.5;
                         T hy = py + dy_px * 0.5;
 
@@ -276,28 +266,32 @@ namespace StuCanvas
                         T v_rm = eval_f(px + dx_px, hy);
                         T v_mm = eval_f(hx, hy);
 
-                        // 在 4 个子格的 12 条边上插值 (内部复用逻辑)
-                        // 子格 1 (左下)
-                        lerp_and_push(self.result_points_2d, px, py, hx, py, v_bl, v_bm);
-                        lerp_and_push(self.result_points_2d, hx, py, hx, hy, v_bm, v_mm);
-                        lerp_and_push(self.result_points_2d, px, hy, hx, hy, v_lm, v_mm);
-                        lerp_and_push(self.result_points_2d, px, py, px, hy, v_bl, v_lm);
-                        // 子格 2 (右下)
-                        lerp_and_push(self.result_points_2d, hx, py, px + dx_px, py, v_bm, v_br);
-                        lerp_and_push(self.result_points_2d, px + dx_px, py, px + dx_px, hy, v_br, v_rm);
-                        lerp_and_push(self.result_points_2d, hx, hy, px + dx_px, hy, v_mm, v_rm);
-                        // 子格 3 (左上)
-                        lerp_and_push(self.result_points_2d, hx, hy, hx, py + dy_px, v_mm, v_tm);
-                        lerp_and_push(self.result_points_2d, px, py + dy_px, hx, py + dy_px, v_tl, v_tm);
-                        lerp_and_push(self.result_points_2d, px, hy, px, py + dy_px, v_lm, v_tl);
-                        // 子格 4 (右上)
-                        lerp_and_push(self.result_points_2d, px + dx_px, hy, px + dx_px, py + dy_px, v_rm, v_tr);
-                        lerp_and_push(self.result_points_2d, hx, py + dy_px, px + dx_px, py + dy_px, v_tm, v_tr);
+                        // 12 条子格边插值点存入 result_points_2d
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, px, py, hx, py, v_bl, v_bm);
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, hx, py, hx, hy, v_bm, v_mm);
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, px, hy, hx, hy, v_lm, v_mm);
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, px, py, px, hy, v_bl, v_lm);
+
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, hx, py, px + dx_px, py, v_bm, v_br);
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, px + dx_px, py, px + dx_px, hy, v_br,
+                                                        v_rm);
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, hx, hy, px + dx_px, hy, v_mm, v_rm);
+
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, hx, hy, hx, py + dy_px, v_mm, v_tm);
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, px, py + dy_px, hx, py + dy_px, v_tl,
+                                                        v_tm);
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, px, hy, px, py + dy_px, v_lm, v_tl);
+
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, px + dx_px, hy, px + dx_px, py + dy_px,
+                                                        v_rm, v_tr);
+                        StuCanvas::utils::lerp_and_push(self.result_points_2d, hx, py + dy_px, px + dx_px, py + dy_px,
+                                                        v_tm, v_tr);
                     }
                 }
             }
         };
 
+        // 6. 执行全场四叉树剪枝
         quadtree_prune(quadtree_prune, ws.x_min, ws.y_min, ws.x_max, ws.y_max);
     }
 
@@ -697,26 +691,24 @@ namespace StuCanvas
     template <typename T>
     void PlotSphere_3D(Graph<T>& graph, Node<T>& self)
     {
-        using namespace utils;
-
-        // 1. 获取球体参数
+        // 1. 获取球体基础几何参数
         const T cx = self.data.sphere_3d.cx;
         const T cy = self.data.sphere_3d.cy;
         const T cz = self.data.sphere_3d.cz;
         const T r_sq = self.data.sphere_3d.r * self.data.sphere_3d.r;
 
-        // 2. 获取视口与分辨率
+        // 2. 获取视口与物理分辨率
         const auto& ws = graph.world_space_3d;
         const T dx_px = (ws.x_max - ws.x_min) / graph.resolution_3d.x;
         const T dy_px = (ws.y_max - ws.y_min) / graph.resolution_3d.y;
         const T dz_px = (ws.z_max - ws.z_min) / graph.resolution_3d.z;
 
-        // 设置细分终止阈值：10个像素单位
+        // 设置细分终止阈值：10个物理像素单位
         const T thres_x = dx_px * static_cast<T>(10.0);
         const T thres_y = dy_px * static_cast<T>(10.0);
         const T thres_z = dz_px * static_cast<T>(10.0);
 
-        // 隐式函数：f(P) = dist(P, C)^2 - r^2
+        // 标量隐函数：用于叶子节点精密采样
         auto eval_f = [&](T x, T y, T z)
         {
             return (x - cx) * (x - cx) + (y - cy) * (y - cy) + (z - cz) * (z - cz) - r_sq;
@@ -725,13 +717,21 @@ namespace StuCanvas
         // 3. 八叉树递归逻辑
         auto octree_prune = [&](auto& self_ref, T x0, T y0, T z0, T x1, T y1, T z1) -> void
         {
-            // 区间算术判定：该区域是否可能包含球面
-            Interval<T> IX = {x0, x1}, IY = {y0, y1}, IZ = {z0, z1};
-            if (!((IX - cx).sqr() + (IY - cy).sqr() + (IZ - cz).sqr() - r_sq).contains_zero()) return;
+            // --- 核心优化：使用特化原子函数进行区间评估 ---
+            // 该函数能完美处理 (X-cx)^2，当 cx 处于 [x0, x1] 中间时，能准确识别下界为 0
+            auto res_iv = StuCanvas::utils::evaluate_sphere_implicit(
+                StuCanvas::Interval<T>(x0, x1),
+                StuCanvas::Interval<T>(y0, y1),
+                StuCanvas::Interval<T>(z0, z1),
+                cx, cy, cz, r_sq
+            );
+
+            // 区间算术剪枝：如果区间不跨越 0，物理上绝对没有球面经过
+            if (res_iv.lower > 0 || res_iv.upper < 0) return;
 
             T w = x1 - x0, h = y1 - y0, d = z1 - z0;
 
-            // 如果方格大于 10 像素，继续细分
+            // 如果当前方格大于 10 像素，继续进行八叉树细分
             if (w > thres_x || h > thres_y || d > thres_z)
             {
                 T mx = x0 + w / 2;
@@ -748,7 +748,7 @@ namespace StuCanvas
                 return;
             }
 
-            // 4. 像素级精密采样 (10x10x10 范围)
+            // 4. 像素级精密采样 (处理 10x10x10 像素范围)
             T ax0 = std::floor((x0 - ws.x_min) / dx_px) * dx_px + ws.x_min;
             T ay0 = std::floor((y0 - ws.y_min) / dy_px) * dy_px + ws.y_min;
             T az0 = std::floor((z0 - ws.z_min) / dz_px) * dz_px + ws.z_min;
@@ -773,20 +773,17 @@ namespace StuCanvas
                         v[6] = eval_f(px, py + dy_px, pz + dz_px);
                         v[7] = eval_f(px + dx_px, py + dy_px, pz + dz_px);
 
-                        using std::min;
-                        using std::max;
-                        T v_min = min({v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]});
-                        T v_max = max({v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]});
+                        T v_min = std::min({v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]});
+                        T v_max = std::max({v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]});
 
                         // 判定体素是否穿过球面
                         if (v_min <= 0 && v_max >= 0)
                         {
-                            // 5. 子体素细分 (2x2x2)
+                            // 5. 子体素 2x2x2 细分与 12 棱边线性插值
                             T hx = px + dx_px * 0.5;
                             T hy = py + dy_px * 0.5;
                             T hz = pz + dz_px * 0.5;
 
-                            // 定义子块处理逻辑 (针对 12 条棱边进行插值)
                             auto process_box = [&](T x_s, T y_s, T z_s, T x_e, T y_e, T z_e)
                             {
                                 T sv[8];
@@ -799,22 +796,35 @@ namespace StuCanvas
                                 sv[6] = eval_f(x_s, y_e, z_e);
                                 sv[7] = eval_f(x_e, y_e, z_e);
 
-                                // 12 条棱边插值
-                                lerp_3d_push_ref(self.result_points_3d, x_s, y_s, z_s, x_e, y_s, z_s, sv[0], sv[1]);
-                                lerp_3d_push_ref(self.result_points_3d, x_s, y_e, z_s, x_e, y_e, z_s, sv[2], sv[3]);
-                                lerp_3d_push_ref(self.result_points_3d, x_s, y_s, z_e, x_e, y_s, z_e, sv[4], sv[5]);
-                                lerp_3d_push_ref(self.result_points_3d, x_s, y_e, z_e, x_e, y_e, z_e, sv[6], sv[7]);
-                                lerp_3d_push_ref(self.result_points_3d, x_s, y_s, z_s, x_s, y_e, z_s, sv[0], sv[2]);
-                                lerp_3d_push_ref(self.result_points_3d, x_e, y_s, z_s, x_e, y_e, z_s, sv[1], sv[3]);
-                                lerp_3d_push_ref(self.result_points_3d, x_s, y_s, z_e, x_s, y_e, z_e, sv[4], sv[6]);
-                                lerp_3d_push_ref(self.result_points_3d, x_e, y_s, z_e, x_e, y_e, z_e, sv[5], sv[7]);
-                                lerp_3d_push_ref(self.result_points_3d, x_s, y_s, z_s, x_s, y_s, z_e, sv[0], sv[4]);
-                                lerp_3d_push_ref(self.result_points_3d, x_e, y_s, z_s, x_e, y_s, z_e, sv[1], sv[5]);
-                                lerp_3d_push_ref(self.result_points_3d, x_s, y_e, z_s, x_s, y_e, z_e, sv[2], sv[6]);
-                                lerp_3d_push_ref(self.result_points_3d, x_e, y_e, z_s, x_e, y_e, z_e, sv[3], sv[7]);
+                                // 在体素棱边上进行零点插值
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_s, y_s, z_s, x_e, y_s, z_s,
+                                                                   sv[0], sv[1]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_s, y_e, z_s, x_e, y_e, z_s,
+                                                                   sv[2], sv[3]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_s, y_s, z_e, x_e, y_s, z_e,
+                                                                   sv[4], sv[5]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_s, y_e, z_e, x_e, y_e, z_e,
+                                                                   sv[6], sv[7]);
+
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_s, y_s, z_s, x_s, y_e, z_s,
+                                                                   sv[0], sv[2]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_e, y_s, z_s, x_e, y_e, z_s,
+                                                                   sv[1], sv[3]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_s, y_s, z_e, x_s, y_e, z_e,
+                                                                   sv[4], sv[6]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_e, y_s, z_e, x_e, y_e, z_e,
+                                                                   sv[5], sv[7]);
+
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_s, y_s, z_s, x_s, y_s, z_e,
+                                                                   sv[0], sv[4]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_e, y_s, z_s, x_e, y_s, z_e,
+                                                                   sv[1], sv[5]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_s, y_e, z_s, x_s, y_e, z_e,
+                                                                   sv[2], sv[6]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, x_e, y_e, z_s, x_e, y_e, z_e,
+                                                                   sv[3], sv[7]);
                             };
 
-                            // 遍历 8 个子块
                             process_box(px, py, pz, hx, hy, hz);
                             process_box(hx, py, pz, px + dx_px, hy, hz);
                             process_box(px, hy, pz, hx, py + dy_px, hz);
@@ -829,7 +839,561 @@ namespace StuCanvas
             }
         };
 
-        // 启动八叉树
+        // 6. 执行全场八叉树剪枝采样
         octree_prune(octree_prune, ws.x_min, ws.y_min, ws.z_min, ws.x_max, ws.y_max, ws.z_max);
+    }
+
+
+    template <typename T>
+    void PlotRectangle_2D(Graph<T>& graph, Node<T>& self)
+    {
+        // 1. 局部备份参数，防止 Union 内存被 PlotSegment_2D 的 line_2d 覆盖
+        const T cx = self.data.rect_2d.cx;
+        const T cy = self.data.rect_2d.cy;
+        const T w = self.data.rect_2d.width;
+        const T h = self.data.rect_2d.height;
+        auto backup_data = self.data.rect_2d;
+
+        // 2. 计算四个顶点的坐标
+        T x_min = cx - w / static_cast<T>(2.0);
+        T x_max = cx + w / static_cast<T>(2.0);
+        T y_min = cy - h / static_cast<T>(2.0);
+        T y_max = cy + h / static_cast<T>(2.0);
+
+        // 定义四条边（起点 x0,y0 到 终点 x1,y1）
+        struct Edge
+        {
+            T x0, y0, x1, y1;
+        };
+        Edge edges[4] = {
+            {x_min, y_min, x_max, y_min}, // 底边
+            {x_max, y_min, x_max, y_max}, // 右边
+            {x_max, y_max, x_min, y_max}, // 顶边
+            {x_min, y_max, x_min, y_min} // 左边
+        };
+
+        // 3. 组合绘制：复用线段打点器
+        for (int i = 0; i < 4; ++i)
+        {
+            // 伪装成线性节点数据
+            self.data.line_2d.x0 = edges[i].x0;
+            self.data.line_2d.y0 = edges[i].y0;
+            self.data.line_2d.x1 = edges[i].x1;
+            self.data.line_2d.y1 = edges[i].y1;
+
+            // 调用现有的线段采样函数，它会将点追加到 self.result_points_2d
+            PlotSegment_2D<T>(graph, self);
+        }
+
+        // 4. 还原原始矩形数据，确保节点状态一致
+        self.data.rect_2d = backup_data;
+    }
+
+
+    template <typename T>
+    void PlotCuboid_3D(Graph<T>& graph, Node<T>& self)
+    {
+        // 1. 局部备份参数，防止 Union 内存被子调用覆盖
+        const T cx = self.data.cuboid_3d.cx;
+        const T cy = self.data.cuboid_3d.cy;
+        const T cz = self.data.cuboid_3d.cz;
+        const T dx = self.data.cuboid_3d.dx;
+        const T dy = self.data.cuboid_3d.dy;
+        const T dz = self.data.cuboid_3d.dz;
+        auto backup_data = self.data.cuboid_3d;
+
+        // 2. 计算 8 个顶点的坐标
+        Point3D<T> v[8] = {
+            {cx - dx, cy - dy, cz - dz}, {cx + dx, cy - dy, cz - dz},
+            {cx + dx, cy + dy, cz - dz}, {cx - dx, cy + dy, cz - dz},
+            {cx - dx, cy - dy, cz + dz}, {cx + dx, cy - dy, cz + dz},
+            {cx + dx, cy + dy, cz + dz}, {cx - dx, cy + dy, cz + dz}
+        };
+
+        // 3. 组合绘制：棱边 (12 条)
+        auto plot_edge = [&](int i, int j)
+        {
+            self.data.line_3d = {v[i].x, v[i].y, v[i].z, v[j].x, v[j].y, v[j].z};
+            PlotSegment_3D(graph, self);
+        };
+        // 底面 4 条
+        plot_edge(0, 1);
+        plot_edge(1, 2);
+        plot_edge(2, 3);
+        plot_edge(3, 0);
+        // 顶面 4 条
+        plot_edge(4, 5);
+        plot_edge(5, 6);
+        plot_edge(6, 7);
+        plot_edge(7, 4);
+        // 垂直 4 条
+        plot_edge(0, 4);
+        plot_edge(1, 5);
+        plot_edge(2, 6);
+        plot_edge(3, 7);
+
+        // 4. 组合绘制：表面 (6 个面，每面 2 个三角形)
+        auto plot_face_tri = [&](int i, int j, int k)
+        {
+            // 伪装成 Plane3D (三角形模式)
+            self.data.plane_3d.ox = v[i].x;
+            self.data.plane_3d.oy = v[i].y;
+            self.data.plane_3d.oz = v[i].z;
+            self.data.plane_3d.ux = v[j].x - v[i].x;
+            self.data.plane_3d.uy = v[j].y - v[i].y;
+            self.data.plane_3d.uz = v[j].z - v[i].z;
+            self.data.plane_3d.vx = v[k].x - v[i].x;
+            self.data.plane_3d.vy = v[k].y - v[i].y;
+            self.data.plane_3d.vz = v[k].z - v[i].z;
+            PlotTriangle_3D(graph, self);
+        };
+
+        // 定义 6 个面 (每面由两个三角形组成)
+        int faces[6][4] = {
+            {0, 1, 2, 3}, {4, 5, 6, 7}, // 底、顶
+            {0, 1, 5, 4}, {1, 2, 6, 5}, // 前、右
+            {2, 3, 7, 6}, {3, 0, 4, 7} // 后、左
+        };
+
+        for (int i = 0; i < 6; ++i)
+        {
+            plot_face_tri(faces[i][0], faces[i][1], faces[i][2]);
+            plot_face_tri(faces[i][0], faces[i][2], faces[i][3]);
+        }
+
+        // 5. 还原原始数据
+        self.data.cuboid_3d = backup_data;
+    }
+
+
+    /**
+  * @brief 使用原子级特化区间函数绘制 3D 圆锥侧面
+  * 采用区间算术剪枝 + 八叉树细分 + 12棱边线性插值寻零
+  */
+    template <typename T>
+    void PlotCone_3D(Graph<T>& graph, Node<T>& self)
+    {
+        // 1. 基础几何参数提取
+        const T ax = self.data.cone_3d.apex_x;
+        const T ay = self.data.cone_3d.apex_y;
+        const T az = self.data.cone_3d.apex_z;
+        const T bx = self.data.cone_3d.base_x;
+        const T by = self.data.cone_3d.base_y;
+        const T bz = self.data.cone_3d.base_z;
+        const T r = self.data.cone_3d.r;
+
+        // 2. 预计算圆锥轴向常量
+        T vx = bx - ax, vy = by - ay, vz = bz - az;
+        T h2 = vx * vx + vy * vy + vz * vz;
+        T h = std::sqrt(h2);
+        if (h < static_cast<T>(1e-9)) return; // 忽略退化的圆锥
+
+        const T uax = vx / h, uay = vy / h, uaz = vz / h; // 单位轴向量 d
+        const T k_factor = static_cast<T>(1.0) + (r * r) / h2; // factor = 1 + (R/H)^2
+
+        // 3. 视口与物理分辨率获取
+        const auto& ws = graph.world_space_3d;
+        const T dx_px = (ws.x_max - ws.x_min) / graph.resolution_3d.x;
+        const T dy_px = (ws.y_max - ws.y_min) / graph.resolution_3d.y;
+        const T dz_px = (ws.z_max - ws.z_min) / graph.resolution_3d.z;
+
+        // 设置八叉树细分终止阈值：10 个物理像素单位
+        const T thres_x = dx_px * static_cast<T>(10.0);
+        const T thres_y = dy_px * static_cast<T>(10.0);
+        const T thres_z = dz_px * static_cast<T>(10.0);
+
+        // 4. 标量隐函数：用于叶子节点的精密采样
+        auto eval_f = [&](T x, T y, T z)
+        {
+            T wx = x - ax, wy = y - ay, wz = z - az;
+            T proj = wx * uax + wy * uay + wz * uaz; // 点到轴线的投影长度 (w · d)
+
+            // 侧面方程：f = ||w||^2 - (1 + k^2) * (w · d)^2
+            T f_side = (wx * wx + wy * wy + wz * wz) - k_factor * (proj * proj);
+
+            // 高度约束剪切：仅保留 [0, H] 之间的部分。
+            // 如果在顶点 A 后方或底面 B 之外，强制返回一个非零值，避免产生插值点。
+            if (proj < 0) return std::abs(f_side) + (0 - proj);
+            if (proj > h) return std::abs(f_side) + (proj - h);
+
+            return f_side;
+        };
+
+        // 5. 八叉树递归逻辑
+        auto octree_prune = [&](auto& self_ref, T x0, T y0, T z0, T x1, T y1, T z1) -> void
+        {
+            // --- 核心优化：调用特化区间函数进行隐函数评估 ---
+            // 该函数内部包含了高度范围检测，如果投影完全越界会返回 poisoned
+            auto res_iv = StuCanvas::utils::evaluate_cone_implicit(
+                StuCanvas::Interval<T>(x0, x1),
+                StuCanvas::Interval<T>(y0, y1),
+                StuCanvas::Interval<T>(z0, z1),
+                ax, ay, az, uax, uay, uaz, k_factor, h
+            );
+
+            // 区间算术剪枝：如果区间不包含 0 或已中毒，则直接跳过该区域
+            if (res_iv.is_poisoned() || !StuCanvas::utils::possible_root(res_iv)) return;
+
+            T w = x1 - x0, hb = y1 - y0, db = z1 - z0;
+
+            // 分发递归：如果当前块仍大于阈值
+            if (w > thres_x || hb > thres_y || db > thres_z)
+            {
+                T mx = x0 + w / 2, my = y0 + hb / 2, mz = z0 + db / 2;
+                self_ref(self_ref, x0, y0, z0, mx, my, mz);
+                self_ref(self_ref, mx, y0, z0, x1, my, mz);
+                self_ref(self_ref, x0, my, z0, mx, y1, mz);
+                self_ref(self_ref, mx, my, z0, x1, y1, mz);
+                self_ref(self_ref, x0, y0, mz, mx, my, z1);
+                self_ref(self_ref, mx, y0, mz, x1, my, z1);
+                self_ref(self_ref, x0, my, mz, mx, y1, z1);
+                self_ref(self_ref, mx, my, mz, x1, y1, z1);
+                return;
+            }
+
+            // 6. 像素级精密采样 (处理约 10x10x10 体素范围)
+            T ax0 = std::floor((x0 - ws.x_min) / dx_px) * dx_px + ws.x_min;
+            T ay0 = std::floor((y0 - ws.y_min) / dy_px) * dy_px + ws.y_min;
+            T az0 = std::floor((z0 - ws.z_min) / dz_px) * dz_px + ws.z_min;
+            T ax1 = std::ceil((x1 - ws.x_min) / dx_px) * dx_px + ws.x_min;
+            T ay1 = std::ceil((y1 - ws.y_min) / dy_px) * dy_px + ws.y_min;
+            T az1 = std::ceil((z1 - ws.z_min) / dz_px) * dz_px + ws.z_min;
+
+            for (T px = ax0; px < ax1; px += dx_px)
+            {
+                for (T py = ay0; py < ay1; py += dy_px)
+                {
+                    for (T pz = az0; pz < az1; pz += dz_px)
+                    {
+                        // 采样体素 8 个角的值
+                        T v[8];
+                        v[0] = eval_f(px, py, pz);
+                        v[1] = eval_f(px + dx_px, py, pz);
+                        v[2] = eval_f(px, py + dy_px, pz);
+                        v[3] = eval_f(px + dx_px, py + dy_px, pz);
+                        v[4] = eval_f(px, py, pz + dz_px);
+                        v[5] = eval_f(px + dx_px, py, pz + dz_px);
+                        v[6] = eval_f(px, py + dy_px, pz + dz_px);
+                        v[7] = eval_f(px + dx_px, py + dy_px, pz + dz_px);
+
+                        T v_min = v[0], v_max = v[0];
+                        for (int k = 1; k < 8; ++k)
+                        {
+                            v_min = std::min(v_min, v[k]);
+                            v_max = std::max(v_max, v[k]);
+                        }
+
+                        // 如果体素穿过表面 (跨越零点)
+                        if (v_min <= 0 && v_max >= 0)
+                        {
+                            // 执行 2x2x2 子块细分并进行 12 棱边插值寻零
+                            auto process_box = [&](T xs, T ys, T zs, T xe, T ye, T ze)
+                            {
+                                T sv[8];
+                                sv[0] = eval_f(xs, ys, zs);
+                                sv[1] = eval_f(xe, ys, zs);
+                                sv[2] = eval_f(xs, ye, zs);
+                                sv[3] = eval_f(xe, ye, zs);
+                                sv[4] = eval_f(xs, ys, ze);
+                                sv[5] = eval_f(xe, ys, ze);
+                                sv[6] = eval_f(xs, ye, ze);
+                                sv[7] = eval_f(xe, ye, ze);
+
+                                // 调用 utils 中的 3D 线性插值器
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ys, zs, xe, ys, zs, sv[0],
+                                                                   sv[1]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ye, zs, xe, ye, zs, sv[2],
+                                                                   sv[3]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ys, ze, xe, ys, ze, sv[4],
+                                                                   sv[5]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ye, ze, xe, ye, ze, sv[6],
+                                                                   sv[7]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ys, zs, xs, ye, zs, sv[0],
+                                                                   sv[2]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xe, ys, zs, xe, ye, zs, sv[1],
+                                                                   sv[3]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ys, ze, xs, ye, ze, sv[4],
+                                                                   sv[6]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xe, ys, ze, xe, ye, ze, sv[5],
+                                                                   sv[7]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ys, zs, xs, ys, ze, sv[0],
+                                                                   sv[4]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xe, ys, zs, xe, ys, ze, sv[1],
+                                                                   sv[5]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ye, zs, xs, ye, ze, sv[2],
+                                                                   sv[6]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xe, ye, zs, xe, ye, ze, sv[3],
+                                                                   sv[7]);
+                            };
+
+                            T hx = px + dx_px * 0.5, hy = py + dy_px * 0.5, hz = pz + dz_px * 0.5;
+                            process_box(px, py, pz, hx, hy, hz);
+                            process_box(hx, py, pz, px + dx_px, hy, hz);
+                            process_box(px, hy, pz, hx, py + dy_px, hz);
+                            process_box(hx, hy, pz, px + dx_px, py + dy_px, hz);
+                            process_box(px, py, hz, hx, hy, pz + dz_px);
+                            process_box(hx, py, hz, px + dx_px, hy, pz + dz_px);
+                            process_box(px, hy, hz, hx, py + dy_px, pz + dz_px);
+                            process_box(hx, hy, hz, px + dx_px, py + dy_px, pz + dz_px);
+                        }
+                    }
+                }
+            }
+        };
+
+        // 7. 启动全场八叉树采样
+        octree_prune(octree_prune, ws.x_min, ws.y_min, ws.z_min, ws.x_max, ws.y_max, ws.z_max);
+    }
+
+
+    template <typename T>
+    void PlotCylinder_3D(Graph<T>& graph, Node<T>& self)
+    {
+        // 1. 提取参数
+        const T p1x = self.data.cylinder_3d.p1x;
+        const T p1y = self.data.cylinder_3d.p1y;
+        const T p1z = self.data.cylinder_3d.p1z;
+        const T p2x = self.data.cylinder_3d.p2x;
+        const T p2y = self.data.cylinder_3d.p2y;
+        const T p2z = self.data.cylinder_3d.p2z;
+        const T r = self.data.cylinder_3d.r;
+        const T r_sq = r * r;
+
+        // 2. 预计算轴向常量
+        T vx = p2x - p1x, vy = p2y - p1y, vz = p2z - p1z;
+        T h = std::sqrt(vx * vx + vy * vy + vz * vz);
+        if (h < static_cast<T>(1e-9)) return; // 忽略长度过小的圆柱
+
+        const T ux = vx / h, uy = vy / h, uz = vz / h; // 单位轴向量 d
+
+        // 3. 获取环境参数
+        const auto& ws = graph.world_space_3d;
+        const T dx_px = (ws.x_max - ws.x_min) / graph.resolution_3d.x;
+        const T dy_px = (ws.y_max - ws.y_min) / graph.resolution_3d.y;
+        const T dz_px = (ws.z_max - ws.z_min) / graph.resolution_3d.z;
+
+        const T thres_x = dx_px * static_cast<T>(10.0);
+        const T thres_y = dy_px * static_cast<T>(10.0);
+        const T thres_z = dz_px * static_cast<T>(10.0);
+
+        // 4. 标量隐函数 (用于叶子节点寻零)
+        auto eval_f = [&](T x, T y, T z)
+        {
+            T wx = x - p1x, wy = y - p1y, wz = z - p1z;
+            T proj = wx * ux + wy * uy + wz * uz; // w · d
+
+            // 侧面方程：f = ||w||^2 - (w · d)^2 - r^2
+            T f_side = (wx * wx + wy * wy + wz * wz) - (proj * proj) - r_sq;
+
+            // 高度约束：在 [0, h] 范围外强制返回非零值，从而不产生插值点
+            if (proj < 0) return std::abs(f_side) + (0 - proj);
+            if (proj > h) return std::abs(f_side) + (proj - h);
+
+            return f_side;
+        };
+
+        // 5. 八叉树递归逻辑
+        auto octree_prune = [&](auto& self_ref, T x0, T y0, T z0, T x1, T y1, T z1) -> void
+        {
+            // --- 调用 interval.hpp 中的特化评估函数 ---
+            auto res_iv = StuCanvas::utils::evaluate_cylinder_implicit(
+                StuCanvas::Interval<T>(x0, x1),
+                StuCanvas::Interval<T>(y0, y1),
+                StuCanvas::Interval<T>(z0, z1),
+                p1x, p1y, p1z, ux, uy, uz, r_sq, h
+            );
+
+            // 如果区间不包含 0，或者已经因为高度剪枝被标记为 poisoned，直接跳过
+            if (res_iv.is_poisoned() || !StuCanvas::utils::possible_root(res_iv)) return;
+
+            T w = x1 - x0, hb = y1 - y0, db = z1 - z0;
+
+            // 方格大于 10 像素继续分裂
+            if (w > thres_x || hb > thres_y || db > thres_z)
+            {
+                T mx = x0 + w / 2, my = y0 + hb / 2, mz = z0 + db / 2;
+                self_ref(self_ref, x0, y0, z0, mx, my, mz);
+                self_ref(self_ref, mx, y0, z0, x1, my, mz);
+                self_ref(self_ref, x0, my, z0, mx, y1, mz);
+                self_ref(self_ref, mx, my, z0, x1, y1, mz);
+                self_ref(self_ref, x0, y0, mz, mx, my, z1);
+                self_ref(self_ref, mx, y0, mz, x1, my, z1);
+                self_ref(self_ref, x0, my, mz, mx, y1, z1);
+                self_ref(self_ref, mx, my, mz, x1, y1, z1);
+                return;
+            }
+
+            // 6. 精密采样与棱边插值 (10x10x10 像素块)
+            T ax0 = std::floor((x0 - ws.x_min) / dx_px) * dx_px + ws.x_min;
+            T ay0 = std::floor((y0 - ws.y_min) / dy_px) * dy_px + ws.y_min;
+            T az0 = std::floor((z0 - ws.z_min) / dz_px) * dz_px + ws.z_min;
+            T ax1 = std::ceil((x1 - ws.x_min) / dx_px) * dx_px + ws.x_min;
+            T ay1 = std::ceil((y1 - ws.y_min) / dy_px) * dy_px + ws.y_min;
+            T az1 = std::ceil((z1 - ws.z_min) / dz_px) * dz_px + ws.z_min;
+
+            for (T px = ax0; px < ax1; px += dx_px)
+            {
+                for (T py = ay0; py < ay1; py += dy_px)
+                {
+                    for (T pz = az0; pz < az1; pz += dz_px)
+                    {
+                        T v[8];
+                        v[0] = eval_f(px, py, pz);
+                        v[1] = eval_f(px + dx_px, py, pz);
+                        v[2] = eval_f(px, py + dy_px, pz);
+                        v[3] = eval_f(px + dx_px, py + dy_px, pz);
+                        v[4] = eval_f(px, py, pz + dz_px);
+                        v[5] = eval_f(px + dx_px, py, pz + dz_px);
+                        v[6] = eval_f(px, py + dy_px, pz + dz_px);
+                        v[7] = eval_f(px + dx_px, py + dy_px, pz + dz_px);
+
+                        T v_min = v[0], v_max = v[0];
+                        for (int k = 1; k < 8; ++k)
+                        {
+                            v_min = std::min(v_min, v[k]);
+                            v_max = std::max(v_max, v[k]);
+                        }
+
+                        if (v_min <= 0 && v_max >= 0)
+                        {
+                            auto process_box = [&](T xs, T ys, T zs, T xe, T ye, T ze)
+                            {
+                                T sv[8];
+                                sv[0] = eval_f(xs, ys, zs);
+                                sv[1] = eval_f(xe, ys, zs);
+                                sv[2] = eval_f(xs, ye, zs);
+                                sv[3] = eval_f(xe, ye, zs);
+                                sv[4] = eval_f(xs, ys, ze);
+                                sv[5] = eval_f(xe, ys, ze);
+                                sv[6] = eval_f(xs, ye, ze);
+                                sv[7] = eval_f(xe, ye, ze);
+
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ys, zs, xe, ys, zs, sv[0],
+                                                                   sv[1]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ye, zs, xe, ye, zs, sv[2],
+                                                                   sv[3]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ys, ze, xe, ys, ze, sv[4],
+                                                                   sv[5]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ye, ze, xe, ye, ze, sv[6],
+                                                                   sv[7]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ys, zs, xs, ye, zs, sv[0],
+                                                                   sv[2]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xe, ys, zs, xe, ye, zs, sv[1],
+                                                                   sv[3]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ys, ze, xs, ye, ze, sv[4],
+                                                                   sv[6]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xe, ys, ze, xe, ye, ze, sv[5],
+                                                                   sv[7]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ys, zs, xs, ys, ze, sv[0],
+                                                                   sv[4]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xe, ys, zs, xe, ys, ze, sv[1],
+                                                                   sv[5]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xs, ye, zs, xs, ye, ze, sv[2],
+                                                                   sv[6]);
+                                StuCanvas::utils::lerp_3d_push_ref(self.result_points_3d, xe, ye, zs, xe, ye, ze, sv[3],
+                                                                   sv[7]);
+                            };
+
+                            T hx = px + dx_px * 0.5, hy = py + dy_px * 0.5, hz = pz + dz_px * 0.5;
+                            process_box(px, py, pz, hx, hy, hz);
+                            process_box(hx, py, pz, px + dx_px, hy, hz);
+                            process_box(px, hy, pz, hx, py + dy_px, hz);
+                            process_box(hx, hy, pz, px + dx_px, py + dy_px, hz);
+                            process_box(px, py, hz, hx, hy, pz + dz_px);
+                            process_box(hx, py, hz, px + dx_px, hy, pz + dz_px);
+                            process_box(px, hy, hz, hx, py + dy_px, pz + dz_px);
+                            process_box(hx, hy, hz, px + dx_px, py + dy_px, pz + dz_px);
+                        }
+                    }
+                }
+            }
+        };
+
+        // 7. 启动
+        octree_prune(octree_prune, ws.x_min, ws.y_min, ws.z_min, ws.x_max, ws.y_max, ws.z_max);
+    }
+
+
+    template <typename T>
+    void PlotCircle_3D(Graph<T>& graph, Node<T>& self)
+    {
+        // 1. 基础参数准备
+        const auto& d = self.data.circle_3d;
+        const T r_sq = d.r * d.r;
+
+        // 计算法向量并归一化 (向量为：法向点 N - 中心点 C)
+        T vx = d.nx - d.cx;
+        T vy = d.ny - d.cy;
+        T vz = d.nz - d.cz;
+        T mag = std::sqrt(vx * vx + vy * vy + vz * vz);
+        if (mag < static_cast<T>(1e-10)) return; // 无效的法方向
+
+        const T nx = vx / mag;
+        const T ny = vy / mag;
+        const T nz = vz / mag;
+
+        // 2. 计算 0.5 像素精度阈值
+        const auto& ws = graph.world_space_3d;
+        const T dx_px = (ws.x_max - ws.x_min) / graph.resolution_3d.x;
+        const T dy_px = (ws.y_max - ws.y_min) / graph.resolution_3d.y;
+        const T dz_px = (ws.z_max - ws.z_min) / graph.resolution_3d.z;
+
+        // 细分停止条件：体素跨度小于 0.5 个像素大小
+        const T stop_thres_x = dx_px * static_cast<T>(0.5);
+        const T stop_thres_y = dy_px * static_cast<T>(0.5);
+        const T stop_thres_z = dz_px * static_cast<T>(0.5);
+
+        // 3. 八叉树递归 Lambda
+        auto octree_recursive = [&](auto& self_ref, T x0, T y0, T z0, T x1, T y1, T z1) -> void
+        {
+            // --- 第一阶段：利用特化原子区间函数进行严格剪枝 ---
+            // 调用我们之前编写的 SOS (Sum of Squares) 评估函数
+            auto res_iv = StuCanvas::utils::evaluate_circle_3d_sos_implicit(
+                StuCanvas::Interval<T>(x0, x1),
+                StuCanvas::Interval<T>(y0, y1),
+                StuCanvas::Interval<T>(z0, z1),
+                d.cx, d.cy, d.cz, nx, ny, nz, r_sq
+            );
+
+            // 如果隐函数的下界 (lower) 大于 0，说明整个体素内没有任何点能满足 F(P)=0
+            // 使用一个极其微小的 epsilon 处理浮点数舍入误差
+            if (res_iv.lower > static_cast<T>(1e-12)) return;
+
+            // --- 第二阶段：终止判定 (0.5 像素级别) ---
+            T w = x1 - x0;
+            T h = y1 - y0;
+            T db = z1 - z0;
+
+            if (w <= stop_thres_x && h <= stop_thres_y && db <= stop_thres_z)
+            {
+                // 命中圆周！取体素中心点存入结果集
+                self.result_points_3d.emplace_back(Point3D<T>{
+                    (x0 + x1) * static_cast<T>(0.5),
+                    (y0 + y1) * static_cast<T>(0.5),
+                    (z0 + z1) * static_cast<T>(0.5)
+                });
+                return;
+            }
+
+            // --- 第三阶段：八叉树分裂 ---
+            T mx = x0 + w * static_cast<T>(0.5);
+            T my = y0 + h * static_cast<T>(0.5);
+            T mz = z0 + db * static_cast<T>(0.5);
+
+            // 递归探测 8 个子象限
+            self_ref(self_ref, x0, y0, z0, mx, my, mz);
+            self_ref(self_ref, mx, y0, z0, x1, my, mz);
+            self_ref(self_ref, x0, my, z0, mx, y1, mz);
+            self_ref(self_ref, mx, my, z0, x1, y1, mz);
+            self_ref(self_ref, x0, y0, mz, mx, my, z1);
+            self_ref(self_ref, mx, y0, mz, x1, my, z1);
+            self_ref(self_ref, x0, my, mz, mx, y1, z1);
+            self_ref(self_ref, mx, my, mz, x1, y1, z1);
+        };
+
+        // 4. 从 3D 世界空间全域启动递归采样
+        octree_recursive(octree_recursive,
+                         ws.x_min, ws.y_min, ws.z_min,
+                         ws.x_max, ws.y_max, ws.z_max);
     }
 }
