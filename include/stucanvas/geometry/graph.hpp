@@ -102,6 +102,9 @@ namespace StuCanvas
         FUNC_EXPLICIT = WORLD_META | CAT_FUNCTION | 0x0001,
         FUNC_PARAMETRIC = WORLD_META | CAT_FUNCTION | 0x0002,
 
+        BLACKBOX_2D = WORLD_2D | CAT_FUNCTION | 0x0003, // 2D 自定义黑盒
+        BLACKBOX_3D = WORLD_3D | CAT_FUNCTION | 0x0003, // 3D 自定义黑盒
+
         UNKNOWN = 0x00000000
     };
 
@@ -302,6 +305,11 @@ namespace StuCanvas
                 T p2x, p2y, p2z; // 终点中心
                 T r;             // 半径
             } cylinder_3d;
+
+
+            struct {
+                T vals[16];
+            } blackbox;
 
             struct
             {
@@ -1936,20 +1944,20 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
     // 2. 创建 8 个顶点 (POINT_3D_FREE)
     // 索引约定：0-3 为底面 (z-dz)，4-7 为顶面 (z+dz)
     uint64_t v[8];
-    v[0] = CreateFreePoint_3D(cx - dx, cy - dy, cz - dz, node_name + "_V0");
-    v[1] = CreateFreePoint_3D(cx + dx, cy - dy, cz - dz, node_name + "_V1");
-    v[2] = CreateFreePoint_3D(cx + dx, cy + dy, cz - dz, node_name + "_V2");
-    v[3] = CreateFreePoint_3D(cx - dx, cy + dy, cz - dz, node_name + "_V3");
-    v[4] = CreateFreePoint_3D(cx - dx, cy - dy, cz + dz, node_name + "_V4");
-    v[5] = CreateFreePoint_3D(cx + dx, cy - dy, cz + dz, node_name + "_V5");
-    v[6] = CreateFreePoint_3D(cx + dx, cy + dy, cz + dz, node_name + "_V6");
-    v[7] = CreateFreePoint_3D(cx - dx, cy + dy, cz + dz, node_name + "_V7");
+    v[0] = CreateFreePoint_3D(cx - dx, cy - dy, cz - dz, node_name);
+    v[1] = CreateFreePoint_3D(cx + dx, cy - dy, cz - dz, node_name);
+    v[2] = CreateFreePoint_3D(cx + dx, cy + dy, cz - dz, node_name);
+    v[3] = CreateFreePoint_3D(cx - dx, cy + dy, cz - dz, node_name);
+    v[4] = CreateFreePoint_3D(cx - dx, cy - dy, cz + dz, node_name);
+    v[5] = CreateFreePoint_3D(cx + dx, cy - dy, cz + dz, node_name);
+    v[6] = CreateFreePoint_3D(cx + dx, cy + dy, cz + dz, node_name);
+    v[7] = CreateFreePoint_3D(cx - dx, cy + dy, cz + dz, node_name);
 
     for (int i = 0; i < 8; ++i) ids.push_back(v[i]);
 
     // 3. 创建 12 条棱边 (LINE_3D_SEGMENT)
     auto add_edge = [&](int i, int j) {
-        ids.push_back(CreateSegment_3D(v[i], v[j], node_name + "_Edge"));
+        ids.push_back(CreateSegment_3D(v[i], v[j], node_name));
     };
     // 底面 4 条
     add_edge(0, 1); add_edge(1, 2); add_edge(2, 3); add_edge(3, 0);
@@ -1962,9 +1970,9 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
     // 每个矩形面由 2 个三角形组成
     auto add_rect_face = [&](int i, int j, int k, int l) {
         // 三角形 1
-        ids.push_back(CreateTriangle_3D(v[i], v[j], v[k], node_name + "_Face"));
+        ids.push_back(CreateTriangle_3D(v[i], v[j], v[k], node_name));
         // 三角形 2
-        ids.push_back(CreateTriangle_3D(v[i], v[k], v[l], node_name + "_Face"));
+        ids.push_back(CreateTriangle_3D(v[i], v[k], v[l], node_name));
     };
 
     add_rect_face(0, 3, 2, 1); // 底面
@@ -1977,7 +1985,7 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
     return ids;
 }
 
-        uint64_t CreateCone_3D(uint64_t apex_id, uint64_t base_center_id, T radius, std::string node_name = "Unnamed_Cone") {
+        uint64_t CreateCone_3D(uint64_t apex_id, uint64_t base_center_id, T radius, std::string node_name = "Unnamed") {
             Node<T>* n_apex = GetNode(apex_id);
             Node<T>* n_base = GetNode(base_center_id);
 
@@ -2012,7 +2020,7 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
          * @param node_name 节点名称
          * @return uint64_t 新创建的圆柱节点 ID
          */
-        uint64_t CreateCylinder_3D(uint64_t p1_id, uint64_t p2_id, T radius, std::string node_name = "Unnamed_Cylinder")
+        uint64_t CreateCylinder_3D(uint64_t p1_id, uint64_t p2_id, T radius, std::string node_name = "Unnamed")
         {
             // 1. 获取并校验两个父节点（端点）
             Node<T>* n1 = GetNode(p1_id);
@@ -2058,7 +2066,7 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
         }
 
 
-        uint64_t CreateCircle_3D(uint64_t center_id, uint64_t normal_pt_id, T radius, std::string node_name = "Unnamed_Circle3D") {
+        uint64_t CreateCircle_3D(uint64_t center_id, uint64_t normal_pt_id, T radius, std::string node_name = "Unnamed") {
             Node<T>* n_center = GetNode(center_id);
             Node<T>* n_normal = GetNode(normal_pt_id);
 
@@ -2124,6 +2132,53 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
 
             // 设置脏标记
             node->set_mask(NodeMask::DIRTY);
+        }
+
+
+
+        uint64_t CreateBlackBox_3D(const std::vector<uint64_t>& parent_ids,
+                               SolverFuncPtr<T> solver,
+                               PlotterFuncPtr<T> plotter,
+                               std::string node_name = "UserBlackBox_3D")
+        {
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::BLACKBOX_3D;
+            node.name = node_name;
+            node.solver = solver;
+            node.plotter = plotter;
+
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+
+            // 绑定父子关系
+            for (uint64_t pid : parent_ids) {
+                node.parents.push_back(pid);
+                GetNode(pid)->children.push_back(new_id);
+            }
+
+            node.set_mask(NodeMask::DIRTY);
+            return new_id;
+        }
+
+        // 2D 版本同理
+        uint64_t CreateBlackBox_2D(const std::vector<uint64_t>& parent_ids,
+                                   SolverFuncPtr<T> solver,
+                                   PlotterFuncPtr<T> plotter,
+                                   std::string node_name = "UserBlackBox_2D")
+        {
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::BLACKBOX_2D;
+            node.name = node_name;
+            node.solver = solver;
+            node.plotter = plotter;
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+            for (uint64_t pid : parent_ids) {
+                node.parents.push_back(pid);
+                GetNode(pid)->children.push_back(new_id);
+            }
+            node.set_mask(NodeMask::DIRTY);
+            return new_id;
         }
     };
 }
