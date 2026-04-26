@@ -1,103 +1,101 @@
 #include <iostream>
-#include <fstream>
+#include <vector>
+#include <string>
 #include <chrono>
-#include <iomanip>
+#include <thread>
 
-// 包含项目核心头文件
+// 1. 核心系统
 #include "include/stucanvas/geometry/graph.hpp"
 #include "include/stucanvas/geometry/solver.hpp"
 #include "include/stucanvas/geometry/plotter.hpp"
+
+// 2. 统计与重构器
 #include "include/stucanvas/reconstruction/statistics.hpp"
-#include "include/stucanvas/reconstruction/voxel_boolean_3d.hpp"
+#include "include/stucanvas/reconstruction/voxel_surface_reconstructor.hpp"
+
+// 3. 导出工具
+#include "include/stucanvas/reconstruction/export/off.hpp"
 
 using namespace StuCanvas;
+using namespace StuCanvas::Reconstruction;
 using namespace std::chrono;
 
 int main() {
-    // 1. 初始化 Graph 环境
+    // --- 1. 环境初始化 ---
     Graph<double> graph;
-    graph.world_space_3d = {-10.0, -10.0, -10.0, 10.0, 10.0, 10.0}; // 世界范围
-    graph.resolution_3d = {200, 200, 200}; // 设置分辨率 (200^3 体素采样)
+    graph.world_space_3d = {-15.0, -15.0, -15.0, 15.0, 15.0, 15.0};
 
-    // 2. 创建依赖点
-    uint64_t p_origin = graph.CreateFreePoint_3D(0, 0, 0, "Center");
-    uint64_t p_top    = graph.CreateFreePoint_3D(0, 0, 8, "Apex/Top");
-    uint64_t p_norm   = graph.CreateFreePoint_3D(0, 1, 0, "Normal_Ref");
+    // 对于曲面物体，建议将分辨率调高（如 400^3），
+    // 这样“体素阶梯”会非常细微，视觉效果更接近平滑曲面。
+    graph.resolution_3d = {400, 400, 400};
 
-    // 3. 创建几何物体
-    // 圆锥面 (顶点, 底面中心, 半径)
-    uint64_t cone_id = graph.CreateCone_3D(p_top, p_origin, 4.0, "Surface_Cone");
+    std::cout << "===== StuCanvas: Curved Surface Reconstruction Test =====" << std::endl;
 
-    // 圆柱面 (底面, 顶面, 半径)
-    uint64_t cyl_id  = graph.CreateCylinder_3D(p_origin, p_top, 2.5, "Surface_Cylinder");
+    // --- 2. 定义几何体依赖点 ---
+    // 球体中心
+    uint64_t p_sphere_c = graph.CreateFreePoint_3D(-8.0, 8.0, 0.0, "Sphere_Center");
 
-    // 3D 空间圆 (中心, 法向参考点, 半径)
-    uint64_t circ_id = graph.CreateCircle_3D(p_origin, p_norm, 5.0, "Curve_Circle");
+    // 圆柱端点 (水平放置)
+    uint64_t p_cyl_1 = graph.CreateFreePoint_3D(-5.0, -5.0, -5.0, "Cyl_Start");
+    uint64_t p_cyl_2 = graph.CreateFreePoint_3D(5.0, -5.0, 5.0, "Cyl_End");
 
-    // 4. 执行并行计算并计时
-    std::cout << "[Step 1] Starting Graph Computation..." << std::endl;
-    auto start_time = high_resolution_clock::now();
+    // 圆锥点 (垂直向上)
+    uint64_t p_cone_apex = graph.CreateFreePoint_3D(8.0, 8.0, 10.0, "Cone_Apex");
+    uint64_t p_cone_base = graph.CreateFreePoint_3D(8.0, 8.0, 0.0, "Cone_Base");
 
-    // 使用所有核心进行并行计算
+    // --- 3. 创建几何物体 ---
+    uint64_t sphere_id = graph.CreateSphere_3D(p_sphere_c, 5.0, "Target_Sphere");
+    uint64_t cyl_id    = graph.CreateCylinder_3D(p_cyl_1, p_cyl_2, 3.0, "Target_Cylinder");
+    uint64_t cone_id   = graph.CreateCone_3D(p_cone_apex, p_cone_base, 5.0, "Target_Cone");
+
+    // --- 4. 执行 Plotting (生成点云壳) ---
+    std::cout << "[Step 1] Plotting geometries..." << std::endl;
+    auto t1 = high_resolution_clock::now();
     graph.Compute(std::thread::hardware_concurrency());
+    auto t2 = high_resolution_clock::now();
+    std::cout << " -> Time: " << duration_cast<milliseconds>(t2 - t1).count() << " ms" << std::endl;
 
-    auto end_time = high_resolution_clock::now();
-    auto duration = duration_cast<milliseconds>(end_time - start_time);
-    std::cout << "Computation finished in: " << duration.count() << " ms" << std::endl;
+    // --- 5. 循环处理每个物体并导出 ---
+    struct Task { uint64_t id; std::string name; };
+    std::vector<Task> tasks = {
+        {sphere_id, "sphere"},
+        {cyl_id,    "cylinder"},
+        {cone_id,   "cone"}
+    };
 
-    // 5. 统计与点云输出
-    std::ofstream outFile("points.txt");
-    if (!outFile) return -1;
-    outFile << std::fixed << std::setprecision(6);
+    for (const auto& task : tasks) {
+        auto* node = graph.GetNode(task.id);
+        const auto& points = node->result_points_3d;
 
-    uint64_t target_nodes[] = {cone_id, cyl_id, circ_id};
-    for (uint64_t id : target_nodes) {
-        auto* node = graph.GetNode(id);
-        const auto& cloud = node->result_points_3d;
+        if (points.empty()) {
+            std::cout << " [!] Skip " << task.name << " (Empty points)" << std::endl;
+            continue;
+        }
 
-        // 计算平均间距 (利用 statistics.hpp)
-        double avg_dist = CalculateAverageDistance(cloud);
+        std::cout << "\n[Reconstructing] " << node->name << " (" << points.size() << " points)" << std::endl;
 
-        std::cout << "Node [" << node->name << "]: "
-                  << cloud.size() << " points, Avg Spacing: " << avg_dist << std::endl;
+        // 计算自适应步长
+        double avg_d = CalculateAverageDistance(points);
+        // 重构体素大小通常设为点云间距的 1.8 倍以保证奇偶填充闭合
+        double recon_voxel_size = avg_d * 1.8;
 
-        // 输出到文件
-        outFile << "# Node: " << node->name << "\n";
-        for (const auto& p : cloud) {
-            outFile << p.x << " " << p.y << " " << p.z << "\n";
+        auto t_start = high_resolution_clock::now();
+
+        // 执行体素表面重构 (Minecraft 风格但去除内面)
+        Mesh3D<double> mesh = VoxelSurfaceReconstructor<double>::Reconstruct(points, recon_voxel_size);
+
+        auto t_end = high_resolution_clock::now();
+
+        std::cout << " -> Mesh Stats: Verts=" << mesh.vertices.size() << ", Tris=" << mesh.indices.size()/3 << std::endl;
+        std::cout << " -> Recon Time: " << duration_cast<milliseconds>(t_end - t_start).count() << " ms" << std::endl;
+
+        // 导出 OFF
+        std::string filename = task.name + "_voxel_mesh.off";
+        if (Export::ToOFF(filename, mesh)) {
+            std::cout << " -> Saved to " << filename << std::endl;
         }
     }
 
-    // 6. 执行布尔运算 (Reconstruction 系统)
-    // 示例：从圆柱中挖掉圆锥的部分 (Difference)
-    std::cout << "[Step 2] Performing Voxel Boolean (Difference)..." << std::endl;
-
-    auto bool_start = high_resolution_clock::now();
-
-    const auto& cone_cloud = graph.GetNode(cone_id)->result_points_3d;
-    const auto& cyl_cloud  = graph.GetNode(cyl_id)->result_points_3d;
-
-    // 体素大小建议设为世界跨度/分辨率 (例如 20/200 = 0.1)
-    double voxel_size = 0.1;
-
-    // 执行：圆柱 - 圆锥
-    auto result_cloud = Reconstruction::VoxelBoolean3D<double>::Difference(
-        cyl_cloud, cone_cloud, voxel_size
-    );
-
-    auto bool_end = high_resolution_clock::now();
-    std::cout << "Boolean operation finished in: "
-              << duration_cast<milliseconds>(bool_end - bool_start).count() << " ms" << std::endl;
-    std::cout << "Result Cloud Size: " << result_cloud.size() << " points." << std::endl;
-
-    // 7. 保存布尔运算结果
-    outFile << "# Boolean Result (Cylinder - Cone)\n";
-    for (const auto& p : result_cloud) {
-        outFile << p.x << " " << p.y << " " << p.z << "\n";
-    }
-
-    outFile.close();
-    std::cout << "All points saved to points.txt" << std::endl;
-
+    std::cout << "\n===== All Tasks Completed =====" << std::endl;
     return 0;
 }

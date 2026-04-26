@@ -15,6 +15,7 @@
 #include "../types/point.hpp"
 #include "../types/mesh.hpp"
 #include "../types/convex_hull_ds.hpp"
+#include "quick_hull_2d.hpp" // 确保路径正确
 
 namespace StuCanvas {
 
@@ -26,11 +27,13 @@ public:
     using Mesh3  = Mesh3D<T>;
 
     Mesh3 Compute(const std::vector<Point3>& points) {
-        // std::cout << "[QuickHull3D] Computing convex hull for " << points.size() << " points.\n";
+        if (points.size() < 3) return Mesh3{};
+
+        // 如果点数小于 4，理论上无法构成 3D 体，直接尝试 2D
         if (points.size() < 4) {
-            // std::cout << "[QuickHull3D] Less than 4 points, returning empty mesh.\n";
-            return Mesh3{};
+            return QuickHull2D<T>().Compute(points);
         }
+
         return compute_hull(points);
     }
 
@@ -85,10 +88,9 @@ private:
         hull.bind_points(points);
 
         if (!build_initial_tetrahedron()) {
-            std::cerr << "[QuickHull3D] ERROR: Failed to build initial tetrahedron. Points may be coplanar.\n";
-            return Mesh3{};
+            std::cout << "[QuickHull3D] Degenerate case detected. Falling back to QuickHull2D.\n";
+            return QuickHull2D<T>().Compute(points);
         }
-
         unassigned_points.assign(points.size(), true);
         for (Index vi : initial_vertices) { unassigned_points[vi] = false; }
 
