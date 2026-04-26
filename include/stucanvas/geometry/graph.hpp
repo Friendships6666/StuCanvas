@@ -2082,6 +2082,48 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
             node.set_mask(NodeMask::DIRTY);
             return new_id;
         }
+        /**
+         * @brief 修改指定的 2D 点坐标
+         * @param id 点节点的 ID
+         * @param x 新的 X 坐标
+         * @param y 新的 Y 坐标
+         */
+        void ModifyPoint_2D(uint64_t id, T x, T y) {
+            Node<T>* node = GetNode(id);
 
+            // 类型校验：确保是 2D 点分类
+            if (!is_2d(node->type) || !is_point(node->type)) {
+                throw std::invalid_argument("ModifyPoint_2D: Node ID is not a 2D point.");
+            }
+
+            // 更新数据
+            node->data.point_2d.x = x;
+            node->data.point_2d.y = y;
+
+            // 核心：设置脏标记。Graph::Compute 会自动把这个标记传给所有子节点
+            node->set_mask(NodeMask::DIRTY);
+        }
+
+        /**
+         * @brief 修改指定的 3D 点坐标
+         * @param id 点节点的 ID
+         * @param x, y, z 新坐标
+         */
+        void ModifyPoint_3D(uint64_t id, T x, T y, T z) {
+            Node<T>* node = GetNode(id);
+
+            // 类型校验
+            if (!is_3d(node->type) || !is_point(node->type)) {
+                throw std::invalid_argument("ModifyPoint_3D: Node ID is not a 3D point.");
+            }
+
+            // 更新数据
+            node->data.point_3d.x = x;
+            node->data.point_3d.y = y;
+            node->data.point_3d.z = z;
+
+            // 设置脏标记
+            node->set_mask(NodeMask::DIRTY);
+        }
     };
 }
