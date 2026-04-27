@@ -10,6 +10,10 @@
 #include "utils/platonic_data.hpp"
 #include "../utils/math_traits.hpp"
 #include "../utils/interval.hpp"
+#include "../plot/implicit_2d.hpp"
+#include "../plot/implicit_3d.hpp"
+#include "../plot/parametric_2d.hpp"
+#include "../plot/parametric_3d.hpp"
 
 namespace StuCanvas
 {
@@ -1369,5 +1373,129 @@ void PlotCylinder_3D(Graph<T>& graph, Node<T>& self)
         octree_recursive(octree_recursive,
                          ws.x_min, ws.y_min, ws.z_min,
                          ws.x_max, ws.y_max, ws.z_max);
+    }
+
+
+    template <typename T>
+    void PlotImplicit_2D(Graph<T>& graph, Node<T>& self) {
+        if (!self.implicit_func_2d) return;
+
+        // 构造真正的 Descriptor 传给 StuPlot
+        IntervalPlot2DDescriptor<T, std::function<IntervalSet<T>(IntervalSet<T>, IntervalSet<T>)>> desc;
+
+        const auto& c = self.data.implicit_2d_config;
+
+        desc.function = self.implicit_func_2d;
+        desc.result = &self.result_points_2d;
+        desc.cpu_threads = graph.ResolveThreadCount(0); // 使用 Graph 算出的可用线程
+
+        // 注入由 Solver 同步好的参数
+        desc.x_min = c.x_min;
+        desc.x_max = c.x_max;
+        desc.y_min = c.y_min;
+        desc.y_max = c.y_max;
+        desc.sampling_threshold = c.sampling_threshold;
+
+        // 其他用户配置参数
+        desc.max_recursion_depth = c.max_recursion_depth;
+        desc.use_de_refinement = c.use_de;
+        desc.verification_epsilon = c.verification_epsilon;
+        desc.de_population_size = c.de_pop;
+        desc.de_max_generations = c.de_gen;
+
+        // 执行 StuPlot 模块的区间算法
+        plot_interval_2D(desc);
+    }
+
+
+    template <typename T>
+void PlotImplicit_3D(Graph<T>& graph, Node<T>& self) {
+        if (!self.implicit_func_3d) return;
+
+        // 构造 StuPlot 所需的 3D Descriptor
+        using FuncType = std::function<IntervalSet<T>(IntervalSet<T>, IntervalSet<T>, IntervalSet<T>)>;
+        IntervalPlot3DDescriptor<T, FuncType> desc;
+
+        const auto& c = self.data.implicit_3d_config;
+
+        // 注入函数与结果集
+        desc.function = self.implicit_func_3d;
+        desc.result = &self.result_points_3d;
+        desc.cpu_threads = graph.ResolveThreadCount(0);
+
+        // 注入同步后的空间参数
+        desc.x_min = c.x_min; desc.x_max = c.x_max;
+        desc.y_min = c.y_min; desc.y_max = c.y_max;
+        desc.z_min = c.z_min; desc.z_max = c.z_max;
+        desc.sampling_threshold = c.sampling_threshold;
+
+        // 注入算法超参数
+        desc.max_recursion_depth = c.max_recursion_depth;
+        desc.use_de_refinement = c.use_de;
+        desc.verification_epsilon = c.verification_epsilon;
+        desc.de_population_size = c.de_pop;
+        desc.de_max_generations = c.de_gen;
+
+        // 执行 3D 区间算术采样算法
+        plot_interval_3D(desc);
+    }
+
+
+    template <typename T>
+void PlotParametric_2D(Graph<T>& graph, Node<T>& self) {
+        if (!self.parametric_x_2d || !self.parametric_y_2d) return;
+
+        // 构造 StuPlot 所需的参数方程 Descriptor
+        using TFunc = std::function<IntervalSet<T>(IntervalSet<T>)>;
+        ParametricPlot2DDescriptor<T, TFunc, TFunc> desc;
+
+        const auto& c = self.data.parametric_2d_config;
+
+        desc.x_func = self.parametric_x_2d;
+        desc.y_func = self.parametric_y_2d;
+        desc.result = &self.result_points_2d;
+        desc.cpu_threads = graph.ResolveThreadCount(0);
+
+        // 注入同步后的参数
+        desc.x_min = c.x_min; desc.x_max = c.x_max;
+        desc.y_min = c.y_min; desc.y_max = c.y_max;
+        desc.t_min = c.t_min; desc.t_max = c.t_max;
+        desc.point_spacing = c.point_spacing;
+        desc.max_recursion_depth = c.max_recursion_depth;
+
+        // 执行 StuPlot 模块的参数化采样算法
+        plot_parametric_2D(desc);
+    }
+
+
+    template <typename T>
+void PlotParametric_3D(Graph<T>& graph, Node<T>& self) {
+        if (!self.parametric_x_3d || !self.parametric_y_3d || !self.parametric_z_3d) return;
+
+        // 构造 3D 参数化 Descriptor
+        using FuncType = std::function<IntervalSet<T>(IntervalSet<T>, IntervalSet<T>)>;
+        ParametricPlot3DDescriptor<T, FuncType, FuncType, FuncType> desc;
+
+        const auto& c = self.data.parametric_3d_config;
+
+        desc.x_func = self.parametric_x_3d;
+        desc.y_func = self.parametric_y_3d;
+        desc.z_func = self.parametric_z_3d;
+        desc.result = &self.result_points_3d;
+        desc.cpu_threads = graph.ResolveThreadCount(0);
+
+        // 注入由 Solver 同步和由用户初始化的参数
+        desc.x_min = c.x_min; desc.x_max = c.x_max;
+        desc.y_min = c.y_min; desc.y_max = c.y_max;
+        desc.z_min = c.z_min; desc.z_max = c.z_max;
+
+        desc.u_min = c.u_min; desc.u_max = c.u_max;
+        desc.v_min = c.v_min; desc.v_max = c.v_max;
+
+        desc.point_spacing = c.point_spacing;
+        desc.max_recursion_depth = c.max_recursion_depth;
+
+        // 执行 StuPlot 模块的参数化曲面采样算法
+        plot_parametric_3D(desc);
     }
 }

@@ -18,6 +18,10 @@
 #include "solver.hpp"
 #include "../utils/parallel_for.hpp"
 #include "utils/platonic_data.hpp"
+#include "../plot/implicit_2d.hpp"
+#include "../plot/implicit_3d.hpp"
+#include "../plot/parametric_2d.hpp"
+#include "../plot/parametric_3d.hpp"
 
 namespace StuCanvas
 {
@@ -100,7 +104,10 @@ namespace StuCanvas
 
         SCALAR = WORLD_META | CAT_SCALAR | 0x0001,
         FUNC_EXPLICIT = WORLD_META | CAT_FUNCTION | 0x0001,
-        FUNC_PARAMETRIC = WORLD_META | CAT_FUNCTION | 0x0002,
+        FUNC_PARAMETRIC_2D = WORLD_META | CAT_FUNCTION | 0x0002,
+        FUNC_IMPLICIT_2D = WORLD_META | CAT_FUNCTION | 0x0003,
+        FUNC_IMPLICIT_3D = WORLD_META | CAT_FUNCTION | 0x0004,
+        FUNC_PARAMETRIC_3D = WORLD_META | CAT_FUNCTION | 0x0005,
 
         BLACKBOX_2D = WORLD_2D | CAT_FUNCTION | 0x0003, // 2D 自定义黑盒
         BLACKBOX_3D = WORLD_3D | CAT_FUNCTION | 0x0003, // 3D 自定义黑盒
@@ -190,7 +197,6 @@ namespace StuCanvas
     };
 
 
-
     template <typename T>
     struct Node
     {
@@ -200,6 +206,20 @@ namespace StuCanvas
         static inline std::atomic<uint64_t> global_node_id_counter{0};
         NodeType type = NodeType::UNKNOWN;
         uint64_t mask = 0;
+        std::function<IntervalSet<T>(IntervalSet<T>, IntervalSet<T>, IntervalSet<T>)> implicit_func_2d;
+        std::function<IntervalSet<T>(IntervalSet<T>, IntervalSet<T>, IntervalSet<T>)> implicit_func_3d;
+
+
+        std::function<IntervalSet<T>(IntervalSet<T>)> parametric_x_2d;
+        std::function<IntervalSet<T>(IntervalSet<T>)> parametric_y_2d;
+
+        using ParametricFunc3D = std::function<IntervalSet<T>(IntervalSet<T>, IntervalSet<T>)>;
+
+        ParametricFunc3D parametric_x_3d;
+        ParametricFunc3D parametric_y_3d;
+        ParametricFunc3D parametric_z_3d;
+
+
         void set_mask(NodeMask m) noexcept { mask |= static_cast<uint64_t>(m); }
 
         void clear_mask(NodeMask m) noexcept { mask &= ~static_cast<uint64_t>(m); }
@@ -221,7 +241,8 @@ namespace StuCanvas
                 T z;
             } point_3d;
 
-            struct {
+            struct
+            {
                 T cx, cy, cz; // 中心点坐标 (由 Solver 更新)
                 T dx, dy, dz; // X, Y, Z 三个方向的半延伸长度
             } cuboid_3d;
@@ -245,10 +266,11 @@ namespace StuCanvas
             } line_3d;
 
 
-            struct {
+            struct
+            {
                 T apex_x, apex_y, apex_z; // 顶点 (由 Solver 更新)
                 T base_x, base_y, base_z; // 底面圆心 (由 Solver 更新)
-                T r;                      // 底面半径
+                T r; // 底面半径
             } cone_3d;
 
             struct
@@ -269,14 +291,17 @@ namespace StuCanvas
                 T nz;
                 T r;
             } circle_3d;
-            struct {
-                T cx, cy;      // 中心点 (由 Solver 更新)
-                T width, height; // 宽和高
-            } rect_2d;         // 新增：矩形数据
 
-            struct {
+            struct
+            {
+                T cx, cy; // 中心点 (由 Solver 更新)
+                T width, height; // 宽和高
+            } rect_2d; // 新增：矩形数据
+
+            struct
+            {
                 T cx, cy, cz; // 中心点 (由 Solver 更新)
-                T r;          // 半径
+                T r; // 半径
             } sphere_3d;
 
             struct
@@ -300,14 +325,16 @@ namespace StuCanvas
             } arc_2d;
 
 
-            struct {
+            struct
+            {
                 T p1x, p1y, p1z; // 起点中心
                 T p2x, p2y, p2z; // 终点中心
-                T r;             // 半径
+                T r; // 半径
             } cylinder_3d;
 
 
-            struct {
+            struct
+            {
                 T vals[16];
             } blackbox;
 
@@ -336,11 +363,54 @@ namespace StuCanvas
                 uint32_t n;
             } poly_gen_2d;
 
-            struct {
+            struct
+            {
                 T cx, cy, cz; // 中心点 (由 Solver 更新)
-                T radius;     // 半径
-                int type;     // 4, 6, 8, 12, 20
+                T radius; // 半径
+                int type; // 4, 6, 8, 12, 20
             } platonic_solid_3d;
+
+            struct
+            {
+                T x_min, x_max, y_min, y_max;
+                T sampling_threshold; // 由 Solver 同步：(max-min)/resolution
+                T verification_epsilon;
+                uint64_t max_recursion_depth;
+                uint64_t de_pop;
+                uint64_t de_gen;
+                bool use_de;
+            } implicit_2d_config;
+
+
+            struct
+            {
+                T x_min, x_max, y_min, y_max, z_min, z_max;
+                T sampling_threshold; // 由 Solver 同步：空间跨度 / 分辨率
+                T verification_epsilon;
+                uint64_t max_recursion_depth;
+                uint64_t de_pop;
+                uint64_t de_gen;
+                bool use_de;
+            } implicit_3d_config;
+
+
+            struct
+            {
+                T x_min, x_max, y_min, y_max; // 视口裁剪范围
+                T t_min, t_max; // 参数 t 的定义域
+                T point_spacing; // 由 Solver 同步：采样步长
+                uint64_t max_recursion_depth; // 四叉树自适应深度
+            } parametric_2d_config;
+
+
+            struct
+            {
+                T x_min, x_max, y_min, y_max, z_min, z_max; // 视口裁剪
+                T u_min, u_max; // u 定义域
+                T v_min, v_max; // v 定义域
+                T point_spacing; // 采样步长 (由 Solver 同步)
+                uint64_t max_recursion_depth; // UV 分裂深度
+            } parametric_3d_config;
         } data;
 
         utils::BlockDeque<uint64_t, 4> parents;
@@ -354,10 +424,6 @@ namespace StuCanvas
         {
             id = global_node_id_counter.fetch_add(1, std::memory_order_relaxed);
         }
-
-
-
-
     };
 
     template <typename T>
@@ -671,7 +737,7 @@ namespace StuCanvas
             node.data.point_3d.z = z;
             id_map[node.id] = node_pool.size() - 1;
             node.solver = nullptr;
-            node.plotter =  PlotPoint_3D;
+            node.plotter = PlotPoint_3D;
             node.set_mask(NodeMask::DIRTY);
             node.name = node_name;
             return node.id;
@@ -1038,11 +1104,13 @@ namespace StuCanvas
             Node<T>* n2 = GetNode(p2_id);
             Node<T>* n3 = GetNode(p3_id);
 
-            auto is_valid_point = [](Node<T>* n) {
+            auto is_valid_point = [](Node<T>* n)
+            {
                 return is_3d(n->type) && is_point(n->type);
             };
 
-            if (!is_valid_point(n1) || !is_valid_point(n2) || !is_valid_point(n3)) {
+            if (!is_valid_point(n1) || !is_valid_point(n2) || !is_valid_point(n3))
+            {
                 throw std::invalid_argument("All three arguments must be 3D Point objects.");
             }
 
@@ -1664,7 +1732,8 @@ namespace StuCanvas
         uint64_t CreatePlatonicSolid_3D(uint64_t center_id, T radius, int type, std::string node_name = "Unnamed")
         {
             Node<T>* center_node = GetNode(center_id);
-            if (!is_3d(center_node->type) || !is_point(center_node->type)) {
+            if (!is_3d(center_node->type) || !is_point(center_node->type))
+            {
                 throw std::invalid_argument("Center must be a 3D Point.");
             }
 
@@ -1693,7 +1762,8 @@ namespace StuCanvas
         uint64_t CreateSphere_3D(uint64_t center_id, T radius, std::string node_name = "Unnamed")
         {
             Node<T>* center_node = GetNode(center_id);
-            if (!(is_3d(center_node->type) && is_point(center_node->type))) {
+            if (!(is_3d(center_node->type) && is_point(center_node->type)))
+            {
                 throw std::invalid_argument("Center must be a 3D Point object.");
             }
 
@@ -1711,22 +1781,26 @@ namespace StuCanvas
             center_node->children.push_back(new_id);
 
             // 绑定 Solver 和 Plotter
-            node.solver  = SolveSphere_3D<T>;
+            node.solver = SolveSphere_3D<T>;
             node.plotter = PlotSphere_3D<T>;
             node.set_mask(NodeMask::DIRTY);
 
             return new_id;
         }
+
         /**
          * @brief 创建 3D 球体 (四点定球)
          * @param p1_id, p2_id, p3_id, p4_id 四个顶点的 ID
          */
-        uint64_t CreateSphere_3D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id, uint64_t p4_id, std::string node_name = "Unnamed")
+        uint64_t CreateSphere_3D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id, uint64_t p4_id,
+                                 std::string node_name = "Unnamed")
         {
             // 1. 获取并校验四个点
-            Node<T>* ns[4] = { GetNode(p1_id), GetNode(p2_id), GetNode(p3_id), GetNode(p4_id) };
-            for(auto & n : ns) {
-                if (!(is_3d(n->type) && is_point(n->type))) {
+            Node<T>* ns[4] = {GetNode(p1_id), GetNode(p2_id), GetNode(p3_id), GetNode(p4_id)};
+            for (auto& n : ns)
+            {
+                if (!(is_3d(n->type) && is_point(n->type)))
+                {
                     throw std::invalid_argument("All arguments must be 3D Point objects.");
                 }
             }
@@ -1737,7 +1811,8 @@ namespace StuCanvas
             node.name = node_name;
 
             // 建立 4 个父节点依赖
-            for(auto & n : ns) {
+            for (auto& n : ns)
+            {
                 node.parents.push_back(n->id);
                 n->children.push_back(node.id);
             }
@@ -1746,21 +1821,23 @@ namespace StuCanvas
             id_map[new_id] = node_pool.size() - 1;
 
             // 3. 绑定四点定球专用求解器
-            node.solver  = SolveSphere_4P_3D<T>;
+            node.solver = SolveSphere_4P_3D<T>;
             node.plotter = PlotSphere_3D<T>;
             node.set_mask(NodeMask::DIRTY);
 
             return new_id;
         }
 
-        uint64_t CreateIntersectionPoint_2D(const std::vector<uint64_t>& parent_ids, T gx, T gy, std::string node_name = "Unnamed")
+        uint64_t CreateIntersectionPoint_2D(const std::vector<uint64_t>& parent_ids, T gx, T gy,
+                                            std::string node_name = "Unnamed")
         {
             auto& node = node_pool.emplace_back();
             node.type = NodeType::POINT_2D_INTERSECT;
             node.name = node_name;
 
             // 没有任何限制，直接压入所有 ID
-            for (uint64_t pid : parent_ids) {
+            for (uint64_t pid : parent_ids)
+            {
                 node.parents.push_back(pid);
                 GetNode(pid)->children.push_back(node.id);
             }
@@ -1784,7 +1861,8 @@ namespace StuCanvas
          */
         uint64_t CreateIntersectionCurve_3D(const std::vector<uint64_t>& parent_ids, std::string node_name = "Unnamed")
         {
-            if (parent_ids.size() < 2) {
+            if (parent_ids.size() < 2)
+            {
                 throw std::invalid_argument("IntersectionCurve requires at least 2 target nodes.");
             }
 
@@ -1792,7 +1870,8 @@ namespace StuCanvas
             node.type = NodeType::UNKNOWN; // 可自定义一个 INTERSECT_CURVE 类型
             node.name = node_name;
 
-            for (uint64_t pid : parent_ids) {
+            for (uint64_t pid : parent_ids)
+            {
                 node.parents.push_back(pid);
                 GetNode(pid)->children.push_back(node.id);
             }
@@ -1809,12 +1888,13 @@ namespace StuCanvas
         }
 
 
-
-        uint64_t CreateRectangle_2D(uint64_t center_id, T width, T height, std::string node_name = "Unnamed") {
+        uint64_t CreateRectangle_2D(uint64_t center_id, T width, T height, std::string node_name = "Unnamed")
+        {
             Node<T>* center_node = GetNode(center_id);
 
             // 校验输入：中心点必须是 2D 点
-            if (!is_2d(center_node->type) || !is_point(center_node->type)) {
+            if (!is_2d(center_node->type) || !is_point(center_node->type))
+            {
                 throw std::invalid_argument("Rectangle center must be a 2D Point.");
             }
 
@@ -1840,7 +1920,6 @@ namespace StuCanvas
 
             return new_id;
         }
-
 
 
         std::vector<uint64_t> GroupCreateRectangle_2D(uint64_t center_id, T width, T height,
@@ -1890,10 +1969,12 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz, std::string node_name = "Unnamed_Cuboid") {
+        uint64_t CreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz, std::string node_name = "Unnamed_Cuboid")
+        {
             Node<T>* center_node = GetNode(center_id);
 
-            if (!is_3d(center_node->type) || !is_point(center_node->type)) {
+            if (!is_3d(center_node->type) || !is_point(center_node->type))
+            {
                 throw std::invalid_argument("Cuboid center must be a 3D Point.");
             }
 
@@ -1929,63 +2010,75 @@ namespace StuCanvas
  *
  * @return std::vector<uint64_t> 包含所有生成的子节点 ID [8点, 12线, 12面]
  */
-std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
-                                           std::string node_name = "Unnamed_GroupCuboid")
-{
-    std::vector<uint64_t> ids;
-    ids.reserve(32); // 8 + 12 + 12
+        std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
+                                                   std::string node_name = "Unnamed_GroupCuboid")
+        {
+            std::vector<uint64_t> ids;
+            ids.reserve(32); // 8 + 12 + 12
 
-    // 1. 获取中心点位置
-    Node<T>* center_node = GetNode(center_id);
-    T cx = center_node->data.point_3d.x;
-    T cy = center_node->data.point_3d.y;
-    T cz = center_node->data.point_3d.z;
+            // 1. 获取中心点位置
+            Node<T>* center_node = GetNode(center_id);
+            T cx = center_node->data.point_3d.x;
+            T cy = center_node->data.point_3d.y;
+            T cz = center_node->data.point_3d.z;
 
-    // 2. 创建 8 个顶点 (POINT_3D_FREE)
-    // 索引约定：0-3 为底面 (z-dz)，4-7 为顶面 (z+dz)
-    uint64_t v[8];
-    v[0] = CreateFreePoint_3D(cx - dx, cy - dy, cz - dz, node_name);
-    v[1] = CreateFreePoint_3D(cx + dx, cy - dy, cz - dz, node_name);
-    v[2] = CreateFreePoint_3D(cx + dx, cy + dy, cz - dz, node_name);
-    v[3] = CreateFreePoint_3D(cx - dx, cy + dy, cz - dz, node_name);
-    v[4] = CreateFreePoint_3D(cx - dx, cy - dy, cz + dz, node_name);
-    v[5] = CreateFreePoint_3D(cx + dx, cy - dy, cz + dz, node_name);
-    v[6] = CreateFreePoint_3D(cx + dx, cy + dy, cz + dz, node_name);
-    v[7] = CreateFreePoint_3D(cx - dx, cy + dy, cz + dz, node_name);
+            // 2. 创建 8 个顶点 (POINT_3D_FREE)
+            // 索引约定：0-3 为底面 (z-dz)，4-7 为顶面 (z+dz)
+            uint64_t v[8];
+            v[0] = CreateFreePoint_3D(cx - dx, cy - dy, cz - dz, node_name);
+            v[1] = CreateFreePoint_3D(cx + dx, cy - dy, cz - dz, node_name);
+            v[2] = CreateFreePoint_3D(cx + dx, cy + dy, cz - dz, node_name);
+            v[3] = CreateFreePoint_3D(cx - dx, cy + dy, cz - dz, node_name);
+            v[4] = CreateFreePoint_3D(cx - dx, cy - dy, cz + dz, node_name);
+            v[5] = CreateFreePoint_3D(cx + dx, cy - dy, cz + dz, node_name);
+            v[6] = CreateFreePoint_3D(cx + dx, cy + dy, cz + dz, node_name);
+            v[7] = CreateFreePoint_3D(cx - dx, cy + dy, cz + dz, node_name);
 
-    for (int i = 0; i < 8; ++i) ids.push_back(v[i]);
+            for (int i = 0; i < 8; ++i) ids.push_back(v[i]);
 
-    // 3. 创建 12 条棱边 (LINE_3D_SEGMENT)
-    auto add_edge = [&](int i, int j) {
-        ids.push_back(CreateSegment_3D(v[i], v[j], node_name));
-    };
-    // 底面 4 条
-    add_edge(0, 1); add_edge(1, 2); add_edge(2, 3); add_edge(3, 0);
-    // 顶面 4 条
-    add_edge(4, 5); add_edge(5, 6); add_edge(6, 7); add_edge(7, 4);
-    // 垂直 4 条
-    add_edge(0, 4); add_edge(1, 5); add_edge(2, 6); add_edge(3, 7);
+            // 3. 创建 12 条棱边 (LINE_3D_SEGMENT)
+            auto add_edge = [&](int i, int j)
+            {
+                ids.push_back(CreateSegment_3D(v[i], v[j], node_name));
+            };
+            // 底面 4 条
+            add_edge(0, 1);
+            add_edge(1, 2);
+            add_edge(2, 3);
+            add_edge(3, 0);
+            // 顶面 4 条
+            add_edge(4, 5);
+            add_edge(5, 6);
+            add_edge(6, 7);
+            add_edge(7, 4);
+            // 垂直 4 条
+            add_edge(0, 4);
+            add_edge(1, 5);
+            add_edge(2, 6);
+            add_edge(3, 7);
 
-    // 4. 创建 12 个三角形面 (PLANE_3D_TRIANGLE)
-    // 每个矩形面由 2 个三角形组成
-    auto add_rect_face = [&](int i, int j, int k, int l) {
-        // 三角形 1
-        ids.push_back(CreateTriangle_3D(v[i], v[j], v[k], node_name));
-        // 三角形 2
-        ids.push_back(CreateTriangle_3D(v[i], v[k], v[l], node_name));
-    };
+            // 4. 创建 12 个三角形面 (PLANE_3D_TRIANGLE)
+            // 每个矩形面由 2 个三角形组成
+            auto add_rect_face = [&](int i, int j, int k, int l)
+            {
+                // 三角形 1
+                ids.push_back(CreateTriangle_3D(v[i], v[j], v[k], node_name));
+                // 三角形 2
+                ids.push_back(CreateTriangle_3D(v[i], v[k], v[l], node_name));
+            };
 
-    add_rect_face(0, 3, 2, 1); // 底面
-    add_rect_face(4, 5, 6, 7); // 顶面
-    add_rect_face(0, 1, 5, 4); // 前面
-    add_rect_face(1, 2, 6, 5); // 右面
-    add_rect_face(2, 3, 7, 6); // 后面
-    add_rect_face(3, 0, 4, 7); // 左面
+            add_rect_face(0, 3, 2, 1); // 底面
+            add_rect_face(4, 5, 6, 7); // 顶面
+            add_rect_face(0, 1, 5, 4); // 前面
+            add_rect_face(1, 2, 6, 5); // 右面
+            add_rect_face(2, 3, 7, 6); // 后面
+            add_rect_face(3, 0, 4, 7); // 左面
 
-    return ids;
-}
+            return ids;
+        }
 
-        uint64_t CreateCone_3D(uint64_t apex_id, uint64_t base_center_id, T radius, std::string node_name = "Unnamed") {
+        uint64_t CreateCone_3D(uint64_t apex_id, uint64_t base_center_id, T radius, std::string node_name = "Unnamed")
+        {
             Node<T>* n_apex = GetNode(apex_id);
             Node<T>* n_base = GetNode(base_center_id);
 
@@ -2056,7 +2149,7 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
 
             // 5. 绑定求解器与打点器
             // 注意：对应的 SolveCylinder_3D 和 PlotCylinder_3D 需在 solver.hpp 和 plotter.hpp 中实现
-            node.solver  = SolveCylinder_3D<T>;
+            node.solver = SolveCylinder_3D<T>;
             node.plotter = PlotCylinder_3D<T>;
 
             // 6. 标记为脏，确保下次 Compute 时执行计算
@@ -2066,7 +2159,8 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
         }
 
 
-        uint64_t CreateCircle_3D(uint64_t center_id, uint64_t normal_pt_id, T radius, std::string node_name = "Unnamed") {
+        uint64_t CreateCircle_3D(uint64_t center_id, uint64_t normal_pt_id, T radius, std::string node_name = "Unnamed")
+        {
             Node<T>* n_center = GetNode(center_id);
             Node<T>* n_normal = GetNode(normal_pt_id);
 
@@ -2090,17 +2184,20 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
             node.set_mask(NodeMask::DIRTY);
             return new_id;
         }
+
         /**
          * @brief 修改指定的 2D 点坐标
          * @param id 点节点的 ID
          * @param x 新的 X 坐标
          * @param y 新的 Y 坐标
          */
-        void ModifyPoint_2D(uint64_t id, T x, T y) {
+        void ModifyPoint_2D(uint64_t id, T x, T y)
+        {
             Node<T>* node = GetNode(id);
 
             // 类型校验：确保是 2D 点分类
-            if (!is_2d(node->type) || !is_point(node->type)) {
+            if (!is_2d(node->type) || !is_point(node->type))
+            {
                 throw std::invalid_argument("ModifyPoint_2D: Node ID is not a 2D point.");
             }
 
@@ -2117,11 +2214,13 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
          * @param id 点节点的 ID
          * @param x, y, z 新坐标
          */
-        void ModifyPoint_3D(uint64_t id, T x, T y, T z) {
+        void ModifyPoint_3D(uint64_t id, T x, T y, T z)
+        {
             Node<T>* node = GetNode(id);
 
             // 类型校验
-            if (!is_3d(node->type) || !is_point(node->type)) {
+            if (!is_3d(node->type) || !is_point(node->type))
+            {
                 throw std::invalid_argument("ModifyPoint_3D: Node ID is not a 3D point.");
             }
 
@@ -2135,11 +2234,10 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
         }
 
 
-
         uint64_t CreateBlackBox_3D(const std::vector<uint64_t>& parent_ids,
-                               SolverFuncPtr<T> solver,
-                               PlotterFuncPtr<T> plotter,
-                               std::string node_name = "UserBlackBox_3D")
+                                   SolverFuncPtr<T> solver,
+                                   PlotterFuncPtr<T> plotter,
+                                   std::string node_name = "UserBlackBox_3D")
         {
             auto& node = node_pool.emplace_back();
             node.type = NodeType::BLACKBOX_3D;
@@ -2151,7 +2249,8 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
             id_map[new_id] = node_pool.size() - 1;
 
             // 绑定父子关系
-            for (uint64_t pid : parent_ids) {
+            for (uint64_t pid : parent_ids)
+            {
                 node.parents.push_back(pid);
                 GetNode(pid)->children.push_back(new_id);
             }
@@ -2173,10 +2272,164 @@ std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
             node.plotter = plotter;
             uint64_t new_id = node.id;
             id_map[new_id] = node_pool.size() - 1;
-            for (uint64_t pid : parent_ids) {
+            for (uint64_t pid : parent_ids)
+            {
                 node.parents.push_back(pid);
                 GetNode(pid)->children.push_back(new_id);
             }
+            node.set_mask(NodeMask::DIRTY);
+            return new_id;
+        }
+
+
+        template <typename TFunc>
+        uint64_t CreateImplicit_2D(const IntervalPlot2DDescriptor<T, TFunc>& initial_desc,
+                                   const std::vector<uint64_t>& parent_ids = {},
+                                   std::string node_name = "Implicit_2D")
+        {
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::FUNC_IMPLICIT_2D;
+            node.name = node_name;
+
+            // 1. 类型擦除并存储函数对象
+            node.implicit_func_2d = initial_desc.function;
+
+            // 2. 拷贝用户初始配置到 union 中
+            auto& c = node.data.implicit_2d_config;
+            c.verification_epsilon = initial_desc.verification_epsilon;
+            c.max_recursion_depth = initial_desc.max_recursion_depth;
+            c.de_pop = initial_desc.de_population_size;
+            c.de_gen = initial_desc.de_max_generations;
+            c.use_de = initial_desc.use_de_refinement;
+
+            // 3. 注册 ID 并建立依赖
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+            for (uint64_t pid : parent_ids)
+            {
+                node.parents.push_back(pid);
+                GetNode(pid)->children.push_back(new_id);
+            }
+
+            // 4. 绑定封装好的函数
+            node.solver = SolveImplicit_2D<T>;
+            node.plotter = PlotImplicit_2D<T>;
+
+            node.set_mask(NodeMask::DIRTY);
+            return new_id;
+        }
+
+
+        template <typename TFunc>
+        uint64_t CreateImplicit_3D(const IntervalPlot3DDescriptor<T, TFunc>& initial_desc,
+                                   const std::vector<uint64_t>& parent_ids = {},
+                                   std::string node_name = "Implicit_3D")
+        {
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::FUNC_IMPLICIT_3D;
+            node.name = node_name;
+
+            // 1. 存储函数逻辑 (自动转换为 std::function)
+            node.implicit_func_3d = initial_desc.function;
+
+            // 2. 拷贝用户定义的算法超参数
+            auto& c = node.data.implicit_3d_config;
+            c.max_recursion_depth = initial_desc.max_recursion_depth;
+            c.use_de = initial_desc.use_de_refinement;
+            c.verification_epsilon = initial_desc.verification_epsilon;
+            c.de_pop = initial_desc.de_population_size;
+            c.de_gen = initial_desc.de_max_generations;
+
+            // 3. 注册 ID 并处理依赖关系
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+            for (uint64_t pid : parent_ids)
+            {
+                node.parents.push_back(pid);
+                GetNode(pid)->children.push_back(new_id);
+            }
+
+            // 4. 绑定 3D 专用的 Solver 和 Plotter
+            node.solver = SolveImplicit_3D<T>;
+            node.plotter = PlotImplicit_3D<T>;
+
+            node.set_mask(NodeMask::DIRTY);
+            return new_id;
+        }
+
+
+        template <typename TX, typename TY>
+        uint64_t CreateParametric_2D(const ParametricPlot2DDescriptor<T, TX, TY>& initial_desc,
+                                     const std::vector<uint64_t>& parent_ids = {},
+                                     std::string node_name = "Parametric_2D")
+        {
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::FUNC_PARAMETRIC_2D;
+            node.name = node_name;
+
+            // 1. 类型擦除并存储两个函数对象
+            node.parametric_x_2d = initial_desc.x_func;
+            node.parametric_y_2d = initial_desc.y_func;
+
+            // 2. 拷贝初始范围和算法参数
+            auto& c = node.data.parametric_2d_config;
+            c.t_min = initial_desc.t_min;
+            c.t_max = initial_desc.t_max;
+            c.max_recursion_depth = initial_desc.max_recursion_depth;
+
+            // 3. 建立依赖关系
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+            for (uint64_t pid : parent_ids)
+            {
+                node.parents.push_back(pid);
+                GetNode(pid)->children.push_back(new_id);
+            }
+
+            // 4. 绑定专属求解器与绘图器
+            node.solver = SolveParametric_2D<T>;
+            node.plotter = PlotParametric_2D<T>;
+
+            node.set_mask(NodeMask::DIRTY);
+            return new_id;
+        }
+
+
+        template <typename TX, typename TY, typename TZ>
+        uint64_t CreateParametric_3D(const ParametricPlot3DDescriptor<T, TX, TY, TZ>& initial_desc,
+                                     const std::vector<uint64_t>& parent_ids = {},
+                                     std::string node_name = "Parametric_3D")
+        {
+            auto& node = node_pool.emplace_back();
+            node.type = NodeType::FUNC_PARAMETRIC_3D;
+            node.name = node_name;
+
+            // 1. 存储函数对象
+            node.parametric_x_3d = initial_desc.x_func;
+            node.parametric_y_3d = initial_desc.y_func;
+            node.parametric_z_3d = initial_desc.z_func;
+
+            // 2. 拷贝 UV 范围与算法超参数
+            auto& c = node.data.parametric_3d_config;
+            c.u_min = initial_desc.u_min;
+            c.u_max = initial_desc.u_max;
+            c.v_min = initial_desc.v_min;
+            c.v_max = initial_desc.v_max;
+            c.max_recursion_depth = initial_desc.max_recursion_depth;
+
+            // 3. 注册 ID 并处理依赖
+            uint64_t new_id = node.id;
+            id_map[new_id] = node_pool.size() - 1;
+            for (uint64_t pid : parent_ids)
+            {
+                node.parents.push_back(pid);
+                GetNode(pid)->children.push_back(new_id);
+            }
+
+            // 4. 绑定 3D 专用函数
+            node.solver = SolveParametric_3D<T>;
+            node.plotter = PlotParametric_3D<T>;
+
             node.set_mask(NodeMask::DIRTY);
             return new_id;
         }

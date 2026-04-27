@@ -1302,4 +1302,90 @@ namespace StuCanvas
         d.ny = normal->data.point_3d.y;
         d.nz = normal->data.point_3d.z;
     }
+
+
+    template <typename T>
+void SolveImplicit_2D(Graph<T>& graph, Node<T>& self) {
+        auto& c = self.data.implicit_2d_config;
+
+        // 1. 同步范围：使隐函数绘制范围与 Graph 世界空间完全一致
+        c.x_min = graph.world_space_2d.x_min;
+        c.x_max = graph.world_space_2d.x_max;
+        c.y_min = graph.world_space_2d.y_min;
+        c.y_max = graph.world_space_2d.y_max;
+
+        // 2. 同步精度：将四叉树采样阈值设置为 Graph 的“物理像素”大小
+        // 采样阈值 = 跨度 / 分辨率
+        T span_x = c.x_max - c.x_min;
+        T span_y = c.y_max - c.y_min;
+
+        T px_x = (graph.resolution_2d.x > 0) ? (span_x / graph.resolution_2d.x) : static_cast<T>(0.01);
+        T px_y = (graph.resolution_2d.y > 0) ? (span_y / graph.resolution_2d.y) : static_cast<T>(0.01);
+
+        // 取较细的一个作为采样阈值
+        c.sampling_threshold = std::min(px_x, px_y);
+    }
+
+
+    template <typename T>
+void SolveImplicit_3D(Graph<T>& graph, Node<T>& self) {
+        auto& c = self.data.implicit_3d_config;
+
+        // 1. 同步 3D 空间范围
+        c.x_min = graph.world_space_3d.x_min;
+        c.x_max = graph.world_space_3d.x_max;
+        c.y_min = graph.world_space_3d.y_min;
+        c.y_max = graph.world_space_3d.y_max;
+        c.z_min = graph.world_space_3d.z_min;
+        c.z_max = graph.world_space_3d.z_max;
+
+        // 2. 同步精度：计算最小体素边长作为采样阈值
+        T sx = (graph.resolution_3d.x > 0) ? (c.x_max - c.x_min) / graph.resolution_3d.x : 0.1;
+        T sy = (graph.resolution_3d.y > 0) ? (c.y_max - c.y_min) / graph.resolution_3d.y : 0.1;
+        T sz = (graph.resolution_3d.z > 0) ? (c.z_max - c.z_min) / graph.resolution_3d.z : 0.1;
+
+        // 取三轴中最精细的作为采样阈值
+        c.sampling_threshold = std::min({sx, sy, sz});
+    }
+
+
+    template <typename T>
+void SolveParametric_2D(Graph<T>& graph, Node<T>& self) {
+        auto& c = self.data.parametric_2d_config;
+
+        // 1. 同步世界空间范围（用于 StuPlot 内部的视口剔除）
+        c.x_min = graph.world_space_2d.x_min;
+        c.x_max = graph.world_space_2d.x_max;
+        c.y_min = graph.world_space_2d.y_min;
+        c.y_max = graph.world_space_2d.y_max;
+
+        // 2. 同步精度：点间距
+        // 步长建议设置为 1 个物理像素的大小，以保证线条连续
+        T px_x = (graph.resolution_2d.x > 0) ? (c.x_max - c.x_min) / graph.resolution_2d.x : 0.05;
+        T px_y = (graph.resolution_2d.y > 0) ? (c.y_max - c.y_min) / graph.resolution_2d.y : 0.05;
+
+        c.point_spacing = std::min(px_x, px_y);
+    }
+
+
+    template <typename T>
+void SolveParametric_3D(Graph<T>& graph, Node<T>& self) {
+        auto& c = self.data.parametric_3d_config;
+
+        // 1. 同步世界空间范围（用于参数曲面的 AABB 裁剪）
+        c.x_min = graph.world_space_3d.x_min;
+        c.x_max = graph.world_space_3d.x_max;
+        c.y_min = graph.world_space_3d.y_min;
+        c.y_max = graph.world_space_3d.y_max;
+        c.z_min = graph.world_space_3d.z_min;
+        c.z_max = graph.world_space_3d.z_max;
+
+        // 2. 同步精度：根据分辨率计算点间距
+        T sx = (graph.resolution_3d.x > 0) ? (c.x_max - c.x_min) / graph.resolution_3d.x : 0.1;
+        T sy = (graph.resolution_3d.y > 0) ? (c.y_max - c.y_min) / graph.resolution_3d.y : 0.1;
+        T sz = (graph.resolution_3d.z > 0) ? (c.z_max - c.z_min) / graph.resolution_3d.z : 0.1;
+
+        // 采样点间距取三轴中最精细的一个
+        c.point_spacing = std::min({sx, sy, sz});
+    }
 }

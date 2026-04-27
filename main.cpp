@@ -1,101 +1,80 @@
 #include <iostream>
 #include <vector>
-#include <string>
 #include <chrono>
-#include <thread>
 
-// 1. 核心系统
+// 1. 引入 StuCanvas 核心
 #include "include/stucanvas/geometry/graph.hpp"
-#include "include/stucanvas/geometry/solver.hpp"
-#include "include/stucanvas/geometry/plotter.hpp"
 
-// 2. 统计与重构器
-#include "include/stucanvas/reconstruction/statistics.hpp"
-#include "include/stucanvas/reconstruction/voxel_surface_reconstructor.hpp"
-
-// 3. 导出工具
+// 2. 引入封装模块
+#include "include/stucanvas/reconstruction/qhull_wrapper.hpp"
+#include "include/stucanvas/reconstruction/boolean_engine.hpp"
 #include "include/stucanvas/reconstruction/export/off.hpp"
 
 using namespace StuCanvas;
 using namespace StuCanvas::Reconstruction;
-using namespace std::chrono;
 
 int main() {
-    // --- 1. 环境初始化 ---
+    // --- 第一步：初始化 Graph 与 采样精度 ---
     Graph<double> graph;
+    graph.resolution_3d = {120.0, 120.0, 120.0};
     graph.world_space_3d = {-15.0, -15.0, -15.0, 15.0, 15.0, 15.0};
 
-    // 对于曲面物体，建议将分辨率调高（如 400^3），
-    // 这样“体素阶梯”会非常细微，视觉效果更接近平滑曲面。
-    graph.resolution_3d = {400, 400, 400};
+    // --- 第二步：构造几何体依赖图 ---
 
-    std::cout << "===== StuCanvas: Curved Surface Reconstruction Test =====" << std::endl;
+    // 1. 大圆柱 (母体): 竖直 (沿 Y 轴), 半径 4.0, 长度 12.0
+    uint64_t p1 = graph.CreateFreePoint_3D(0.0, -6.0, 0.0, "Base_Bottom");
+    uint64_t p2 = graph.CreateFreePoint_3D(0.0,  6.0, 0.0, "Base_Top");
+    uint64_t big_id = graph.CreateCylinder_3D(p1, p2, 4.0, "BigCylinder");
 
-    // --- 2. 定义几何体依赖点 ---
-    // 球体中心
-    uint64_t p_sphere_c = graph.CreateFreePoint_3D(-8.0, 8.0, 0.0, "Sphere_Center");
+    // 2. 横向圆柱 (刀具1): 水平贯穿 (沿 X 轴), 半径 2.0
+    uint64_t p3 = graph.CreateFreePoint_3D(-8.0, 0.0, 0.0, "Horiz_Left");
+    uint64_t p4 = graph.CreateFreePoint_3D( 8.0, 0.0, 0.0, "Horiz_Right");
+    uint64_t horiz_id = graph.CreateCylinder_3D(p3, p4, 2.0, "HorizontalCutter");
 
-    // 圆柱端点 (水平放置)
-    uint64_t p_cyl_1 = graph.CreateFreePoint_3D(-5.0, -5.0, -5.0, "Cyl_Start");
-    uint64_t p_cyl_2 = graph.CreateFreePoint_3D(5.0, -5.0, 5.0, "Cyl_End");
+    // 3. 纵向小圆柱 (刀具2): 竖直贯穿 (沿 Y 轴), 半径 1.5
+    // 长度设为 14.0 (比母体长)，确保完全打通顶面和底面
+    uint64_t p5 = graph.CreateFreePoint_3D(0.0, -7.0, 0.0, "Vert_Bottom");
+    uint64_t p6 = graph.CreateFreePoint_3D(0.0,  7.0, 0.0, "Vert_Top");
+    uint64_t vert_id = graph.CreateCylinder_3D(p5, p6, 1.5, "VerticalCutter");
 
-    // 圆锥点 (垂直向上)
-    uint64_t p_cone_apex = graph.CreateFreePoint_3D(8.0, 8.0, 10.0, "Cone_Apex");
-    uint64_t p_cone_base = graph.CreateFreePoint_3D(8.0, 8.0, 0.0, "Cone_Base");
+    std::cout << "[Step 1] 正在生成三组点云..." << std::endl;
+    graph.Compute();
 
-    // --- 3. 创建几何物体 ---
-    uint64_t sphere_id = graph.CreateSphere_3D(p_sphere_c, 5.0, "Target_Sphere");
-    uint64_t cyl_id    = graph.CreateCylinder_3D(p_cyl_1, p_cyl_2, 3.0, "Target_Cylinder");
-    uint64_t cone_id   = graph.CreateCone_3D(p_cone_apex, p_cone_base, 5.0, "Target_Cone");
+    // --- 第三步：使用 QhullWrapper 进行网格重构 ---
+    std::cout << "[Step 2] 正在重构三个原始网格..." << std::endl;
+    Mesh3D<double> meshBig   = QhullWrapper<double>::Compute(graph.GetNode(big_id)->result_points_3d);
+    Mesh3D<double> meshHoriz = QhullWrapper<double>::Compute(graph.GetNode(horiz_id)->result_points_3d);
+    Mesh3D<double> meshVert  = QhullWrapper<double>::Compute(graph.GetNode(vert_id)->result_points_3d);
 
-    // --- 4. 执行 Plotting (生成点云壳) ---
-    std::cout << "[Step 1] Plotting geometries..." << std::endl;
-    auto t1 = high_resolution_clock::now();
-    graph.Compute(std::thread::hardware_concurrency());
-    auto t2 = high_resolution_clock::now();
-    std::cout << " -> Time: " << duration_cast<milliseconds>(t2 - t1).count() << " ms" << std::endl;
+    // --- 第四步：执行两次连续布尔运算 ---
+    std::cout << "[Step 3] 正在执行多重布尔运算..." << std::endl;
+    auto start = std::chrono::high_resolution_clock::now();
 
-    // --- 5. 循环处理每个物体并导出 ---
-    struct Task { uint64_t id; std::string name; };
-    std::vector<Task> tasks = {
-        {sphere_id, "sphere"},
-        {cyl_id,    "cylinder"},
-        {cone_id,   "cone"}
-    };
+    // 第一次：大圆柱 - 横向孔
+    Mesh3D<double> intermediate = BooleanEngine<double>::Difference(meshBig, meshHoriz);
 
-    for (const auto& task : tasks) {
-        auto* node = graph.GetNode(task.id);
-        const auto& points = node->result_points_3d;
+    // 第二次：中间结果 - 纵向孔
+    Mesh3D<double> finalMesh = BooleanEngine<double>::Difference(intermediate, meshVert);
 
-        if (points.empty()) {
-            std::cout << " [!] Skip " << task.name << " (Empty points)" << std::endl;
-            continue;
-        }
+    auto end = std::chrono::high_resolution_clock::now();
 
-        std::cout << "\n[Reconstructing] " << node->name << " (" << points.size() << " points)" << std::endl;
-
-        // 计算自适应步长
-        double avg_d = CalculateAverageDistance(points);
-        // 重构体素大小通常设为点云间距的 1.8 倍以保证奇偶填充闭合
-        double recon_voxel_size = avg_d * 1.8;
-
-        auto t_start = high_resolution_clock::now();
-
-        // 执行体素表面重构 (Minecraft 风格但去除内面)
-        Mesh3D<double> mesh = VoxelSurfaceReconstructor<double>::Reconstruct(points, recon_voxel_size);
-
-        auto t_end = high_resolution_clock::now();
-
-        std::cout << " -> Mesh Stats: Verts=" << mesh.vertices.size() << ", Tris=" << mesh.indices.size()/3 << std::endl;
-        std::cout << " -> Recon Time: " << duration_cast<milliseconds>(t_end - t_start).count() << " ms" << std::endl;
-
-        // 导出 OFF
-        std::string filename = task.name + "_voxel_mesh.off";
-        if (Export::ToOFF(filename, mesh)) {
-            std::cout << " -> Saved to " << filename << std::endl;
-        }
+    // --- 第五步：结果验证与导出 ---
+    if (finalMesh.indices.empty()) {
+        std::cerr << "[Error] 布尔运算流程中断，请检查输入流形。" << std::endl;
+        return -1;
     }
 
-    std::cout << "\n===== All Tasks Completed =====" << std::endl;
+    std::chrono::duration<double, std::milli> dur = end - start;
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "       双重挖孔布尔运算报告             " << std::endl;
+    std::cout << "----------------------------------------" << std::endl;
+    std::cout << " 最终顶点数: " << finalMesh.vertices.size() << std::endl;
+    std::cout << " 最终面片数: " << finalMesh.indices.size() / 3 << std::endl;
+    std::cout << " 两次布尔总耗时: " << dur.count() << " ms" << std::endl;
+    std::cout << "========================================\n" << std::endl;
+
+    Export::ToOFF("double_drilled_cylinder.off", finalMesh);
+    std::cout << "[Success] 结果已导出至 double_drilled_cylinder.off" << std::endl;
+
     return 0;
 }
