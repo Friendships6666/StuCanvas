@@ -68,7 +68,7 @@ namespace StuCanvas
         const T step_y = (ws.y_max - ws.y_min) / graph.resolution_2d.y;
         const auto num_points = static_cast<size_t>(ceil(std::max(abs(x_end - x_start) / step_x,
                                                                   abs(y_end - y_start) / step_y)));
-        if (num_points == 0) return;
+
 
         self.result_points_2d.reserve(num_points + 1);
         for (size_t i = 0; i <= num_points; ++i)
@@ -78,6 +78,20 @@ namespace StuCanvas
                 x_start + t * (x_end - x_start),
                 y_start + t * (y_end - y_start)
             });
+        }
+
+        if (num_points == 0)
+        {
+            // 退化保护：仅当线段确实退化（dx==0 且 dy==0）且裁剪后的起点在视口内时，才输出一个点
+            const T zero = static_cast<T>(0);
+            if (dx == zero && dy == zero)
+            {
+                if (x_start >= ws.x_min && x_start <= ws.x_max &&
+                    y_start >= ws.y_min && y_start <= ws.y_max)
+                {
+                    self.result_points_2d.emplace_back(Point2D<T>{x_start, y_start});
+                }
+            }
         }
     }
 
@@ -108,11 +122,7 @@ namespace StuCanvas
             abs(x_e - x_s) / sx, abs(y_e - y_s) / sy, abs(z_e - z_s) / sz
         })));
 
-        if (num_points == 0)
-        {
-            self.result_points_3d.emplace_back(Point3D<T>{x_s, y_s, z_s});
-            return;
-        }
+
 
         self.result_points_3d.reserve(num_points + 1);
         for (size_t i = 0; i <= num_points; ++i)
@@ -122,12 +132,32 @@ namespace StuCanvas
                 x_s + t * (x_e - x_s), y_s + t * (y_e - y_s), z_s + t * (z_e - z_s)
             });
         }
+
+
+        if (num_points == 0)
+        {
+            // 仅当线段确实退化（端点重合）且该点在视口内时才输出一个点
+            const T zero = static_cast<T>(0);
+            if (dx == zero && dy == zero && dz == zero)
+            {
+                if (x_s >= ws.x_min && x_s <= ws.x_max &&
+                    y_s >= ws.y_min && y_s <= ws.y_max &&
+                    z_s >= ws.z_min && z_s <= ws.z_max)
+                {
+                    self.result_points_3d.emplace_back(Point3D<T>{x_s, y_s, z_s});
+                }
+            }
+        }
     }
 
     // --- 2D Plotters ---
     template <typename T>
     void PlotStraightLine_2D(Graph<T>& graph, Node<T>& self)
     {
+        constexpr long double MARKER_LD = -0x1.BAADC0DEp+300L;
+        const T INVALID_VAL = static_cast<T>(MARKER_LD);
+        if (self.data.line_2d.x0 == INVALID_VAL) return; // 退化直线，不绘制
+
         InternalPlotLine_2D(graph, self, -std::numeric_limits<T>::infinity(), std::numeric_limits<T>::infinity());
     }
 
@@ -187,7 +217,31 @@ namespace StuCanvas
         const T cx = self.data.circle_2d.cx;
         const T cy = self.data.circle_2d.cy;
         const T r_sq = self.data.circle_2d.r * self.data.circle_2d.r;
+        constexpr T MARKER_LD = -0x1.BAADC0DEp+300L;
+        const T INVALID_VAL = static_cast<T>(MARKER_LD);
+        if (self.data.circle_2d.r == INVALID_VAL)   // cx,cy,r 均为此值
+        {
+            // 备份原始的 circle_2d 数据，防止 union 覆盖导致数据丢失
+            auto backup_circle = self.data.circle_2d;
 
+            // 从父节点获取原始三点
+            Node<T>* p0 = graph.GetNode(self.parents[0]);
+            Node<T>* p2 = graph.GetNode(self.parents[2]);
+
+            // 取首尾点构造直线（三点共线，任意两不同点即可）
+            self.data.line_2d.x0 = p0->data.point_2d.x;
+            self.data.line_2d.y0 = p0->data.point_2d.y;
+            self.data.line_2d.x1 = p2->data.point_2d.x;
+            self.data.line_2d.y1 = p2->data.point_2d.y;
+
+            // 使用现有的直线绘制函数（内部含 Liang-Barsky 裁剪）
+            PlotStraightLine_2D<T>(graph, self);
+
+            // 恢复原始的 circle_2d 标记，保证节点数据一致性
+            self.data.circle_2d = backup_circle;
+
+            return; // 提前返回，跳过圆绘制
+        }
         // 2. 视口与物理分辨率获取
         const auto& ws = graph.world_space_2d;
         const T dx_px = 0.5 * (ws.x_max - ws.x_min) / graph.resolution_2d.x;
@@ -434,6 +488,23 @@ namespace StuCanvas
                     }
                 }
             }
+
+
+            // 退化保护：仅当 U 和 V 均为零向量（平面退化为点）且原点在视口内时，输出原点
+            if (self.result_points_3d.empty())
+            {
+                const T zero = static_cast<T>(0);
+                if (d.ux == zero && d.uy == zero && d.uz == zero &&
+                    d.vx == zero && d.vy == zero && d.vz == zero)
+                {
+                    if (d.ox >= ws.x_min && d.ox <= ws.x_max &&
+                        d.oy >= ws.y_min && d.oy <= ws.y_max &&
+                        d.oz >= ws.z_min && d.oz <= ws.z_max)
+                    {
+                        self.result_points_3d.emplace_back(Point3D<T>{d.ox, d.oy, d.oz});
+                    }
+                }
+            }
         }
     } // namespace detail
 
@@ -461,9 +532,18 @@ namespace StuCanvas
     template <typename T>
     void PlotArc_2D(Graph<T>& graph, Node<T>& self)
     {
+
+        constexpr T MARKER_LD = -0x1.BAADC0DEp+300L;
+        const T INVALID_VAL = static_cast<T>(MARKER_LD);
+        if (self.data.arc_2d.r == INVALID_VAL)
+        {
+            return;
+        }
         PlotCircle_2D(graph, self);
 
         if (self.result_points_2d.empty()) return;
+
+
 
 
         const T cx = self.data.arc_2d.cx;
@@ -695,6 +775,13 @@ namespace StuCanvas
     template <typename T>
     void PlotSphere_3D(Graph<T>& graph, Node<T>& self)
     {
+
+
+        // ---------- 退化检查：球体因四点共面被标记为无效 ----------
+        constexpr long double MARKER_LD = -0x1.BAADC0DEp+300L;
+        const T INVALID_VAL = static_cast<T>(MARKER_LD);
+        if (self.data.sphere_3d.r == INVALID_VAL)
+            return; // 无效球体，跳过绘制
         // 1. 获取球体基础几何参数
         const T cx = self.data.sphere_3d.cx;
         const T cy = self.data.sphere_3d.cy;
@@ -985,6 +1072,10 @@ namespace StuCanvas
         const T by = self.data.cone_3d.base_y;
         const T bz = self.data.cone_3d.base_z;
         const T r = self.data.cone_3d.r;
+        const T eps = std::numeric_limits<T>::epsilon();
+        const T dx = ax - bx, dy = ay - by, dz = az - bz;
+        if (dx * dx + dy * dy + dz * dz < eps * static_cast<T>(10))
+            return;
 
         // 2. 预计算圆锥轴向常量
         T vx = bx - ax, vy = by - ay, vz = bz - az;
@@ -1162,6 +1253,10 @@ void PlotCylinder_3D(Graph<T>& graph, Node<T>& self)
     const T p2x = self.data.cylinder_3d.p2x, p2y = self.data.cylinder_3d.p2y, p2z = self.data.cylinder_3d.p2z;
     const T r = self.data.cylinder_3d.r;
     const T r_sq = r * r;
+
+    const T eps = std::numeric_limits<T>::epsilon();
+    if ( (p2x - p1x)*(p2x - p1x) + (p2y - p1y)*(p2y - p1y) + (p2z - p1z)*(p2z - p1z) < eps * static_cast<T>(10) )
+        return;
 
     // 2. 预计算轴向向量与长度
     T vx = p2x - p1x, vy = p2y - p1y, vz = p2z - p1z;

@@ -45,6 +45,33 @@ namespace StuCanvas::Reconstruction
         {
             return PerformOp(meshA, meshB, OpType::Intersect);
         }
+        // 在 class BooleanEngine 的 public 区域增加以下方法：
+
+        /**
+         * @brief 批量并集：将多个独立 Mesh3D 合并为一个流形网格
+         * @param meshes 输入网格列表
+         * @return 合并后的网格（内部重叠面自动剔除）
+         */
+        static Mesh3D<T> UnionMultiple(const std::vector<Mesh3D<T>>& meshes)
+        {
+            if (meshes.empty()) return Mesh3D<T>();
+
+            // 转换所有网格为 Manifold 对象
+            std::vector<manifold::Manifold> manis;
+            manis.reserve(meshes.size());
+            for (const auto& m : meshes) {
+                manis.push_back(ToManifold(m));
+            }
+
+            // 使用 Manifold 的 Compose 功能（本质是连续的并集）
+            manifold::Manifold result = manis[0];
+            for (size_t i = 1; i < manis.size(); ++i) {
+                result += manis[i];
+            }
+
+            // 转回 StuCanvas Mesh3D
+            return FromManifold(result);
+        }
 
     private:
         enum class OpType { Add, Subtract, Intersect };

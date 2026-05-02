@@ -3,7 +3,7 @@
 #include "cmath"
 #include "../utils/flat_map.hpp"
 #include "../types/point.hpp"
-
+#include "Eigen/Dense"
 namespace StuCanvas
 {
     template <typename T>
@@ -115,56 +115,25 @@ namespace StuCanvas
 
         auto& plane = self.data.plane_3d;
 
-
-        const T eps = std::numeric_limits<T>::epsilon();
-        const T min_limit = eps * static_cast<T>(10);
-
-
-        auto safe_diff = [&](T a, T b) -> T
-        {
-            T diff = a - b;
-            if (abs(diff) < eps)
-            {
-                return (diff >= 0) ? min_limit : -min_limit;
-            }
-            return diff;
-        };
-
-
+        // 直接复制点，不进行任何扰动或共线检查
         plane.ox = p1.x;
         plane.oy = p1.y;
         plane.oz = p1.z;
 
+        plane.ux = p2.x - p1.x;
+        plane.uy = p2.y - p1.y;
+        plane.uz = p2.z - p1.z;
 
-        plane.ux = safe_diff(p2.x, p1.x);
-        plane.uy = safe_diff(p2.y, p1.y);
-        plane.uz = safe_diff(p2.z, p1.z);
+        plane.vx = p3.x - p1.x;
+        plane.vy = p3.y - p1.y;
+        plane.vz = p3.z - p1.z;
 
-        plane.vx = safe_diff(p3.x, p1.x);
-        plane.vy = safe_diff(p3.y, p1.y);
-        plane.vz = safe_diff(p3.z, p1.z);
-
-
-        T nx = plane.uy * plane.vz - plane.uz * plane.vy;
-        T ny = plane.uz * plane.vx - plane.ux * plane.vz;
-        T nz = plane.ux * plane.vy - plane.uy * plane.vx;
-
-        T norm_sq = nx * nx + ny * ny + nz * nz;
-
-
-        if (norm_sq < eps)
-        {
-            if (abs(plane.ux) < abs(plane.uy))
-                plane.vx += min_limit;
-            else
-                plane.vy += min_limit;
-        }
+        // 即使 U、V 为零向量或共线，也不再干预
     }
 
     template <typename T>
     void SolveCircle_CP_2D(Graph<T>& graph, Node<T>& self)
     {
-        if (self.parents.size() < 2) return;
         auto* center = graph.GetNode(self.parents[0]);
         auto* p_on = graph.GetNode(self.parents[1]);
 
@@ -185,6 +154,7 @@ namespace StuCanvas
     void SolveCircle_3P_2D(Graph<T>& graph, Node<T>& self)
     {
         if (self.parents.size() < 3) return;
+
         const T x1 = graph.GetNode(self.parents[0])->data.point_2d.x;
         const T y1 = graph.GetNode(self.parents[0])->data.point_2d.y;
         const T x2 = graph.GetNode(self.parents[1])->data.point_2d.x;
@@ -192,21 +162,26 @@ namespace StuCanvas
         const T x3 = graph.GetNode(self.parents[2])->data.point_2d.x;
         const T y3 = graph.GetNode(self.parents[2])->data.point_2d.y;
 
+        // 标记值：表示无效圆（三点共线）
+        constexpr T MARKER_LD = -0x1.BAADC0DEp+300L;
+        const T INVALID_VAL = static_cast<T>(MARKER_LD);
+
         const T eps = std::numeric_limits<T>::epsilon();
+        const T D = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
 
-
-        T D = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
-
-
-        if (std::abs(D) < eps)
+        // 共线判断：行列式绝对值 < 10 * epsilon
+        if (std::abs(D) < eps * static_cast<T>(10))
         {
-            D = (D >= 0) ? eps * 10 : -eps * 10;
+            // 标记为无效圆
+            self.data.circle_2d.cx = INVALID_VAL;
+            self.data.circle_2d.cy = INVALID_VAL;
+            self.data.circle_2d.r  = INVALID_VAL;
+            return;
         }
 
         const T p1_sq = x1 * x1 + y1 * y1;
         const T p2_sq = x2 * x2 + y2 * y2;
         const T p3_sq = x3 * x3 + y3 * y3;
-
 
         T cx = (p1_sq * (y2 - y3) + p2_sq * (y3 - y1) + p3_sq * (y1 - y2)) / D;
         T cy = (p1_sq * (x3 - x2) + p2_sq * (x1 - x3) + p3_sq * (x2 - x1)) / D;
@@ -214,178 +189,193 @@ namespace StuCanvas
         self.data.circle_2d.cx = cx;
         self.data.circle_2d.cy = cy;
 
-
         T dx = x1 - cx;
         T dy = y1 - cy;
         self.data.circle_2d.r = std::sqrt(dx * dx + dy * dy);
     }
 
 
-    template <typename T>
-    void SolveArc_3P_2D(Graph<T>& graph, Node<T>& self)
+template <typename T>
+void SolveArc_3P_2D(Graph<T>& graph, Node<T>& self)
+{
+    if (self.parents.size() < 3) return;
+
+    const T x1 = graph.GetNode(self.parents[0])->data.point_2d.x;
+    const T y1 = graph.GetNode(self.parents[0])->data.point_2d.y;
+    const T x2 = graph.GetNode(self.parents[1])->data.point_2d.x;
+    const T y2 = graph.GetNode(self.parents[1])->data.point_2d.y;
+    const T x3 = graph.GetNode(self.parents[2])->data.point_2d.x;
+    const T y3 = graph.GetNode(self.parents[2])->data.point_2d.y;
+
+    // 标记值：表示无效弧（三点共线）
+    constexpr long double MARKER_LD = -0x1.BAADC0DEp+300L;
+    const T INVALID_VAL = static_cast<T>(MARKER_LD);
+
+    const T eps = std::numeric_limits<T>::epsilon();
+    const T PI = static_cast<T>(3.14159265358979323846);
+
+    T D = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
+
+    // 共线判断：行列式绝对值 < 10 * epsilon
+    if (std::abs(D) < eps * static_cast<T>(10))
     {
-        if (self.parents.size() < 3) return;
-
-
-        const T x1 = graph.GetNode(self.parents[0])->data.point_2d.x;
-        const T y1 = graph.GetNode(self.parents[0])->data.point_2d.y;
-        const T x2 = graph.GetNode(self.parents[1])->data.point_2d.x;
-        const T y2 = graph.GetNode(self.parents[1])->data.point_2d.y;
-        const T x3 = graph.GetNode(self.parents[2])->data.point_2d.x;
-        const T y3 = graph.GetNode(self.parents[2])->data.point_2d.y;
-
-        const T eps = std::numeric_limits<T>::epsilon();
-        const T PI = static_cast<T>(3.14159265358979323846);
-
-
-        T D = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
-
-
-        if (std::abs(D) < eps)
-        {
-            D = (D >= 0) ? eps * 10 : -eps * 10;
-        }
-
-        const T p1_sq = x1 * x1 + y1 * y1;
-        const T p2_sq = x2 * x2 + y2 * y2;
-        const T p3_sq = x3 * x3 + y3 * y3;
-
-        T cx = (p1_sq * (y2 - y3) + p2_sq * (y3 - y1) + p3_sq * (y1 - y2)) / D;
-        T cy = (p1_sq * (x3 - x2) + p2_sq * (x1 - x3) + p3_sq * (x2 - x1)) / D;
-        T r = std::sqrt((x1 - cx) * (x1 - cx) + (y1 - cy) * (y1 - cy));
-
-
-        using std::atan2;
-        T theta1 = atan2(y1 - cy, x1 - cx);
-        T theta2 = atan2(y2 - cy, x2 - cx);
-        T theta3 = atan2(y3 - cy, x3 - cx);
-
-
-        auto normalize = [&](T angle)
-        {
-            while (angle < 0) angle += 2 * PI;
-            while (angle >= 2 * PI) angle -= 2 * PI;
-            return angle;
-        };
-
-        theta1 = normalize(theta1);
-        theta2 = normalize(theta2);
-        theta3 = normalize(theta3);
-
-
-        T dist12_ccw = (theta2 >= theta1) ? (theta2 - theta1) : (2 * PI + theta2 - theta1);
-
-        T dist13_ccw = (theta3 >= theta1) ? (theta3 - theta1) : (2 * PI + theta3 - theta1);
-
-        T sweep_angle = 0;
-
-
-        if (dist12_ccw < dist13_ccw)
-        {
-            sweep_angle = dist13_ccw;
-        }
-        else
-        {
-            sweep_angle = -(2 * PI - dist13_ccw);
-        }
-
-
-        self.data.arc_2d.cx = cx;
-        self.data.arc_2d.cy = cy;
-        self.data.arc_2d.r = r;
-        self.data.arc_2d.start_angle = theta1;
-
-
-        self.data.arc_2d.end_angle = sweep_angle;
+        self.data.arc_2d.cx = INVALID_VAL;
+        self.data.arc_2d.cy = INVALID_VAL;
+        self.data.arc_2d.r  = INVALID_VAL;
+        self.data.arc_2d.start_angle = INVALID_VAL;
+        self.data.arc_2d.end_angle   = INVALID_VAL;
+        return;
     }
 
+    const T p1_sq = x1 * x1 + y1 * y1;
+    const T p2_sq = x2 * x2 + y2 * y2;
+    const T p3_sq = x3 * x3 + y3 * y3;
 
-    template <typename T>
-    void SolveParallelLine_Dist_2D(Graph<T>& graph, Node<T>& self)
+    T cx = (p1_sq * (y2 - y3) + p2_sq * (y3 - y1) + p3_sq * (y1 - y2)) / D;
+    T cy = (p1_sq * (x3 - x2) + p2_sq * (x1 - x3) + p3_sq * (x2 - x1)) / D;
+    T r = std::sqrt((x1 - cx) * (x1 - cx) + (y1 - cy) * (y1 - cy));
+
+    using std::atan2;
+    T theta1 = atan2(y1 - cy, x1 - cx);
+    T theta2 = atan2(y2 - cy, x2 - cx);
+    T theta3 = atan2(y3 - cy, x3 - cx);
+
+    auto normalize = [&](T angle)
     {
-        if (self.parents.empty()) return;
+        while (angle < 0) angle += 2 * PI;
+        while (angle >= 2 * PI) angle -= 2 * PI;
+        return angle;
+    };
+
+    theta1 = normalize(theta1);
+    theta2 = normalize(theta2);
+    theta3 = normalize(theta3);
+
+    T dist12_ccw = (theta2 >= theta1) ? (theta2 - theta1) : (2 * PI + theta2 - theta1);
+    T dist13_ccw = (theta3 >= theta1) ? (theta3 - theta1) : (2 * PI + theta3 - theta1);
+
+    T sweep_angle;
+    if (dist12_ccw < dist13_ccw)
+        sweep_angle = dist13_ccw;
+    else
+        sweep_angle = -(2 * PI - dist13_ccw);
+
+    self.data.arc_2d.cx = cx;
+    self.data.arc_2d.cy = cy;
+    self.data.arc_2d.r = r;
+    self.data.arc_2d.start_angle = theta1;
+    self.data.arc_2d.end_angle = sweep_angle;
+}
 
 
-        Node<T>* ref_line = graph.GetNode(self.parents[0]);
-        const T rx0 = ref_line->data.line_2d.x0;
-        const T ry0 = ref_line->data.line_2d.y0;
-        const T rx1 = ref_line->data.line_2d.x1;
-        const T ry1 = ref_line->data.line_2d.y1;
-        const T dist = self.data.parallel_line_2d.distance;
+template <typename T>
+void SolveParallelLine_Dist_2D(Graph<T>& graph, Node<T>& self)
+{
+    if (self.parents.empty()) return;
 
+    constexpr T MARKER_LD = -0x1.BAADC0DEp+300L;
+    const T INVALID_VAL = static_cast<T>(MARKER_LD);
 
-        T dx = rx1 - rx0;
-        T dy = ry1 - ry0;
-        T len = std::sqrt(dx * dx + dy * dy);
+    Node<T>* ref_line = graph.GetNode(self.parents[0]);
+    const T rx0 = ref_line->data.line_2d.x0;
+    const T ry0 = ref_line->data.line_2d.y0;
+    const T rx1 = ref_line->data.line_2d.x1;
+    const T ry1 = ref_line->data.line_2d.y1;
+    const T dist = self.data.parallel_line_2d.distance;
 
+    T dx = rx1 - rx0;
+    T dy = ry1 - ry0;
 
-        const T eps = std::numeric_limits<T>::epsilon();
-        if (len < eps)
-        {
-            len = eps * 10;
-        }
-
-
-        T nx = -dy / len;
-        T ny = dx / len;
-
-
-        self.data.parallel_line_2d.x0 = rx0 + nx * dist;
-        self.data.parallel_line_2d.y0 = ry0 + ny * dist;
-        self.data.parallel_line_2d.x1 = rx1 + nx * dist;
-        self.data.parallel_line_2d.y1 = ry1 + ny * dist;
+    // 退化检查：方向向量长度平方 < 10*epsilon
+    const T eps = std::numeric_limits<T>::epsilon();
+    if (dx * dx + dy * dy < eps * static_cast<T>(10))
+    {
+        self.data.parallel_line_2d.x0 = INVALID_VAL;
+        self.data.parallel_line_2d.y0 = INVALID_VAL;
+        self.data.parallel_line_2d.x1 = INVALID_VAL;
+        self.data.parallel_line_2d.y1 = INVALID_VAL;
+        return;
     }
 
-    template <typename T>
-    void SolveParallelLine_Point_2D(Graph<T>& graph, Node<T>& self)
+    T len = std::sqrt(dx * dx + dy * dy);
+    T nx = -dy / len;
+    T ny =  dx / len;
+
+    self.data.parallel_line_2d.x0 = rx0 + nx * dist;
+    self.data.parallel_line_2d.y0 = ry0 + ny * dist;
+    self.data.parallel_line_2d.x1 = rx1 + nx * dist;
+    self.data.parallel_line_2d.y1 = ry1 + ny * dist;
+}
+
+template <typename T>
+void SolveParallelLine_Point_2D(Graph<T>& graph, Node<T>& self)
+{
+    if (self.parents.size() < 2) return;
+
+    constexpr T MARKER_LD = -0x1.BAADC0DEp+300L;
+    const T INVALID_VAL = static_cast<T>(MARKER_LD);
+
+    Node<T>* ref_line = graph.GetNode(self.parents[0]);
+    Node<T>* target_pt = graph.GetNode(self.parents[1]);
+
+    const T rx0 = ref_line->data.line_2d.x0;
+    const T ry0 = ref_line->data.line_2d.y0;
+    const T rx1 = ref_line->data.line_2d.x1;
+    const T ry1 = ref_line->data.line_2d.y1;
+
+    const T rdx = rx1 - rx0;
+    const T rdy = ry1 - ry0;
+
+    // 退化检查
+    const T eps = std::numeric_limits<T>::epsilon();
+    if (rdx * rdx + rdy * rdy < eps * static_cast<T>(10))
     {
-        if (self.parents.size() < 2) return;
-
-
-        Node<T>* ref_line = graph.GetNode(self.parents[0]);
-        Node<T>* target_pt = graph.GetNode(self.parents[1]);
-
-
-        const T rx0 = ref_line->data.line_2d.x0;
-        const T ry0 = ref_line->data.line_2d.y0;
-        const T rx1 = ref_line->data.line_2d.x1;
-        const T ry1 = ref_line->data.line_2d.y1;
-
-        const T rdx = rx1 - rx0;
-        const T rdy = ry1 - ry0;
-
-
-        const T tx = target_pt->data.point_2d.x;
-        const T ty = target_pt->data.point_2d.y;
-
-
-        self.data.line_2d.x0 = tx;
-        self.data.line_2d.y0 = ty;
-        self.data.line_2d.x1 = tx + rdx;
-        self.data.line_2d.y1 = ty + rdy;
+        self.data.line_2d.x0 = INVALID_VAL;
+        self.data.line_2d.y0 = INVALID_VAL;
+        self.data.line_2d.x1 = INVALID_VAL;
+        self.data.line_2d.y1 = INVALID_VAL;
+        return;
     }
+
+    const T tx = target_pt->data.point_2d.x;
+    const T ty = target_pt->data.point_2d.y;
+
+    self.data.line_2d.x0 = tx;
+    self.data.line_2d.y0 = ty;
+    self.data.line_2d.x1 = tx + rdx;
+    self.data.line_2d.y1 = ty + rdy;
+}
 
     template <typename T>
     void SolveVerticalLine_Point_2D(Graph<T>& graph, Node<T>& self)
     {
         if (self.parents.size() < 2) return;
 
+        constexpr T MARKER_LD = -0x1.BAADC0DEp+300L;
+        const T INVALID_VAL = static_cast<T>(MARKER_LD);
 
         Node<T>* ref_line = graph.GetNode(self.parents[0]);
         Node<T>* target_pt = graph.GetNode(self.parents[1]);
 
-
         const T rdx = ref_line->data.line_2d.x1 - ref_line->data.line_2d.x0;
         const T rdy = ref_line->data.line_2d.y1 - ref_line->data.line_2d.y0;
 
+        // 退化检查：参考线段方向向量的长度平方 < 10*epsilon
+        const T eps = std::numeric_limits<T>::epsilon();
+        if (rdx * rdx + rdy * rdy < eps * static_cast<T>(10))
+        {
+            self.data.line_2d.x0 = INVALID_VAL;
+            self.data.line_2d.y0 = INVALID_VAL;
+            self.data.line_2d.x1 = INVALID_VAL;
+            self.data.line_2d.y1 = INVALID_VAL;
+            return;
+        }
 
         const T vdx = -rdy;
-        const T vdy = rdx;
-
+        const T vdy =  rdx;
 
         const T tx = target_pt->data.point_2d.x;
         const T ty = target_pt->data.point_2d.y;
-
 
         self.data.line_2d.x0 = tx;
         self.data.line_2d.y0 = ty;
@@ -536,56 +526,100 @@ namespace StuCanvas
         self.data.poly_gen_2d.cy = center->data.point_2d.y;
     }
 
-    template <typename T>
-    void SolveTangent_Diagram_2D(Graph<T>& graph, Node<T>& self)
-    {
-        if (self.parents.size() < 2) return;
+template <typename T>
+void SolveTangent_Diagram_2D(Graph<T>& graph, Node<T>& self)
+{
+    if (self.parents.size() < 2) return;
 
-        Node<T>* curve_node = graph.GetNode(self.parents[0]);
-        Node<T>* pivot_node = graph.GetNode(self.parents[1]);
+    Node<T>* curve_node = graph.GetNode(self.parents[0]);
+    Node<T>* pivot_node = graph.GetNode(self.parents[1]);
 
-        const auto& pts = curve_node->result_points_2d;
-        if (pts.size() < 2) return;
+    const auto& pts = curve_node->result_points_2d;
+    if (pts.empty()) return;
 
-        const T px = pivot_node->data.point_2d.x;
-        const T py = pivot_node->data.point_2d.y;
+    const T px = pivot_node->data.point_2d.x;
+    const T py = pivot_node->data.point_2d.y;
 
+    constexpr long double MARKER_LD = -0x1.BAADC0DEp+300L;
+    const T INVALID_VAL = static_cast<T>(MARKER_LD);
 
-        size_t idx1 = 0, idx2 = 0;
-        T min_d1 = std::numeric_limits<T>::max();
-        T min_d2 = std::numeric_limits<T>::max();
-
-        for (size_t i = 0; i < pts.size(); ++i)
-        {
-            T dx = pts[i].x - px;
-            T dy = pts[i].y - py;
-            T dist_sq = dx * dx + dy * dy;
-
-            if (dist_sq < min_d1)
-            {
-                min_d2 = min_d1;
-                idx2 = idx1;
-                min_d1 = dist_sq;
-                idx1 = i;
-            }
-            else if (dist_sq < min_d2)
-            {
-                min_d2 = dist_sq;
-                idx2 = i;
-            }
-        }
-
-
-        T dtx = pts[idx1].x - pts[idx2].x;
-        T dty = pts[idx1].y - pts[idx2].y;
-
-
-        self.data.line_2d.x0 = px;
-        self.data.line_2d.y0 = py;
-
-        self.data.line_2d.x1 = px + dtx;
-        self.data.line_2d.y1 = py + dty;
+    // ----- 收集 pivot 附近的点 -----
+    // 使用部分排序选取距离最近的 K 个点（K 可根据密度调整，这里取 min(50, pts.size())）
+    const size_t K = std::min(pts.size(), static_cast<size_t>(50));
+    if (K < 2) {
+        // 点数不足，无法估计切线方向
+        self.data.line_2d.x0 = INVALID_VAL;
+        self.data.line_2d.y0 = INVALID_VAL;
+        self.data.line_2d.x1 = INVALID_VAL;
+        self.data.line_2d.y1 = INVALID_VAL;
+        return;
     }
+
+    // 存储距离和索引
+    std::vector<std::pair<T, size_t>> dists;
+    dists.reserve(pts.size());
+    for (size_t i = 0; i < pts.size(); ++i) {
+        T dx = pts[i].x - px;
+        T dy = pts[i].y - py;
+        dists.emplace_back(dx * dx + dy * dy, i);
+    }
+
+    // 部分排序得到 K 个最近邻
+    std::nth_element(dists.begin(), dists.begin() + K, dists.end());
+    dists.resize(K);
+
+    // 构建用于 PCA 的 2D 点向量（Eigen 矩阵）
+    using Vector2 = Eigen::Matrix<T, 2, 1>;
+    using Matrix2 = Eigen::Matrix<T, 2, 2>;
+
+    // 计算均值
+    Vector2 mean = Vector2::Zero();
+    for (auto& d : dists) {
+        size_t idx = d.second;
+        mean += Vector2(pts[idx].x, pts[idx].y);
+    }
+    mean /= static_cast<T>(K);
+
+    // 构建协方差矩阵
+    Matrix2 cov = Matrix2::Zero();
+    for (auto& d : dists) {
+        size_t idx = d.second;
+        Vector2 v(pts[idx].x - mean.x(), pts[idx].y - mean.y());
+        cov += v * v.transpose();
+    }
+    cov /= static_cast<T>(K);
+
+    // 特征值分解
+    Eigen::SelfAdjointEigenSolver<Matrix2> solver(cov);
+    if (solver.info() != Eigen::Success) {
+        // 分解失败
+        self.data.line_2d.x0 = INVALID_VAL;
+        self.data.line_2d.y0 = INVALID_VAL;
+        self.data.line_2d.x1 = INVALID_VAL;
+        self.data.line_2d.y1 = INVALID_VAL;
+        return;
+    }
+
+    // 最大特征值对应的特征向量作为切线方向
+    const T eps = std::numeric_limits<T>::epsilon();
+    if (solver.eigenvalues()(1) < eps * static_cast<T>(10)) {
+        // 点云几乎完全重合，无法确定切线方向
+        self.data.line_2d.x0 = INVALID_VAL;
+        self.data.line_2d.y0 = INVALID_VAL;
+        self.data.line_2d.x1 = INVALID_VAL;
+        self.data.line_2d.y1 = INVALID_VAL;
+        return;
+    }
+
+    Vector2 tangent = solver.eigenvectors().col(1); // 最大特征值对应的特征向量
+    tangent.normalize();
+
+    // 生成切线直线：过 pivot 点，方向为 tangent
+    self.data.line_2d.x0 = px;
+    self.data.line_2d.y0 = py;
+    self.data.line_2d.x1 = px + tangent.x();
+    self.data.line_2d.y1 = py + tangent.y();
+}
 
     template <typename T>
     void SolvePlaneInfinity_3P_3D(Graph<T>& graph, Node<T>& self)
@@ -659,200 +693,117 @@ namespace StuCanvas
          * @brief 工业级鲁棒性 3D 图解切面求解器 (PCA + Jacobi 实现)
          * 严禁简化版本：处理离散点云、重复点及轴对齐格栅化带来的退化风险
          */
-    template <typename T>
-    void SolveTangentPlane_Diagram_3D(Graph<T>& graph, Node<T>& self)
-    {
-        // --- 1. 基础物理依赖校验 ---
-        if (self.parents.size() < 2) return;
+template <typename T>
+void SolveTangentPlane_Diagram_3D(Graph<T>& graph, Node<T>& self)
+{
+    // 1. 基础依赖校验
+    if (self.parents.size() < 2) return;
 
-        Node<T>* obj_node = graph.GetNode(self.parents[0]); // 被切的目标物体
-        Node<T>* pivot_node = graph.GetNode(self.parents[1]); // 切点(吸附点)
+    Node<T>* obj_node   = graph.GetNode(self.parents[0]); // 被切的目标物体
+    Node<T>* pivot_node = graph.GetNode(self.parents[1]); // 切点(吸附点)
 
-        const auto& pts = obj_node->result_points_3d;
-        if (pts.size() < 10) return; // 局部点云太稀疏，无法确定平面
+    const auto& pts = obj_node->result_points_3d;
+    if (pts.empty()) return;
 
-        // 获取当前切点坐标 (来自于 SnapPoint 的结果)
-        const T px = pivot_node->data.snap_3d.x;
-        const T py = pivot_node->data.snap_3d.y;
-        const T pz = pivot_node->data.snap_3d.z;
+    const T px = pivot_node->data.snap_3d.x;
+    const T py = pivot_node->data.snap_3d.y;
+    const T pz = pivot_node->data.snap_3d.z;
 
-        // --- 2. 邻域搜寻 (K-Nearest Neighbors) ---
-        // 选取 100 个点以获得稳定的统计特征，抵消八叉树采样的格栅效应
-        const size_t K = std::min(pts.size(), (size_t)100);
-        struct Neighbor
-        {
-            size_t idx;
-            T dist_sq;
-        };
-        std::vector<Neighbor> neighbors;
-        neighbors.reserve(pts.size());
+    constexpr long double MARKER_LD = -0x1.BAADC0DEp+300L;
+    const T INVALID_VAL = static_cast<T>(MARKER_LD);
 
-        for (size_t i = 0; i < pts.size(); ++i)
-        {
-            T dx = pts[i].x - px;
-            T dy = pts[i].y - py;
-            T dz = pts[i].z - pz;
-            neighbors.push_back({i, dx * dx + dy * dy + dz * dz});
-        }
-
-        // 仅对前 K 个最近的点进行部分排序，优化离线计算性能
-        std::partial_sort(neighbors.begin(), neighbors.begin() + K, neighbors.end(),
-                          [](const Neighbor& a, const Neighbor& b)
-                          {
-                              return a.dist_sq < b.dist_sq;
-                          });
-
-        // --- 3. 计算重心与协方差矩阵 ---
-        T avg_x = 0, avg_y = 0, avg_z = 0;
-        for (size_t i = 0; i < K; ++i)
-        {
-            const auto& p = pts[neighbors[i].idx];
-            avg_x += p.x;
-            avg_y += p.y;
-            avg_z += p.z;
-        }
-        avg_x /= static_cast<T>(K);
-        avg_y /= static_cast<T>(K);
-        avg_z /= static_cast<T>(K);
-
-        // 构建对称协方差矩阵
-        T cov[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-        for (size_t i = 0; i < K; ++i)
-        {
-            const auto& p = pts[neighbors[i].idx];
-            T dx = p.x - avg_x;
-            T dy = p.y - avg_y;
-            T dz = p.z - avg_z;
-            cov[0][0] += dx * dx;
-            cov[0][1] += dx * dy;
-            cov[0][2] += dx * dz;
-            cov[1][1] += dy * dy;
-            cov[1][2] += dy * dz;
-            cov[2][2] += dz * dz;
-        }
-        // 补全对称位
-        cov[1][0] = cov[0][1];
-        cov[2][0] = cov[0][2];
-        cov[2][1] = cov[1][2];
-
-        // --- 4. 雅可比旋转法 (Jacobi Eigenvalue Algorithm) ---
-        // 目标：将 cov 矩阵对角化，求出 3 个相互正交的特征向量
-        T V[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}; // 存储特征向量的矩阵
-        const int max_iterations = 50; // 对于 3x3 矩阵，50次迭代足以达到机器精度
-        const T eps = std::numeric_limits<T>::epsilon();
-
-        for (int iter = 0; iter < max_iterations; ++iter)
-        {
-            // 4a. 寻找矩阵中绝对值最大的非对角元素 cov[p][q]
-            int p = 0, q = 1;
-            T max_val = std::abs(cov[0][1]);
-            if (std::abs(cov[0][2]) > max_val)
-            {
-                p = 0;
-                q = 2;
-                max_val = std::abs(cov[0][2]);
-            }
-            if (std::abs(cov[1][2]) > max_val)
-            {
-                p = 1;
-                q = 2;
-                max_val = std::abs(cov[1][2]);
-            }
-
-            // 如果最大的非对角元素已经足够小，说明已经完成对角化
-            if (max_val < eps * 1e-4) break;
-
-            // 4b. 计算 Jacobi 旋转角度 theta
-            T theta = static_cast<T>(0.5) * std::atan2(static_cast<T>(2.0) * cov[p][q], cov[q][q] - cov[p][p]);
-            T cos_t = std::cos(theta);
-            T sin_t = std::sin(theta);
-
-            // 4c. 更新协方差矩阵 (旋转变换：D = J^T * Cov * J)
-            T app = cos_t * cos_t * cov[p][p] - static_cast<T>(2.0) * sin_t * cos_t * cov[p][q] + sin_t * sin_t * cov[q]
-                [q];
-            T aqq = sin_t * sin_t * cov[p][p] + static_cast<T>(2.0) * sin_t * cos_t * cov[p][q] + cos_t * cos_t * cov[q]
-                [q];
-            T apq = (cos_t * cos_t - sin_t * sin_t) * cov[p][q] + sin_t * cos_t * (cov[p][p] - cov[q][q]);
-
-            cov[p][p] = app;
-            cov[q][q] = aqq;
-            cov[p][q] = cov[q][p] = 0; // 强制置零
-
-            // 更新其余不直接参与旋转的元素
-            for (int i = 0; i < 3; ++i)
-            {
-                if (i != p && i != q)
-                {
-                    T aip = cov[i][p];
-                    T aiq = cov[i][q];
-                    cov[i][p] = cov[p][i] = cos_t * aip - sin_t * aiq;
-                    cov[i][q] = cov[q][i] = sin_t * aip + cos_t * aiq;
-                }
-            }
-
-            // 4d. 更新特征向量矩阵 V (累积旋转)
-            for (int i = 0; i < 3; ++i)
-            {
-                T vip = V[i][p];
-                T viq = V[i][q];
-                V[i][p] = cos_t * vip - sin_t * viq;
-                V[i][q] = sin_t * vip + cos_t * viq;
-            }
-        }
-
-        // --- 5. 排序特征向量，提取切平面基底 ---
-        // 对角线上的元素 cov[i][i] 即为特征值 (方差)
-        T eigenvalues[3] = {cov[0][0], cov[1][1], cov[2][2]};
-        int order[3] = {0, 1, 2};
-        std::sort(order, order + 3, [&](int a, int b)
-        {
-            return eigenvalues[a] > eigenvalues[b];
-        });
-
-        // 提取前两个主成分（方差最大的两个方向）作为切平面的 U 和 V 向量
-        // 最小特征向量 order[2] 则是该处的表面法线
-        T ux = V[0][order[0]], uy = V[1][order[0]], uz = V[2][order[0]];
-        T vx = V[0][order[1]], vy = V[1][order[1]], vz = V[2][order[1]];
-
-        // --- 6. 无限大拉伸逻辑 ---
-        // 为了确保平面覆盖视野，计算世界空间的对角线跨度
-        const auto& ws = graph.world_space_3d;
-        T diag_sq = std::pow(ws.x_max - ws.x_min, 2) +
-            std::pow(ws.y_max - ws.y_min, 2) +
-            std::pow(ws.z_max - ws.z_min, 2);
-        T stretch_factor = std::sqrt(diag_sq) * static_cast<T>(5.0); // 5倍余量保证无限感
-
-        // 应用拉伸
-        ux *= stretch_factor;
-        uy *= stretch_factor;
-        uz *= stretch_factor;
-        vx *= stretch_factor;
-        vy *= stretch_factor;
-        vz *= stretch_factor;
-
-        // --- 7. 数据落盘与对齐 ---
-        auto& plane_data = self.data.plane_3d;
-
-        // 设置平面原点 O，使平面几何中心正好落在吸附点 (px, py, pz) 上
-        // P(s,t) = O + sU + tV -> 居中则 s=0.5, t=0.5 对应切点
-        plane_data.ox = px - static_cast<T>(0.5) * ux - static_cast<T>(0.5) * vx;
-        plane_data.oy = py - static_cast<T>(0.5) * uy - static_cast<T>(0.5) * vy;
-        plane_data.oz = pz - static_cast<T>(0.5) * uz - static_cast<T>(0.5) * vz;
-
-        plane_data.ux = ux;
-        plane_data.uy = uy;
-        plane_data.uz = uz;
-
-        plane_data.vx = vx;
-        plane_data.vy = vy;
-        plane_data.vz = vz;
+    // 2. 选取 pivot 附近的 K 个最近邻
+    const size_t K = std::min(pts.size(), static_cast<size_t>(100));
+    if (K < 3) {
+        // 不足以确定一个平面
+        self.data.plane_3d.ox = INVALID_VAL;
+        self.data.plane_3d.oy = INVALID_VAL;
+        self.data.plane_3d.oz = INVALID_VAL;
+        return;
     }
 
+    std::vector<std::pair<T, size_t>> dists;
+    dists.reserve(pts.size());
+    for (size_t i = 0; i < pts.size(); ++i) {
+        T dx = pts[i].x - px;
+        T dy = pts[i].y - py;
+        T dz = pts[i].z - pz;
+        dists.emplace_back(dx * dx + dy * dy + dz * dz, i);
+    }
 
-    /**
-     * @brief 3D 三角形求解器
-     * 计算逻辑与平面一致，但通过函数指针区分语义
-     */
+    std::nth_element(dists.begin(), dists.begin() + K, dists.end());
+    dists.resize(K);
+
+    // 3. 计算邻域均值
+    T mean_x = 0, mean_y = 0, mean_z = 0;
+    for (const auto& d : dists) {
+        const auto& p = pts[d.second];
+        mean_x += p.x; mean_y += p.y; mean_z += p.z;
+    }
+    mean_x /= static_cast<T>(K);
+    mean_y /= static_cast<T>(K);
+    mean_z /= static_cast<T>(K);
+
+    // 4. 构建 3x3 协方差矩阵（Eigen）
+    using Vector3 = Eigen::Matrix<T, 3, 1>;
+    using Matrix3 = Eigen::Matrix<T, 3, 3>;
+
+    Matrix3 cov = Matrix3::Zero();
+    for (const auto& d : dists) {
+        const auto& p = pts[d.second];
+        Vector3 v(p.x - mean_x, p.y - mean_y, p.z - mean_z);
+        cov += v * v.transpose();
+    }
+    cov /= static_cast<T>(K);
+
+    // 5. 特征分解
+    Eigen::SelfAdjointEigenSolver<Matrix3> solver(cov);
+    if (solver.info() != Eigen::Success) {
+        self.data.plane_3d.ox = INVALID_VAL;
+        self.data.plane_3d.oy = INVALID_VAL;
+        self.data.plane_3d.oz = INVALID_VAL;
+        return;
+    }
+
+    // 特征值默认从小到大排序，取最大的两个作为 U, V
+    T eigenvals[3] = { solver.eigenvalues()(0),
+                       solver.eigenvalues()(1),
+                       solver.eigenvalues()(2) };
+
+    const T eps = std::numeric_limits<T>::epsilon();
+    // 若第三特征值（最大）仍极小 => 点云几乎无扩散，无法确定平面
+    if (solver.eigenvalues()(2) < eps * static_cast<T>(10)) {
+        self.data.plane_3d.ox = INVALID_VAL;
+        self.data.plane_3d.oy = INVALID_VAL;
+        self.data.plane_3d.oz = INVALID_VAL;
+        return;
+    }
+
+    // 获取前两大特征向量（列2,列1对应最大、次大特征值）
+    Vector3 u_vec = solver.eigenvectors().col(2);
+    Vector3 v_vec = solver.eigenvectors().col(1);
+
+    // 6. 无限拉伸
+    const auto& ws = graph.world_space_3d;
+    T diag_sq = (ws.x_max - ws.x_min) * (ws.x_max - ws.x_min) +
+                (ws.y_max - ws.y_min) * (ws.y_max - ws.y_min) +
+                (ws.z_max - ws.z_min) * (ws.z_max - ws.z_min);
+    T stretch = std::sqrt(diag_sq) * static_cast<T>(5.0);
+
+    u_vec *= stretch;
+    v_vec *= stretch;
+
+    // 7. 存储结果：使切点对应参数 (0.5, 0.5)
+    auto& plane = self.data.plane_3d;
+    plane.ux = u_vec.x(); plane.uy = u_vec.y(); plane.uz = u_vec.z();
+    plane.vx = v_vec.x(); plane.vy = v_vec.y(); plane.vz = v_vec.z();
+
+    plane.ox = px - static_cast<T>(0.5) * (u_vec.x() + v_vec.x());
+    plane.oy = py - static_cast<T>(0.5) * (u_vec.y() + v_vec.y());
+    plane.oz = pz - static_cast<T>(0.5) * (u_vec.z() + v_vec.z());
+}
+
+
     template <typename T>
     void SolveTriangle_3Points_3D(Graph<T>& graph, Node<T>& self)
     {
@@ -868,45 +819,17 @@ namespace StuCanvas
 
         auto& d = self.data.plane_3d;
 
-        // 准备机器精度
-        const T eps = std::numeric_limits<T>::epsilon();
-        const T min_limit = eps * static_cast<T>(10.0);
-
-        auto safe_diff = [&](T a, T b) -> T
-        {
-            T diff = a - b;
-            if (std::abs(diff) < eps)
-            {
-                return (diff >= 0) ? min_limit : -min_limit;
-            }
-            return diff;
-        };
-
-        // 1. 设置三角形原点 (Vertex 0)
         d.ox = p1.x;
         d.oy = p1.y;
         d.oz = p1.z;
 
-        // 2. 计算边向量 U (V1 - V0) 和 V (V2 - V0)
-        d.ux = safe_diff(p2.x, p1.x);
-        d.uy = safe_diff(p2.y, p1.y);
-        d.uz = safe_diff(p2.z, p1.z);
+        d.ux = p2.x - p1.x;
+        d.uy = p2.y - p1.y;
+        d.uz = p2.z - p1.z;
 
-        d.vx = safe_diff(p3.x, p1.x);
-        d.vy = safe_diff(p3.y, p1.y);
-        d.vz = safe_diff(p3.z, p1.z);
-
-        // 3. 共线/退化检测与微扰动保护
-        T nx = d.uy * d.vz - d.uz * d.vy;
-        T ny = d.uz * d.ux - d.ux * d.vz;
-        T nz = d.ux * d.vy - d.uy * d.ux;
-
-        if ((nx * nx + ny * ny + nz * nz) < eps)
-        {
-            // 如果三点共线，强制微调 V 向量使其产生极小面积
-            if (std::abs(d.ux) < std::abs(d.uy)) d.vx += min_limit;
-            else d.vy += min_limit;
-        }
+        d.vx = p3.x - p1.x;
+        d.vy = p3.y - p1.y;
+        d.vz = p3.z - p1.z;
     }
 
     template <typename T>
@@ -939,6 +862,10 @@ namespace StuCanvas
     {
         if (self.parents.size() < 4) return;
 
+        // 标记值：表示无效球体（四点共面）
+        constexpr long double MARKER_LD = -0x1.BAADC0DEp+300L;
+        const T INVALID_VAL = static_cast<T>(MARKER_LD);
+
         // 1. 获取四个点的坐标
         Point3D<T> p[4];
         for (int i = 0; i < 4; ++i)
@@ -947,61 +874,47 @@ namespace StuCanvas
             p[i] = {n->data.point_3d.x, n->data.point_3d.y, n->data.point_3d.z};
         }
 
-        // 2. 建立线性方程组：2(x_i - x_1)x + 2(y_i - y_1)y + 2(z_i - z_1)z = (x_i^2+y_i^2+z_i^2) - (x_1^2+y_1^2+z_1^2)
-        // 令 A * [cx, cy, cz]^T = B
-        T a[3][3], b[3];
+        // 2. 构建线性系统：A * X = B
+        // A[i][j] = 2 * (p[i+1][j] - p[0][j]) , B[i] = ||p[i+1]||^2 - ||p[0]||^2
+        Eigen::Matrix<T, 3, 3> A;
+        Eigen::Matrix<T, 3, 1> B;
+
         T s1 = p[0].x * p[0].x + p[0].y * p[0].y + p[0].z * p[0].z;
 
         for (int i = 0; i < 3; ++i)
         {
-            a[i][0] = 2 * (p[i + 1].x - p[0].x);
-            a[i][1] = 2 * (p[i + 1].y - p[0].y);
-            a[i][2] = 2 * (p[i + 1].z - p[0].z);
-            b[i] = (p[i + 1].x * p[i + 1].x + p[i + 1].y * p[i + 1].y + p[i + 1].z * p[i + 1].z) - s1;
+            A(i, 0) = static_cast<T>(2) * (p[i + 1].x - p[0].x);
+            A(i, 1) = static_cast<T>(2) * (p[i + 1].y - p[0].y);
+            A(i, 2) = static_cast<T>(2) * (p[i + 1].z - p[0].z);
+
+            B(i) = (p[i + 1].x * p[i + 1].x + p[i + 1].y * p[i + 1].y + p[i + 1].z * p[i + 1].z) - s1;
         }
 
-        // 3. 计算行列式 (Cramer's rule)
-        T det = a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
-            a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
-            a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
-
-        // 4. 机器精度钳制 (针对退化情况：如四点共面)
+        // 3. 退化检测：四点共面（行列式接近 0）
         const T eps = std::numeric_limits<T>::epsilon();
-        if (std::abs(det) < eps)
+        T det = A.determinant();
+        if (std::abs(det) < eps * static_cast<T>(10))
         {
-            det = (det >= 0) ? eps * 10 : -eps * 10;
+            // 标记为无效球体
+            self.data.sphere_3d.cx = INVALID_VAL;
+            self.data.sphere_3d.cy = INVALID_VAL;
+            self.data.sphere_3d.cz = INVALID_VAL;
+            self.data.sphere_3d.r  = INVALID_VAL;
+            return;
         }
 
-        // 5. 计算圆心 (利用行列式代换)
-        auto get_det = [&](T c0, T c1, T c2)
-        {
-            return c0 * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
-                a[0][1] * (c1 * a[2][2] - a[1][2] * c2) +
-                a[0][2] * (c1 * a[2][1] - a[1][1] * c2);
-        };
+        // 4. 使用 Eigen 求解球心坐标
+        Eigen::Matrix<T, 3, 1> center = A.colPivHouseholderQr().solve(B);
 
-        // cx = det(B, col2, col3) / det ... 依此类推
-        T cx = (b[0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
-            a[0][1] * (b[1] * a[2][2] - a[1][2] * b[2]) +
-            a[0][2] * (b[1] * a[2][1] - a[1][1] * b[2])) / det;
+        // 5. 写入结果
+        self.data.sphere_3d.cx = center(0);
+        self.data.sphere_3d.cy = center(1);
+        self.data.sphere_3d.cz = center(2);
 
-        T cy = (a[0][0] * (b[1] * a[2][2] - a[1][2] * b[2]) -
-            b[0] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
-            a[0][2] * (a[1][0] * b[2] - b[1] * a[2][0])) / det;
-
-        T cz = (a[0][0] * (a[1][1] * b[2] - b[1] * a[2][1]) -
-            a[0][1] * (a[1][0] * b[2] - b[1] * a[2][0]) +
-            b[0] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])) / det;
-
-        // 6. 写入结果
-        self.data.sphere_3d.cx = cx;
-        self.data.sphere_3d.cy = cy;
-        self.data.sphere_3d.cz = cz;
-
-        // 半径 = 距离圆心到任意一点的距离
-        T dx = cx - p[0].x;
-        T dy = cy - p[0].y;
-        T dz = cz - p[0].z;
+        // 6. 计算半径
+        T dx = center(0) - p[0].x;
+        T dy = center(1) - p[0].y;
+        T dz = center(2) - p[0].z;
         self.data.sphere_3d.r = std::sqrt(dx * dx + dy * dy + dz * dz);
     }
 

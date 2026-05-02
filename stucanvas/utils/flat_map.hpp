@@ -155,6 +155,20 @@ public:
         return end();
     }
 
+    // 在 public 区域，紧随 find 函数之后添加
+    bool contains(K key) const {
+        size_t h = hash_key(key) & mask_;
+        size_t start = h;
+        while (table_[h].state != State::EMPTY) {
+            if (table_[h].state == State::FILLED && table_[h].first == key) {
+                return true;
+            }
+            h = (h + 1) & mask_;
+            if (h == start) break;
+        }
+        return false;
+    }
+
     bool erase(K key) {
         size_t h = hash_key(key) & mask_;
         while (table_[h].state != State::EMPTY) {

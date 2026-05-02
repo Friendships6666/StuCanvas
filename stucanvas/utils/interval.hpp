@@ -2131,57 +2131,87 @@ namespace StuCanvas
         }
 
 
+        template <typename T>
+        Interval<T> evaluate_circle_3d_sos_implicit(
+            const Interval<T>& IX, const Interval<T>& IY, const Interval<T>& IZ,
+            T cx, T cy, T cz, T nx, T ny, T nz, T r_sq)
+        {
+            // --- 1. 计算球面约束区间 S ---
+            // S = (x-cx)^2 + (y-cy)^2 + (z-cz)^2 - r_sq
+            // 使用 sqr_diff 保证 (I-c)^2 的评估是绝对原子且精确的
+            Interval<T> dist_sq = sqr_diff(IX, cx) + sqr_diff(IY, cy) + sqr_diff(IZ, cz);
+            Interval<T> S = {dist_sq.lower - r_sq, dist_sq.upper - r_sq};
 
-         template <typename T>
-Interval<T> evaluate_circle_3d_sos_implicit(
-        const Interval<T>& IX, const Interval<T>& IY, const Interval<T>& IZ,
-        T cx, T cy, T cz, T nx, T ny, T nz, T r_sq)
-    {
+            // --- 2. 计算平面约束区间 P ---
+            // P = (x-cx)*nx + (y-cy)*ny + (z-cz)*nz
+            Interval<T> WX = IX - cx;
+            Interval<T> WY = IY - cy;
+            Interval<T> WZ = IZ - cz;
 
+            // 线性函数的区间运算在端点取得，是 100% 精确的
+            auto dot_part = [](const Interval<T>& W, T n)
+            {
+                T v1 = W.lower * n;
+                T v2 = W.upper * n;
+                return Interval<T>(std::min(v1, v2), std::max(v1, v2));
+            };
+            Interval<T> P = dot_part(WX, nx) + dot_part(WY, ny) + dot_part(WZ, nz);
 
-        // --- 1. 计算球面约束区间 S ---
-        // S = (x-cx)^2 + (y-cy)^2 + (z-cz)^2 - r_sq
-        // 使用 sqr_diff 保证 (I-c)^2 的评估是绝对原子且精确的
-        Interval<T> dist_sq = sqr_diff(IX, cx) + sqr_diff(IY, cy) + sqr_diff(IZ, cz);
-        Interval<T> S = { dist_sq.lower - r_sq, dist_sq.upper - r_sq };
+            // --- 3. 严格执行平方和合并 F = S^2 + P^2 ---
+            // 定义严格的区间平方函数
+            auto strict_interval_sqr = [](const Interval<T>& V)
+            {
+                // 如果区间跨越 0，则平方后的下界必然为 0
+                if (V.lower <= 0 && V.upper >= 0)
+                {
+                    return Interval<T>(
+                        static_cast<T>(0),
+                        std::max(V.lower * V.lower, V.upper * V.upper)
+                    );
+                }
+                // 否则，平方后的区间由两端点的平方值决定
+                T v1 = V.lower * V.lower;
+                T v2 = V.upper * V.upper;
+                return Interval<T>(std::min(v1, v2), std::max(v1, v2));
+            };
 
-        // --- 2. 计算平面约束区间 P ---
-        // P = (x-cx)*nx + (y-cy)*ny + (z-cz)*nz
-        Interval<T> WX = IX - cx;
-        Interval<T> WY = IY - cy;
-        Interval<T> WZ = IZ - cz;
+            Interval<T> S_sq = strict_interval_sqr(S);
+            Interval<T> P_sq = strict_interval_sqr(P);
 
-        // 线性函数的区间运算在端点取得，是 100% 精确的
-        auto dot_part = [](const Interval<T>& W, T n) {
-            T v1 = W.lower * n;
-            T v2 = W.upper * n;
-            return Interval<T>(std::min(v1, v2), std::max(v1, v2));
-        };
-        Interval<T> P = dot_part(WX, nx) + dot_part(WY, ny) + dot_part(WZ, nz);
-
-        // --- 3. 严格执行平方和合并 F = S^2 + P^2 ---
-        // 定义严格的区间平方函数
-        auto strict_interval_sqr = [](const Interval<T>& V) {
-            // 如果区间跨越 0，则平方后的下界必然为 0
-            if (V.lower <= 0 && V.upper >= 0) {
-                return Interval<T>(
-                    static_cast<T>(0),
-                    std::max(V.lower * V.lower, V.upper * V.upper)
-                );
-            }
-            // 否则，平方后的区间由两端点的平方值决定
-            T v1 = V.lower * V.lower;
-            T v2 = V.upper * V.upper;
-            return Interval<T>(std::min(v1, v2), std::max(v1, v2));
-        };
-
-        Interval<T> S_sq = strict_interval_sqr(S);
-        Interval<T> P_sq = strict_interval_sqr(P);
-
-        // 返回 F = S_sq + P_sq
-        // 注意：这里存在微小的过度估计，因为同一个点 P 不一定能同时使 S 和 P 取得各自的最小值。
-        // 但这是区间算术处理这类问题的最严密上限。
-        return S_sq + P_sq;
-    }
+            // 返回 F = S_sq + P_sq
+            // 注意：这里存在微小的过度估计，因为同一个点 P 不一定能同时使 S 和 P 取得各自的最小值。
+            // 但这是区间算术处理这类问题的最严密上限。
+            return S_sq + P_sq;
+        }
     }
 }
+
+
+
+#if !defined(STUCANVAS_HEADER_ONLY) && !defined(STUCANVAS_COMPILING_LIBRARY)
+
+// 1. 拦截 Interval 和 IntervalSet 的 double 实例
+extern template struct StuCanvas::Interval<double>;
+extern template struct StuCanvas::IntervalSet<double>;
+
+namespace StuCanvas {
+    // 2. 拦截核心运算符 (这是编译最慢的地方)
+    extern template IntervalSet<double> operator+(const IntervalSet<double>&, const IntervalSet<double>&);
+    extern template IntervalSet<double> operator-(const IntervalSet<double>&, const IntervalSet<double>&);
+    extern template IntervalSet<double> operator*(const IntervalSet<double>&, const IntervalSet<double>&);
+    extern template IntervalSet<double> operator/(const IntervalSet<double>&, const IntervalSet<double>&);
+
+    // 3. 拦截高频数学函数
+    extern template Interval<double> exp2(const Interval<double>&);
+    extern template IntervalSet<double> sin(const IntervalSet<double>&);
+    extern template IntervalSet<double> cos(const IntervalSet<double>&);
+
+
+
+
+    namespace utils {
+        extern template Interval<double> evaluate_circle_implicit(const Interval<double>&, const Interval<double>&, double, double, double);
+        extern template Interval<double> evaluate_sphere_implicit(const Interval<double>&, const Interval<double>&, const Interval<double>&, double, double, double, double);
+    }
+}
+#endif

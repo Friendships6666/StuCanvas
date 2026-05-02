@@ -644,7 +644,6 @@ namespace StuCanvas
         [[nodiscard]] uint32_t ResolveThreadCount(uint64_t req) const
         {
             uint32_t hardware = std::thread::hardware_concurrency();
-            if (hardware == 0) hardware = 1; // 容错处理
 
             if (req == 0 || req > static_cast<uint64_t>(hardware))
             {

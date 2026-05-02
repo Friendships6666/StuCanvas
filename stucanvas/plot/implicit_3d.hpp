@@ -68,16 +68,10 @@ namespace StuCanvas
 
             auto evaluate = [&](const T& cx, const T& cy, const T& cz) -> T
             {
-                try
-                {
                     auto res = f(cx, cy, cz);
 
                     return abs(res);
-                }
-                catch (...)
-                {
-                    return std::numeric_limits<T>::max();
-                }
+
             };
 
 
