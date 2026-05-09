@@ -22,7 +22,9 @@
 #include "../plot/implicit_3d.hpp"
 #include "../plot/parametric_2d.hpp"
 #include "../plot/parametric_3d.hpp"
-
+#include "../types/segment_strip.hpp"
+#include "../types/triangles.hpp"
+#include "../types/path.hpp"
 namespace StuCanvas
 {
     template <typename T>
@@ -39,10 +41,16 @@ namespace StuCanvas
     {
         NONE = 0,
         DIRTY = 1ULL << 0,
-        VISITED = 1ULL << 1,
-        HIDDEN = 1ULL << 2,
-        FROZEN = 1ULL << 3,
-        SELECTED = 1ULL << 4
+        NO_PLOTTER = 1ULL << 1,
+        RESOLUTION_INDEPENDENT = 1ULL << 2,
+    };
+
+    enum class NodeSavingType : uint8_t
+    {
+        POINTS,
+        PATHS,
+        SEGMENTS,
+        TRIANGLES,
     };
 
     enum class NodeType : uint32_t
@@ -415,10 +423,19 @@ namespace StuCanvas
 
         utils::BlockDeque<uint64_t, 4> parents;
         utils::BlockDeque<uint64_t, 16> children;
+
         std::vector<Point2D<T>> result_points_2d;
         std::vector<Point3D<T>> result_points_3d;
+        std::vector<SegmentStrip2D<T>> result_segment_strips_2d;
+        std::vector<SegmentStrip3D<T>> result_segment_strips_3d;
+        std::vector<Path2D<T>> result_paths_2d;
+        std::vector<Path3D<T>> result_paths_3d;
+        std::vector<Triangles2D<T>> result_triangles_2d;
+        std::vector<Triangles3D<T>> result_triangles_3d;
+
         SolverFuncPtr<T> solver = nullptr;
         PlotterFuncPtr<T> plotter = nullptr;
+        NodeSavingType saving_type{};
 
         Node() noexcept
         {
@@ -713,7 +730,7 @@ namespace StuCanvas
         } resolution_3d;
 
 
-        uint64_t CreateFreePoint_2D(T x, T y, std::string node_name = "Unnamed")
+        uint64_t CreateFreePoint_Point2D(T x, T y, std::string node_name = "Unnamed")
         {
             auto& node = node_pool.emplace_back();
             node.type = NodeType::POINT_2D_FREE;
@@ -724,10 +741,11 @@ namespace StuCanvas
             node.plotter = PlotPoint_2D;
             node.set_mask(NodeMask::DIRTY);
             node.name = node_name;
+            node.saving_type = NodeSavingType::POINTS;
             return node.id;
         }
 
-        uint64_t CreateFreePoint_3D(T x, T y, T z, std::string node_name = "Unnamed")
+        uint64_t CreateFreePoint_Point3D(T x, T y, T z, std::string node_name = "Unnamed")
         {
             auto& node = node_pool.emplace_back();
             node.type = NodeType::POINT_3D_FREE;
@@ -742,7 +760,7 @@ namespace StuCanvas
             return node.id;
         }
 
-        uint64_t CreateStraightLine_2D(uint64_t start_point_id, uint64_t end_point_id,
+        uint64_t CreateStraightLine_Point2D(uint64_t start_point_id, uint64_t end_point_id,
                                        std::string node_name = "Unnamed")
         {
             Node<T>* start_node = GetNode(start_point_id);
@@ -778,7 +796,7 @@ namespace StuCanvas
             return new_line_id;
         }
 
-        uint64_t CreateStraightLine_3D(uint64_t start_point_id, uint64_t end_point_id,
+        uint64_t CreateStraightLine_Point3D(uint64_t start_point_id, uint64_t end_point_id,
                                        std::string node_name = "Unnamed")
         {
             Node<T>* start_node = GetNode(start_point_id);
@@ -817,7 +835,7 @@ namespace StuCanvas
             return new_line_id;
         }
 
-        uint64_t CreateSegment_2D(uint64_t start_point_id, uint64_t end_point_id, std::string node_name = "Unnamed")
+        uint64_t CreateSegment_Point2D(uint64_t start_point_id, uint64_t end_point_id, std::string node_name = "Unnamed")
         {
             Node<T>* start_node = GetNode(start_point_id);
             Node<T>* end_node = GetNode(end_point_id);
@@ -851,7 +869,7 @@ namespace StuCanvas
             return new_seg_id;
         }
 
-        uint64_t CreateSegment_3D(uint64_t start_point_id, uint64_t end_point_id, std::string node_name = "Unnamed")
+        uint64_t CreateSegment_Point3D(uint64_t start_point_id, uint64_t end_point_id, std::string node_name = "Unnamed")
         {
             Node<T>* start_node = GetNode(start_point_id);
             Node<T>* end_node = GetNode(end_point_id);
@@ -885,7 +903,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateRay_2D(uint64_t start_point_id, uint64_t end_point_id, std::string node_name = "Unnamed")
+        uint64_t CreateRay_Point2D(uint64_t start_point_id, uint64_t end_point_id, std::string node_name = "Unnamed")
         {
             Node<T>* start_node = GetNode(start_point_id);
             Node<T>* end_node = GetNode(end_point_id);
@@ -919,7 +937,7 @@ namespace StuCanvas
             return new_seg_id;
         }
 
-        uint64_t CreateRay_3D(uint64_t start_point_id, uint64_t end_point_id, std::string node_name = "Unnamed")
+        uint64_t CreateRay_Point3D(uint64_t start_point_id, uint64_t end_point_id, std::string node_name = "Unnamed")
         {
             Node<T>* start_node = GetNode(start_point_id);
             Node<T>* end_node = GetNode(end_point_id);
@@ -954,7 +972,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateCircle_2D(uint64_t center_point_id, T radius, std::string node_name = "Unnamed")
+        uint64_t CreateCircle_Point2D(uint64_t center_point_id, T radius, std::string node_name = "Unnamed")
         {
             Node<T>* center_node = GetNode(center_point_id);
 
@@ -988,7 +1006,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateCircle_2D(uint64_t center_id, uint64_t point_on_circle_id, std::string node_name = "Unnamed")
+        uint64_t CreateCircle_Point2D(uint64_t center_id, uint64_t point_on_circle_id, std::string node_name = "Unnamed")
         {
             Node<T>* n1 = GetNode(center_id);
             Node<T>* n2 = GetNode(point_on_circle_id);
@@ -1016,7 +1034,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateCircle_2D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id, std::string node_name = "Unnamed")
+        uint64_t CreateCircle_Point2D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id, std::string node_name = "Unnamed")
         {
             Node<T>* n1 = GetNode(p1_id);
             Node<T>* n2 = GetNode(p2_id);
@@ -1049,7 +1067,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreatePlane_3D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id, std::string node_name = "Unnamed")
+        uint64_t CreatePlane_Point3D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id, std::string node_name = "Unnamed")
         {
             Node<T>* n1 = GetNode(p1_id);
             Node<T>* n2 = GetNode(p2_id);
@@ -1097,7 +1115,7 @@ namespace StuCanvas
          * @param p2_id 顶点2 (决定 U 向量)
          * @param p3_id 顶点3 (决定 V 向量)
          */
-        uint64_t CreateTriangle_3D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id, std::string node_name = "Unnamed")
+        uint64_t CreateTriangle_Point3D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id, std::string node_name = "Unnamed")
         {
             Node<T>* n1 = GetNode(p1_id);
             Node<T>* n2 = GetNode(p2_id);
@@ -1137,7 +1155,7 @@ namespace StuCanvas
             return new_id;
         }
 
-        uint64_t CreateArc_2D(uint64_t p_start_id, uint64_t p_on_id, uint64_t p_end_id,
+        uint64_t CreateArc_Point2D(uint64_t p_start_id, uint64_t p_on_id, uint64_t p_end_id,
                               std::string node_name = "Unnamed")
         {
             Node<T>* n1 = GetNode(p_start_id);
@@ -1170,7 +1188,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateParallelLine_2D(uint64_t ref_line_id, T distance, std::string node_name = "Unnamed")
+        uint64_t CreateParallelLine_Point2D(uint64_t ref_line_id, T distance, std::string node_name = "Unnamed")
         {
             Node<T>* ref_node = GetNode(ref_line_id);
 
@@ -1201,7 +1219,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateParallelLine_2D(uint64_t ref_line_id, uint64_t target_point_id,
+        uint64_t CreateParallelLine_Point2D(uint64_t ref_line_id, uint64_t target_point_id,
                                        std::string node_name = "Unnamed")
         {
             Node<T>* ref_line = GetNode(ref_line_id);
@@ -1242,7 +1260,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateVerticalLine_2D(uint64_t ref_line_id, uint64_t target_point_id,
+        uint64_t CreateVerticalLine_Point2D(uint64_t ref_line_id, uint64_t target_point_id,
                                        std::string node_name = "Unnamed")
         {
             Node<T>* ref_line = GetNode(ref_line_id);
@@ -1282,7 +1300,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateMidPoint_2D(uint64_t p1_id, uint64_t p2_id, std::string node_name = "Unnamed")
+        uint64_t CreateMidPoint_Point2D(uint64_t p1_id, uint64_t p2_id, std::string node_name = "Unnamed")
         {
             Node<T>* n1 = GetNode(p1_id);
             Node<T>* n2 = GetNode(p2_id);
@@ -1313,7 +1331,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateMidPoint_2D(uint64_t segment_id, std::string node_name = "Unnamed")
+        uint64_t CreateMidPoint_Point2D(uint64_t segment_id, std::string node_name = "Unnamed")
         {
             Node<T>* seg_node = GetNode(segment_id);
 
@@ -1341,7 +1359,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateMidPoint_3D(uint64_t p1_id, uint64_t p2_id, std::string node_name = "Unnamed")
+        uint64_t CreateMidPoint_Point3D(uint64_t p1_id, uint64_t p2_id, std::string node_name = "Unnamed")
         {
             Node<T>* n1 = GetNode(p1_id);
             Node<T>* n2 = GetNode(p2_id);
@@ -1372,7 +1390,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateMidPoint_3D(uint64_t segment_id, std::string node_name = "Unnamed")
+        uint64_t CreateMidPoint_Point3D(uint64_t segment_id, std::string node_name = "Unnamed")
         {
             Node<T>* seg_node = GetNode(segment_id);
 
@@ -1399,7 +1417,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateSnappedPoint_2D(uint64_t target_id, T gx, T gy, std::string node_name = "Unnamed")
+        uint64_t CreateSnappedPoint_Point2D(uint64_t target_id, T gx, T gy, std::string node_name = "Unnamed")
         {
             auto& node = node_pool.emplace_back();
             node.type = NodeType::POINT_2D_SNAP;
@@ -1420,7 +1438,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateSnappedPoint_3D(uint64_t target_id, T gx, T gy, T gz, std::string node_name = "Unnamed")
+        uint64_t CreateSnappedPoint_Point3D(uint64_t target_id, T gx, T gy, T gz, std::string node_name = "Unnamed")
         {
             auto& node = node_pool.emplace_back();
             node.type = NodeType::POINT_3D_SNAP;
@@ -1442,7 +1460,7 @@ namespace StuCanvas
         }
 
 
-        std::vector<uint64_t> GroupCreatePolyGen_2D(uint64_t center_id, T side_length, size_t num_sides,
+        std::vector<uint64_t> GroupCreatePolyGen_Point2D(uint64_t center_id, T side_length, size_t num_sides,
                                                     std::string node_name = "Unnamed")
         {
             std::vector<uint64_t> created_ids;
@@ -1482,7 +1500,7 @@ namespace StuCanvas
                 uint64_t p_end = vertex_ids[(i + 1) % num_sides];
 
 
-                uint64_t sid = CreateSegment_2D(p_start, p_end, node_name);
+                uint64_t sid = CreateSegment_Point2D(p_start, p_end, node_name);
                 created_ids.emplace_back(sid);
             }
 
@@ -1490,7 +1508,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreatePolyGen_2D(uint64_t center_id, T side_length, uint32_t num_sides,
+        uint64_t CreatePolyGen_Point2D(uint64_t center_id, T side_length, uint32_t num_sides,
                                   std::string node_name = "Unnamed")
         {
             Node<T>* center_node = GetNode(center_id);
@@ -1523,7 +1541,7 @@ namespace StuCanvas
             return new_id;
         }
 
-        uint64_t CreateTangent_Diagram_2D(uint64_t curve_id, uint64_t pivot_point_id, std::string node_name = "Unnamed")
+        uint64_t CreateTangent_Diagram_Point2D(uint64_t curve_id, uint64_t pivot_point_id, std::string node_name = "Unnamed")
         {
             Node<T>* curve = GetNode(curve_id);
             Node<T>* pivot = GetNode(pivot_point_id);
@@ -1551,7 +1569,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreatePlaneInfinity_3D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id,
+        uint64_t CreatePlaneInfinity_Point3D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id,
                                         std::string node_name = "Unnamed")
         {
             Node<T>* n1 = GetNode(p1_id);
@@ -1590,7 +1608,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateTangentPlane_3D(uint64_t target_obj_id, uint64_t pivot_point_id,
+        uint64_t CreateTangentPlane_Point3D(uint64_t target_obj_id, uint64_t pivot_point_id,
                                        std::string node_name = "Unnamed")
         {
             Node<T>* obj = GetNode(target_obj_id);
@@ -1623,7 +1641,7 @@ namespace StuCanvas
             return new_id;
         }
 
-        std::vector<uint64_t> GroupCreatePlatonicSolid_3D(
+        std::vector<uint64_t> GroupCreatePlatonicSolid_Point3D(
             uint64_t center_id,
             T radius,
             int type,
@@ -1678,7 +1696,7 @@ namespace StuCanvas
 
                     if (edge_registry.insert({low, high}).second)
                     {
-                        uint64_t sid = CreateSegment_3D(v_ids[low], v_ids[high], node_name);
+                        uint64_t sid = CreateSegment_Point3D(v_ids[low], v_ids[high], node_name);
                         result_ids.emplace_back(sid);
                     }
                 }
@@ -1728,7 +1746,7 @@ namespace StuCanvas
          * @param type 类型 (4, 6, 8, 12, 20)
          * @param node_name 节点名称
          */
-        uint64_t CreatePlatonicSolid_3D(uint64_t center_id, T radius, int type, std::string node_name = "Unnamed")
+        uint64_t CreatePlatonicSolid_Point3D(uint64_t center_id, T radius, int type, std::string node_name = "Unnamed")
         {
             Node<T>* center_node = GetNode(center_id);
             if (!is_3d(center_node->type) || !is_point(center_node->type))
@@ -1758,7 +1776,7 @@ namespace StuCanvas
             return new_id;
         }
 
-        uint64_t CreateSphere_3D(uint64_t center_id, T radius, std::string node_name = "Unnamed")
+        uint64_t CreateSphere_Point3D(uint64_t center_id, T radius, std::string node_name = "Unnamed")
         {
             Node<T>* center_node = GetNode(center_id);
             if (!(is_3d(center_node->type) && is_point(center_node->type)))
@@ -1791,7 +1809,7 @@ namespace StuCanvas
          * @brief 创建 3D 球体 (四点定球)
          * @param p1_id, p2_id, p3_id, p4_id 四个顶点的 ID
          */
-        uint64_t CreateSphere_3D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id, uint64_t p4_id,
+        uint64_t CreateSphere_Point3D(uint64_t p1_id, uint64_t p2_id, uint64_t p3_id, uint64_t p4_id,
                                  std::string node_name = "Unnamed")
         {
             // 1. 获取并校验四个点
@@ -1827,7 +1845,7 @@ namespace StuCanvas
             return new_id;
         }
 
-        uint64_t CreateIntersectionPoint_2D(const std::vector<uint64_t>& parent_ids, T gx, T gy,
+        uint64_t CreateIntersectionPoint_Point2D(const std::vector<uint64_t>& parent_ids, T gx, T gy,
                                             std::string node_name = "Unnamed")
         {
             auto& node = node_pool.emplace_back();
@@ -1858,7 +1876,7 @@ namespace StuCanvas
          * @brief 创建 3D 万能求交曲线/区域
          * @param parent_ids 参与求交的对象 ID 集合
          */
-        uint64_t CreateIntersectionCurve_3D(const std::vector<uint64_t>& parent_ids, std::string node_name = "Unnamed")
+        uint64_t CreateIntersectionCurve_Point3D(const std::vector<uint64_t>& parent_ids, std::string node_name = "Unnamed")
         {
             if (parent_ids.size() < 2)
             {
@@ -1887,7 +1905,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateRectangle_2D(uint64_t center_id, T width, T height, std::string node_name = "Unnamed")
+        uint64_t CreateRectangle_Point2D(uint64_t center_id, T width, T height, std::string node_name = "Unnamed")
         {
             Node<T>* center_node = GetNode(center_id);
 
@@ -1921,7 +1939,7 @@ namespace StuCanvas
         }
 
 
-        std::vector<uint64_t> GroupCreateRectangle_2D(uint64_t center_id, T width, T height,
+        std::vector<uint64_t> GroupCreateRectangle_Point2D(uint64_t center_id, T width, T height,
                                                       std::string node_name = "Unnamed_Rect")
         {
             std::vector<uint64_t> created_ids;
@@ -1954,10 +1972,10 @@ namespace StuCanvas
             created_ids.push_back(v3);
 
             // 4. 创建四条线段节点连接顶点
-            uint64_t s0 = CreateSegment_2D(v0, v1, node_name + "_Edge0");
-            uint64_t s1 = CreateSegment_2D(v1, v2, node_name + "_Edge1");
-            uint64_t s2 = CreateSegment_2D(v2, v3, node_name + "_Edge2");
-            uint64_t s3 = CreateSegment_2D(v3, v0, node_name + "_Edge3");
+            uint64_t s0 = CreateSegment_Point2D(v0, v1, node_name + "_Edge0");
+            uint64_t s1 = CreateSegment_Point2D(v1, v2, node_name + "_Edge1");
+            uint64_t s2 = CreateSegment_Point2D(v2, v3, node_name + "_Edge2");
+            uint64_t s3 = CreateSegment_Point2D(v3, v0, node_name + "_Edge3");
 
             created_ids.push_back(s0);
             created_ids.push_back(s1);
@@ -1968,7 +1986,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz, std::string node_name = "Unnamed_Cuboid")
+        uint64_t CreateCuboid_Point3D(uint64_t center_id, T dx, T dy, T dz, std::string node_name = "Unnamed_Cuboid")
         {
             Node<T>* center_node = GetNode(center_id);
 
@@ -2009,7 +2027,7 @@ namespace StuCanvas
  *
  * @return std::vector<uint64_t> 包含所有生成的子节点 ID [8点, 12线, 12面]
  */
-        std::vector<uint64_t> GroupCreateCuboid_3D(uint64_t center_id, T dx, T dy, T dz,
+        std::vector<uint64_t> GroupCreateCuboid_Point3D(uint64_t center_id, T dx, T dy, T dz,
                                                    std::string node_name = "Unnamed_GroupCuboid")
         {
             std::vector<uint64_t> ids;
@@ -2038,7 +2056,7 @@ namespace StuCanvas
             // 3. 创建 12 条棱边 (LINE_3D_SEGMENT)
             auto add_edge = [&](int i, int j)
             {
-                ids.push_back(CreateSegment_3D(v[i], v[j], node_name));
+                ids.push_back(CreateSegment_Point3D(v[i], v[j], node_name));
             };
             // 底面 4 条
             add_edge(0, 1);
@@ -2061,9 +2079,9 @@ namespace StuCanvas
             auto add_rect_face = [&](int i, int j, int k, int l)
             {
                 // 三角形 1
-                ids.push_back(CreateTriangle_3D(v[i], v[j], v[k], node_name));
+                ids.push_back(CreateTriangle_Point3D(v[i], v[j], v[k], node_name));
                 // 三角形 2
-                ids.push_back(CreateTriangle_3D(v[i], v[k], v[l], node_name));
+                ids.push_back(CreateTriangle_Point3D(v[i], v[k], v[l], node_name));
             };
 
             add_rect_face(0, 3, 2, 1); // 底面
@@ -2076,7 +2094,7 @@ namespace StuCanvas
             return ids;
         }
 
-        uint64_t CreateCone_3D(uint64_t apex_id, uint64_t base_center_id, T radius, std::string node_name = "Unnamed")
+        uint64_t CreateCone_Point3D(uint64_t apex_id, uint64_t base_center_id, T radius, std::string node_name = "Unnamed")
         {
             Node<T>* n_apex = GetNode(apex_id);
             Node<T>* n_base = GetNode(base_center_id);
@@ -2112,7 +2130,7 @@ namespace StuCanvas
          * @param node_name 节点名称
          * @return uint64_t 新创建的圆柱节点 ID
          */
-        uint64_t CreateCylinder_3D(uint64_t p1_id, uint64_t p2_id, T radius, std::string node_name = "Unnamed")
+        uint64_t CreateCylinder_Point3D(uint64_t p1_id, uint64_t p2_id, T radius, std::string node_name = "Unnamed")
         {
             // 1. 获取并校验两个父节点（端点）
             Node<T>* n1 = GetNode(p1_id);
@@ -2158,7 +2176,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateCircle_3D(uint64_t center_id, uint64_t normal_pt_id, T radius, std::string node_name = "Unnamed")
+        uint64_t CreateCircle_Point3D(uint64_t center_id, uint64_t normal_pt_id, T radius, std::string node_name = "Unnamed")
         {
             Node<T>* n_center = GetNode(center_id);
             Node<T>* n_normal = GetNode(normal_pt_id);
@@ -2190,7 +2208,7 @@ namespace StuCanvas
          * @param x 新的 X 坐标
          * @param y 新的 Y 坐标
          */
-        void ModifyPoint_2D(uint64_t id, T x, T y)
+        void ModifyPoint_Point2D(uint64_t id, T x, T y)
         {
             Node<T>* node = GetNode(id);
 
@@ -2213,7 +2231,7 @@ namespace StuCanvas
          * @param id 点节点的 ID
          * @param x, y, z 新坐标
          */
-        void ModifyPoint_3D(uint64_t id, T x, T y, T z)
+        void ModifyPoint_Point3D(uint64_t id, T x, T y, T z)
         {
             Node<T>* node = GetNode(id);
 
@@ -2233,7 +2251,7 @@ namespace StuCanvas
         }
 
 
-        uint64_t CreateBlackBox_3D(const std::vector<uint64_t>& parent_ids,
+        uint64_t CreateBlackBox_Point3D(const std::vector<uint64_t>& parent_ids,
                                    SolverFuncPtr<T> solver,
                                    PlotterFuncPtr<T> plotter,
                                    std::string node_name = "UserBlackBox_3D")
@@ -2259,7 +2277,7 @@ namespace StuCanvas
         }
 
         // 2D 版本同理
-        uint64_t CreateBlackBox_2D(const std::vector<uint64_t>& parent_ids,
+        uint64_t CreateBlackBox_Point2D(const std::vector<uint64_t>& parent_ids,
                                    SolverFuncPtr<T> solver,
                                    PlotterFuncPtr<T> plotter,
                                    std::string node_name = "UserBlackBox_2D")
@@ -2282,7 +2300,7 @@ namespace StuCanvas
 
 
         template <typename TFunc>
-        uint64_t CreateImplicit_2D(const IntervalPlot2DDescriptor<T, TFunc>& initial_desc,
+        uint64_t CreateImplicit_Point2D(const IntervalPlot2DDescriptor<T, TFunc>& initial_desc,
                                    const std::vector<uint64_t>& parent_ids = {},
                                    std::string node_name = "Implicit_2D")
         {
@@ -2320,7 +2338,7 @@ namespace StuCanvas
 
 
         template <typename TFunc>
-        uint64_t CreateImplicit_3D(const IntervalPlot3DDescriptor<T, TFunc>& initial_desc,
+        uint64_t CreateImplicit_Point3D(const IntervalPlot3DDescriptor<T, TFunc>& initial_desc,
                                    const std::vector<uint64_t>& parent_ids = {},
                                    std::string node_name = "Implicit_3D")
         {
@@ -2358,7 +2376,7 @@ namespace StuCanvas
 
 
         template <typename TX, typename TY>
-        uint64_t CreateParametric_2D(const ParametricPlot2DDescriptor<T, TX, TY>& initial_desc,
+        uint64_t CreateParametric_Point2D(const ParametricPlot2DDescriptor<T, TX, TY>& initial_desc,
                                      const std::vector<uint64_t>& parent_ids = {},
                                      std::string node_name = "Parametric_2D")
         {
@@ -2395,7 +2413,7 @@ namespace StuCanvas
 
 
         template <typename TX, typename TY, typename TZ>
-        uint64_t CreateParametric_3D(const ParametricPlot3DDescriptor<T, TX, TY, TZ>& initial_desc,
+        uint64_t CreateParametric_Point3D(const ParametricPlot3DDescriptor<T, TX, TY, TZ>& initial_desc,
                                      const std::vector<uint64_t>& parent_ids = {},
                                      std::string node_name = "Parametric_3D")
         {
