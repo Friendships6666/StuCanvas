@@ -108,4 +108,24 @@ namespace StuCanvas
         explicit constexpr operator Point3D<T>() const { return { x, y, z }; }
     };
 
+
+
+
+    // 带颜色的 2D 点 – Vulkan 存储缓冲区标准布局
+    struct alignas(16) Point2D_GPU {
+        float x, y;              // 位置 (8 字节)
+        float r, g, b, a;        // 颜色 (16 字节，对齐 16)
+        float _pad[2];           // 填充至 32 字节，保证数组元素起始对齐 16
+    };
+    // 编译期验证大小
+    static_assert(sizeof(Point2D_GPU) == 32, "Point2D_GPU must be 32 bytes");
+
+    // 带颜色的 3D 点 – Vulkan 存储缓冲区标准布局
+    struct alignas(16) Point3D_GPU {
+        float x, y, z;           // 位置 (12 字节)
+        float r, g, b, a;        // 颜色 (16 字节)
+        float _pad[1];           // 填充至 32 字节，保证数组元素起始对齐 16
+    };
+    static_assert(sizeof(Point3D_GPU) == 32, "Point3D_GPU must be 32 bytes");
+
 } // namespace StuCanvas
