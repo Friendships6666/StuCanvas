@@ -240,7 +240,12 @@ private:
             queueInfos.push_back(qInfo);
         }
 
+        VkPhysicalDeviceShaderDrawParametersFeatures drawParamsFeatures{};
+        drawParamsFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
+        drawParamsFeatures.shaderDrawParameters = VK_TRUE;
+
         VkPhysicalDeviceFeatures features{};
+
 
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -249,6 +254,7 @@ private:
         createInfo.pEnabledFeatures     = &features;
         createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions_.size());
         createInfo.ppEnabledExtensionNames = deviceExtensions_.data();
+        createInfo.pNext = &drawParamsFeatures;   // 关键：链接到 pNext 链
 
         if (validationEnabled_) {
             createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers_.size());

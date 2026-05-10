@@ -152,10 +152,14 @@ inline void Presenter::createCommandPool() {
         throw std::runtime_error("Failed to create command pool");
 }
 
-inline void Presenter::createSyncObjects() {
+    inline void Presenter::createSyncObjects() {
+    uint32_t swapchainImageCount = static_cast<uint32_t>(swapChain_->getImageCount());
+
+    // 这些只需要 MAX_FRAMES_IN_FLIGHT 个
     imageAvailableSemaphores_.resize(MAX_FRAMES_IN_FLIGHT);
-    renderFinishedSemaphores_.resize(MAX_FRAMES_IN_FLIGHT);
     inFlightFences_.resize(MAX_FRAMES_IN_FLIGHT);
+    // 这个必须和交换链图像数量一致
+    renderFinishedSemaphores_.resize(swapchainImageCount);
 
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -164,11 +168,18 @@ inline void Presenter::createSyncObjects() {
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
+    // 创建 per-frame 的信号量和栅栏
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-        if (vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &imageAvailableSemaphores_[i]) != VK_SUCCESS ||
-            vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &renderFinishedSemaphores_[i]) != VK_SUCCESS ||
-            vkCreateFence(device_, &fenceInfo, nullptr, &inFlightFences_[i]) != VK_SUCCESS)
-            throw std::runtime_error("Failed to create synchronization objects");
+        if (vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &imageAvailableSemaphores_[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create image available semaphore");
+        if (vkCreateFence(device_, &fenceInfo, nullptr, &inFlightFences_[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create in-flight fence");
+    }
+
+    // 创建 per‑swapchain‑image 的渲染完成信号量
+    for (uint32_t i = 0; i < swapchainImageCount; ++i) {
+        if (vkCreateSemaphore(device_, &semaphoreInfo, nullptr, &renderFinishedSemaphores_[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create render finished semaphore");
     }
 }
 
@@ -215,33 +226,39 @@ inline VkCommandBuffer Presenter::beginFrame(uint32_t& imageIndex) {
     return cmd;
 }
 
+// 2. 修改 endFrame：信号量改用 imageIndex 索引
 inline void Presenter::endFrame(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     // 结束录制
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
         throw std::runtime_error("Failed to record command buffer");
 
-    // 提交
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    // 等待图像可用信号量（仍然按 currentFrame_ 索引，因为它是与 CPU 帧循环绑定的）
     VkSemaphore waitSemaphores[] = { imageAvailableSemaphores_[currentFrame_] };
     VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
     submitInfo.waitSemaphoreCount = 1;
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
+
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
-    VkSemaphore signalSemaphores[] = { renderFinishedSemaphores_[currentFrame_] };
+
+    // 渲染完成信号量：必须使用当前绘制对应的交换链图像索引！
+    VkSemaphore signalSemaphores[] = { renderFinishedSemaphores_[imageIndex] };
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
     if (vkQueueSubmit(graphicsQueue_, 1, &submitInfo, inFlightFences_[currentFrame_]) != VK_SUCCESS)
         throw std::runtime_error("Failed to submit draw command buffer");
 
-    // 呈现
+    // 呈现：等待与当前图像对应的渲染完成信号量
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = signalSemaphores;
+    presentInfo.pWaitSemaphores = signalSemaphores;       // 就是 renderFinishedSemaphores_[imageIndex]
+
     VkSwapchainKHR swapChains[] = { swapChain_->getSwapChain() };
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapChains;
@@ -257,20 +274,30 @@ inline void Presenter::endFrame(VkCommandBuffer commandBuffer, uint32_t imageInd
     currentFrame_ = (currentFrame_ + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-inline void Presenter::recreateSwapChain() {
+    inline void Presenter::recreateSwapChain() {
     vkDeviceWaitIdle(device_);
 
-    // 释放旧的命令缓冲区（数量不变，但新交换链可能需要对应新的图像数量，但我们仍使用固定飞行帧数，所以无需按图像数分配）
+    // 1. 释放旧命令缓冲区
     vkFreeCommandBuffers(device_, commandPool_,
                          static_cast<uint32_t>(commandBuffers_.size()),
                          commandBuffers_.data());
 
-    swapChain_->recreate();  // 内部销毁并重建交换链、图像视图、帧缓冲
+    // 2. 销毁旧同步对象
+    for (auto& sem : imageAvailableSemaphores_) vkDestroySemaphore(device_, sem, nullptr);
+    for (auto& sem : renderFinishedSemaphores_) vkDestroySemaphore(device_, sem, nullptr);
+    for (auto& fen : inFlightFences_)         vkDestroyFence(device_, fen, nullptr);
 
-    createCommandBuffers();  // 重新分配
+    // 3. 重建交换链本身（内部会销毁并重建图像、视图、帧缓冲）
+    swapChain_->recreate();
+
+    // 4. 根据新的交换链图像数量，重新创建同步对象
+    createSyncObjects();
+
+    // 5. 重新分配命令缓冲区
+    createCommandBuffers();
 }
 
-inline void Presenter::cleanupSwapChainResources() {
+    inline void Presenter::cleanupSwapChainResources() {
     if (device_ == VK_NULL_HANDLE) return;
 
     vkFreeCommandBuffers(device_, commandPool_,
