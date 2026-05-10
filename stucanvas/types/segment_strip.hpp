@@ -92,40 +92,6 @@ namespace StuCanvas {
         }
     };
 
-    // ==========================================
-    // GPU 专用折线带（仅顶点数据，无 closed 标志）
-    // ==========================================
-
-    // 2D GPU 折线带（顶点为 Point2D_GPU，alignas(8) 确保对齐）
-    struct SegmentStrip2D_GPU {
-        std::vector<Point2D_GPU> vertices;
-
-        // 序列化格式：点数 + 点数组
-        size_t SerializedSize() const {
-            return sizeof(uint32_t) + vertices.size() * sizeof(Point2D_GPU);
-        }
-
-        void Serialize(void* buffer) const {
-            auto* dst = static_cast<uint8_t*>(buffer);
-            uint32_t num = static_cast<uint32_t>(vertices.size());
-            std::memcpy(dst, &num, sizeof(num)); dst += sizeof(num);
-            if (num > 0) {
-                std::memcpy(dst, vertices.data(), num * sizeof(Point2D_GPU));
-            }
-        }
-
-        void Deserialize(const void* buffer, size_t size) {
-            const auto* src = static_cast<const uint8_t*>(buffer);
-            if (size < sizeof(uint32_t)) return;
-            uint32_t num = 0;
-            std::memcpy(&num, src, sizeof(num)); src += sizeof(num);
-            if (size < sizeof(uint32_t) + num * sizeof(Point2D_GPU)) return;
-            vertices.resize(num);
-            if (num > 0) {
-                std::memcpy(vertices.data(), src, num * sizeof(Point2D_GPU));
-            }
-        }
-    };
 
     // 3D GPU 折线带（顶点为 Point3D_GPU，alignas(16)）
     struct SegmentStrip3D_GPU {
