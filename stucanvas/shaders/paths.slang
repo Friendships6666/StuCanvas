@@ -1,138 +1,140 @@
-// path_cubic.slang
-// 三次贝塞尔路径渲染：四边形包围盒 + 迭代 SDF + 逐控制点颜色
+// path_3d_strip.slang
 
 struct Globals {
-    float4x4 mvp;               // 视图投影矩阵
-    float2 viewportSize;         // 屏幕物理像素尺寸
-    float strokeWidth;          // 描边像素宽度
+    float4x4 mvp;
+    float2 viewportSize;
+    float strokeWidth; // 像素宽度
 };
 [[vk::push_constant]] Globals pc;
 
-// 控制点 – 归一化世界坐标与颜色
 struct ControlPoint {
-    float2 pos;                 // 世界坐标
-    float4 color;               // RGBA
+    float3 pos;
+    float  _pad;
+    float4 color;
 };
 
-// 完整的曲线段（4 个控制点）
-struct CubicCurve {
-    ControlPoint p0;
-    ControlPoint p1;
-    ControlPoint p2;
-    ControlPoint p3;
-};
+// 现在绑定的是整个点库
+[[vk::binding(0, 0)]] StructuredBuffer<ControlPoint> allPoints;
 
-[[vk::binding(0, 0)]] StructuredBuffer<CubicCurve> curves;
-
-// ── 顶点输出 ──────────────────────────────
-struct VSOutput {
+struct V2F {
     float4 pos : SV_Position;
-    float2 worldPos : WORLDPOS;             // 四边形角点的世界坐标
-    nointerpolation uint curveIndex : CURVE_INDEX;
+    float2 pixelPos : TEXCOORD0;
+    nointerpolation uint instanceId : INST_ID;
 };
 
-// ── 三次贝塞尔求值 ─────────────────────────
-float2 cubicBezier(float2 p0, float2 p1, float2 p2, float2 p3, float t) {
-    float u = 1.0 - t;
-    return u*u*u * p0 + 3.0*u*u*t * p1 + 3.0*u*t*t * p2 + t*t*t * p3;
+static const float2 kRectCorners[4] = {
+    float2(-1.0, -1.0), float2( 1.0, -1.0),
+    float2( 1.0,  1.0), float2(-1.0,  1.0)
+};
+static const uint kTriIndices[6] = { 0, 1, 2, 0, 2, 3 };
+
+// 3D 投影到像素空间
+float2 projectToPixel(float3 pos, float4x4 mvp, float2 viewport) {
+    float4 clip = mul(mvp, float4(pos, 1.0));
+    float2 ndc = clip.xy / clip.w;
+    return (ndc * 0.5 + 0.5) * viewport;
 }
 
-// ── 点到曲线距离（迭代采样）───────────────
-float distanceToCubic(float2 p, float2 p0, float2 p1, float2 p2, float2 p3,
-                      out float bestT) {
-    const int STEPS = 24;                   // 采样步数，可根据质量调整
-    float d = 1e10;
-    bestT = 0.0;
-    for (int i = 0; i <= STEPS; ++i) {
-        float t = float(i) / float(STEPS);
-        float2 b = cubicBezier(p0, p1, p2, p3, t);
-        float dist = length(p - b);
-        if (dist < d) {
-            d = dist;
-            bestT = t;
-        }
-    }
-    return d;
-}
-
-// ── 颜色插值（de Casteljau）───────────────
-float4 interpolateColor(float4 c0, float4 c1, float4 c2, float4 c3, float t) {
-    float4 a = lerp(c0, c1, t);
-    float4 b = lerp(c1, c2, t);
-    float4 c = lerp(c2, c3, t);
-    float4 d = lerp(a, b, t);
-    float4 e = lerp(b, c, t);
-    return lerp(d, e, t);
-}
-
-// ══════════════════════════════════════════
-//  顶点着色器
-// ══════════════════════════════════════════
 [shader("vertex")]
-VSOutput vertexMain(uint vId : SV_VertexID, uint iId : SV_InstanceID) {
-    CubicCurve curve = curves[iId];
+V2F vertexMain(uint vId : SV_VertexID, uint iId : SV_InstanceID) {
+    V2F output;
+    uint cornerIdx = kTriIndices[vId % 6];
 
-    // 控制点位置
-    float2 p0 = curve.p0.pos;
-    float2 p1 = curve.p1.pos;
-    float2 p2 = curve.p2.pos;
-    float2 p3 = curve.p3.pos;
+    // --- Strip 索引逻辑 ---
+    // 第 iId 段曲线对应的起始点索引是 iId * 3
+    uint base = iId * 3;
+    float3 p0 = allPoints[base + 0].pos;
+    float3 p1 = allPoints[base + 1].pos;
+    float3 p2 = allPoints[base + 2].pos;
+    float3 p3 = allPoints[base + 3].pos;
 
-    // 1. 轴对齐包围盒
-    float2 minPt = min(min(p0, p1), min(p2, p3));
-    float2 maxPt = max(max(p0, p1), max(p2, p3));
+    // 投影到像素空间计算包围盒
+    float2 px0 = projectToPixel(p0, pc.mvp, pc.viewportSize);
+    float2 px1 = projectToPixel(p1, pc.mvp, pc.viewportSize);
+    float2 px2 = projectToPixel(p2, pc.mvp, pc.viewportSize);
+    float2 px3 = projectToPixel(p3, pc.mvp, pc.viewportSize);
 
-    // 2. 扩展描边宽度（归一化世界坐标单位）
-    //    一个像素对应世界坐标 2.0 / viewportSize.x （因为世界坐标范围 [-1,1] 对应整个视口）
-    float halfStrokeWorld = pc.strokeWidth / pc.viewportSize.x;  // 半边
-    minPt -= halfStrokeWorld;
-    maxPt += halfStrokeWorld;
+    float2 minPx = min(min(px0, px1), min(px2, px3));
+    float2 maxPx = max(max(px0, px1), max(px2, px3));
 
-    // 3. 四边形四个角点（按三角形列表顺序 0-1-2, 0-2-3）
-    float2 corners[4] = {
-        float2(minPt.x, minPt.y),
-        float2(maxPt.x, minPt.y),
-        float2(maxPt.x, maxPt.y),
-        float2(minPt.x, maxPt.y)
-    };
-    uint vertexIdx = vId % 4;
-    float2 corner = corners[vertexIdx];
+    float padding = pc.strokeWidth * 0.5 + 2.0;
+    minPx -= padding;
+    maxPx += padding;
 
-    // 4. 输出
-    VSOutput output;
-    output.pos = mul(pc.mvp, float4(corner, 0.0, 1.0));
-    output.worldPos = corner;
-    output.curveIndex = iId;
+    float2 cornerPx = lerp(minPx, maxPx, kRectCorners[cornerIdx] * 0.5 + 0.5);
+    float2 ndc = (cornerPx / pc.viewportSize) * 2.0 - 1.0;
+
+    // 深度处理：取 4 个控制点投影后的平均深度
+    // 实际应用中也可取中心点深度
+    float4 c0 = mul(pc.mvp, float4(p0, 1.0));
+    float4 c3 = mul(pc.mvp, float4(p3, 1.0));
+    float avgZ = (c0.z / c0.w + c3.z / c3.w) * 0.5;
+
+    output.pos = float4(ndc, avgZ, 1.0);
+    output.pixelPos = cornerPx;
+    output.instanceId = iId;
     return output;
 }
 
-// ══════════════════════════════════════════
-//  片段着色器
-// ══════════════════════════════════════════
+// ── 数学工具 ──
+float2 cubicBezier(float2 p0, float2 p1, float2 p2, float2 p3, float t) {
+    float u = 1.0 - t;
+    float tt = t * t;
+    float uu = u * u;
+    return uu * u * p0 + 3.0 * uu * t * p1 + 3.0 * u * tt * p2 + tt * t * p3;
+}
+
+float4 interpolateColor(float4 c0, float4 c1, float4 c2, float4 c3, float t) {
+    float u = 1.0 - t;
+    float tt = t * t;
+    float uu = u * u;
+    return uu * u * c0 + 3.0 * uu * t * c1 + 3.0 * u * tt * c2 + tt * t * c3;
+}
+
+float sdSegment(float2 p, float2 a, float2 b, out float h) {
+    float2 pa = p - a, ba = b - a;
+    h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
 [shader("fragment")]
-float4 fragmentMain(VSOutput input) : SV_Target {
-    uint idx = input.curveIndex;
-    CubicCurve curve = curves[idx];
-    float2 p0 = curve.p0.pos;
-    float2 p1 = curve.p1.pos;
-    float2 p2 = curve.p2.pos;
-    float2 p3 = curve.p3.pos;
+float4 fragmentMain(V2F input) : SV_Target {
+    uint base = input.instanceId * 3;
 
-    // 1. 计算距离
-    float bestT;
-    float dist = distanceToCubic(input.worldPos, p0, p1, p2, p3, bestT);
+    // 获取 3D 控制点并投影
+    float2 px0 = projectToPixel(allPoints[base+0].pos, pc.mvp, pc.viewportSize);
+    float2 px1 = projectToPixel(allPoints[base+1].pos, pc.mvp, pc.viewportSize);
+    float2 px2 = projectToPixel(allPoints[base+2].pos, pc.mvp, pc.viewportSize);
+    float2 px3 = projectToPixel(allPoints[base+3].pos, pc.mvp, pc.viewportSize);
 
-    // 2. 描边半宽（世界单位）
-    float halfStroke = pc.strokeWidth / pc.viewportSize.x;
+    const int STEPS = 12;
+    float minDist = 1e8;
+    float bestT = 0.0;
 
-    // 3. SDF 抗锯齿
-    float signedDist = abs(dist) - halfStroke;
-    float aaWidth = 1.5 / pc.viewportSize.x;   // 1.5 像素过渡带
-    float alpha = smoothstep(aaWidth, -aaWidth, signedDist);
+    float2 lastB = px0;
+    for (int i = 1; i <= STEPS; ++i) {
+        float t = float(i) / float(STEPS);
+        float2 nextB = cubicBezier(px0, px1, px2, px3, t);
 
-    // 4. 插值颜色
-    float4 color = interpolateColor(curve.p0.color, curve.p1.color,
-                                    curve.p2.color, curve.p3.color, bestT);
-    color.a *= alpha;
-    return color;
+        float h;
+        float d = sdSegment(input.pixelPos, lastB, nextB, h);
+        if (d < minDist) {
+            minDist = d;
+            bestT = (float(i - 1) + h) / float(STEPS);
+        }
+        lastB = nextB;
+    }
+
+    float dist = minDist - (pc.strokeWidth * 0.5);
+    float alpha = smoothstep(1.5, 0.0, dist);
+    if (alpha <= 0.0) discard;
+
+    // 颜色插值
+    float4 c0 = allPoints[base+0].color;
+    float4 c1 = allPoints[base+1].color;
+    float4 c2 = allPoints[base+2].color;
+    float4 c3 = allPoints[base+3].color;
+    float4 color = interpolateColor(c0, c1, c2, c3, bestT);
+
+    return float4(color.rgb, color.a * alpha);
 }

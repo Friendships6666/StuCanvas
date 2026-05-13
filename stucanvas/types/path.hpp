@@ -122,41 +122,10 @@ namespace StuCanvas
 
 
 
-    struct Path3D_GPU
-    {
-        std::vector<Point3D_GPU> control_points;
+    struct alignas(16) ControlPointGPU {
+        float x, y, z;      // 0, 4, 8 字节
+        float _pad0;        // 12 字节 (必须填充，使 color 对齐到 16)
 
-        // --- 序列化支持 ---
-        size_t SerializedSize() const
-        {
-            return sizeof(uint32_t) + control_points.size() * sizeof(Point3D_GPU);
-        }
-
-        void Serialize(void* buffer) const
-        {
-            auto* dst = static_cast<uint8_t*>(buffer);
-            uint32_t num = static_cast<uint32_t>(control_points.size());
-            std::memcpy(dst, &num, sizeof(num));
-            dst += sizeof(num);
-            if (num > 0)
-            {
-                std::memcpy(dst, control_points.data(), num * sizeof(Point3D_GPU));
-            }
-        }
-
-        void Deserialize(const void* buffer, size_t size)
-        {
-            const auto* src = static_cast<const uint8_t*>(buffer);
-            if (size < sizeof(uint32_t)) return;
-            uint32_t num = 0;
-            std::memcpy(&num, src, sizeof(num));
-            src += sizeof(num);
-            if (size < sizeof(uint32_t) + num * sizeof(Point3D_GPU)) return;
-            control_points.resize(num);
-            if (num > 0)
-            {
-                std::memcpy(control_points.data(), src, num * sizeof(Point3D_GPU));
-            }
-        }
+        float r, g, b, a;   // 16, 20, 24, 28 字节
     };
 } // namespace StuCanvas

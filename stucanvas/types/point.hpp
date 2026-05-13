@@ -24,6 +24,7 @@ namespace StuCanvas
     {
         using value_type = T;
         T x, y;
+        float r{}, g{}, b{},a{};
 
         Point2D() = default;
 
@@ -38,6 +39,7 @@ namespace StuCanvas
     {
         using value_type = T;
         T x, y, z;
+        float r{}, g{}, b{},a{};
 
         Point3D() = default;
 
@@ -53,12 +55,15 @@ namespace StuCanvas
     // ==========================================
 
 
-    // 带颜色的 3D 点 – Vulkan 存储缓冲区标准布局
-    struct alignas(16) Point3D_GPU {
-        float x, y, z;           // 位置 (12 字节)
-        float r, g, b, a;        // 颜色 (16 字节)
-        float _pad[1];           // 填充至 32 字节，保证数组元素起始对齐 16
+
+
+
+    struct alignas(16) PointDataGPU {
+        float x, y, z;      // Offset: 0 ~ 11
+        float _pad0;        // Offset: 12 ~ 15 (显式填充)
+
+        float r, g, b, a;   // Offset: 16 ~ 31
     };
-    static_assert(sizeof(Point3D_GPU) == 32, "Point3D_GPU must be 32 bytes");
+
 
 } // namespace StuCanvas

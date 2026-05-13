@@ -1,306 +1,137 @@
-// main.cpp (使用 Eigen 构建 MVP)
+#include "stucanvas/canvas/canvas.hpp"
+#include "stucanvas/canvas/animation.hpp"
+#include <Eigen/Dense>
 #include <iostream>
-#include <vector>
-#include <array>
-#include <chrono>
 #include <cmath>
-#include <cstring>
-
-#include <Eigen/Dense>          // 新增
-
-#include "stucanvas/canvas/vulkan/init.hpp"
-#include "stucanvas/canvas/vulkan/swap_chains.hpp"
-#include "stucanvas/canvas/vulkan/renderpass.hpp"
-#include "stucanvas/canvas/vulkan/pipeline.hpp"
-#include "stucanvas/canvas/vulkan/shader_module.hpp"
-#include "stucanvas/canvas/vulkan/buffer.hpp"
-#include "stucanvas/canvas/vulkan/present.hpp"
-
-#include "stucanvas/types/point.hpp"
-
-using namespace StuCanvas::Vulkan;
-using namespace StuCanvas;
-
-// 线段数据结构（与 Slang 中的 Segment 严格对齐 std430）
-struct Segment {
-    float startPos[3];
-    float _pad0;        // 使 startPos 占 16 字节
-    float endPos[3];
-    float _pad1;
-    float color[4];
-};
-
-// Push constant 对应着色器中的 Globals
-struct PushConstants {
-    float mvp[16];          // 列主序 4x4 矩阵
-    float viewportSize[2];
-    float lineWidth;
-};
-
-// 生成螺旋线段
-std::vector<Segment> generateHelix(float radius, float height, int turns, int segments) {
-    std::vector<Segment> segs;
-    segs.reserve(segments);
-    for (int i = 0; i < segments; ++i) {
-        float t1 = float(i) / float(segments);
-        float t2 = float(i + 1) / float(segments);
-        float angle1 = float(turns) * 2.0f * 3.14159265f * t1;
-        float angle2 = float(turns) * 2.0f * 3.14159265f * t2;
-
-        Segment seg;
-        seg.startPos[0] = radius * cos(angle1);
-        seg.startPos[1] = radius * sin(angle1);
-        seg.startPos[2] = -height + 2.0f * height * t1;
-        seg.endPos[0]   = radius * std::cos(angle2);
-        seg.endPos[1]   = radius * sin(angle2);
-        seg.endPos[2]   = -height + 2.0f * height * t2;
-
-        seg.color[0] = 1.0f - t1;
-        seg.color[1] = 0.3f;
-        seg.color[2] = t1;
-        seg.color[3] = 1.0f;
-
-        segs.push_back(seg);
-    }
-    return segs;
-}
-
-// 使用 Eigen 计算列主序 MVP 矩阵（Vulkan 坐标系）
-void computeMVP(float time, float aspect, float mvp[16]) {
-    using namespace Eigen;
-
-    // 透视投影 (Vulkan: Y down, depth [0,1])
-    float fov = 60.0f * M_PI / 180.0f;
-    float near = 0.1f, far = 100.0f;
-    float f = 1.0f / tan(fov * 0.5f);
-    Matrix4f proj = Matrix4f::Zero();
-    proj(0,0) = f / aspect;
-    proj(1,1) = -f;
-    proj(2,2) = far / (far - near);
-    proj(3,2) = -far * near / (far - near);
-    proj(2,3) = 1.0f;
-
-    // 摄像机绕 Y 轴旋转，看向原点
-    float camDist = 3.0f;
-    float angle = time * 0.5f;
-    Vector3f eye(camDist * sin(angle), 0.5f, camDist * cos(angle));
-    Vector3f center(0.0f, 0.0f, 0.0f);
-    Vector3f up(0.0f, -1.0f, 0.0f);   // Vulkan Y down
-
-    Vector3f f_dir = (center - eye).normalized();
-    Vector3f s = f_dir.cross(up).normalized();
-    Vector3f u = s.cross(f_dir);
-
-    Matrix4f view = Matrix4f::Identity();
-    view(0,0) = s.x(); view(0,1) = s.y(); view(0,2) = s.z(); view(0,3) = -s.dot(eye);
-    view(1,0) = u.x(); view(1,1) = u.y(); view(1,2) = u.z(); view(1,3) = -u.dot(eye);
-    view(2,0) = -f_dir.x(); view(2,1) = -f_dir.y(); view(2,2) = -f_dir.z(); view(2,3) = f_dir.dot(eye);
-
-    Matrix4f mvp_mat = proj * view;
-
-    // 列主序输出
-    for (int col = 0; col < 4; ++col)
-        for (int row = 0; row < 4; ++row)
-            mvp[col * 4 + row] = mvp_mat(row, col);
-}
 
 int main() {
-    try {
-        VulkanInit vkInit("StuCanvas SDF Line Strip", 800, 600, true);
+    using namespace StuCanvas;
 
-        VkFormat swapchainFormat;
-        {
-            SwapChain tempSC(
-                vkInit.getPhysicalDevice(), vkInit.getDevice(),
-                vkInit.getSurface(), VK_NULL_HANDLE,
-                vkInit.getGraphicsFamily(), vkInit.getPresentFamily(),
-                vkInit.getWindow()
-            );
-            swapchainFormat = tempSC.getImageFormat();
-        }
+    NLECanvas<double> canvas;
 
-        RenderPass renderPass(vkInit.getDevice(), swapchainFormat);
+    // 1. 设置透视相机 (右手坐标系)
+    auto& cam = canvas.GetCameraConfig();
+    cam.mode = ProjectionMode::Perspective;
+    cam.posX = 0.0;
+    cam.posY = 0.0;
+    cam.posZ = 12.0;    // 稍微拉远，给复杂的打结结构留足空间
+    cam.lookX = 0.0;
+    cam.lookY = 0.0;
+    cam.lookZ = 0.0;
+    cam.upX = 0.0f; cam.upY = 1.0f; cam.upZ = 0.0f;
+    cam.fov = 60.0f;
+    cam.nearPlane = 0.1f;
+    cam.farPlane = 100.0f;
 
-        // 编译着色器 (入口点设为 main，Slang 会自动映射)
-        auto vertModule = ShaderModule::fromSlangFile(
-            vkInit.getDevice(), "/home/friendships666/Projects/StuCanvas/stucanvas/shaders/segments.slang", "vertex", "vertexMain");
-        auto fragModule = ShaderModule::fromSlangFile(
-            vkInit.getDevice(), "/home/friendships666/Projects/StuCanvas/stucanvas/shaders/segments.slang", "fragment", "fragmentMain");
+    // 2. 创建动画片段
+    Clip<double> clip(0, 999999);
+    clip.name = "Neon_Gravity_Knot";
 
-        // 描述符集布局
-        VkDescriptorSetLayoutBinding layoutBinding{};
-        layoutBinding.binding = 0;
-        layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        layoutBinding.descriptorCount = 1;
-        layoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    canvas.AddClip(clip);
 
-        VkDescriptorSetLayoutCreateInfo layoutInfo{};
-        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        layoutInfo.bindingCount = 1;
-        layoutInfo.pBindings = &layoutBinding;
+    auto active_clips = canvas.GetClipsAtFrame(0);
+    if (!active_clips.empty()) {
+        auto* target_clip = active_clips[0];
 
-        VkDescriptorSetLayout descSetLayout;
-        vkCreateDescriptorSetLayout(vkInit.getDevice(), &layoutInfo, nullptr, &descSetLayout);
+        target_clip->update_func = [target_clip](uint64_t rel_frame) {
+            // 清理上一帧的点和线
+            target_clip->points.clear();
+            target_clip->segments.clear();
 
-        // 管线配置
-        PipelineConfig config;
-        config.vertShaderModule = vertModule.getModule();
-        config.fragShaderModule = fragModule.getModule();
-        config.vertEntry = "main";
-        config.fragEntry = "main";
+            double time = static_cast<double>(rel_frame) / 60.0;
 
-        config.vertexBindingCount = 0;
-        config.pVertexBindings = nullptr;
-        config.vertexAttributeCount = 0;
-        config.pVertexAttributes = nullptr;
+            // --- A. 全局展示旋转矩阵 ---
+            // 让整个打结结构在太空中缓缓自转
+            Eigen::Vector3d axis(std::sin(time * 0.2), 1.0, std::cos(time * 0.3));
+            Eigen::Matrix3d rotMat = Eigen::AngleAxisd(time * 0.4, axis.normalized()).toRotationMatrix();
 
-        config.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        config.cullMode = VK_CULL_MODE_NONE;
-        config.frontFace = VK_FRONT_FACE_CLOCKWISE;
+            // --- B. 生成动态的霓虹线段带 (Segment Strips) ---
+            int num_strips = 5;         // 5 条互相缠绕的能量带
+            int points_per_strip = 300; // 每条带有 300 个点 (即 299 条独立线段)
 
-        config.descriptorSetLayouts.push_back(descSetLayout);
+            // 动态改变打结的参数，产生形变
+            double p = 3.0 + 1.5 * std::sin(time * 0.5);
+            double q = 5.0 + 2.0 * std::cos(time * 0.3);
 
-        VkPushConstantRange pcRange{};
-        pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        pcRange.offset = 0;
-        pcRange.size = sizeof(PushConstants);
-        config.pushConstantRanges.push_back(pcRange);
+            for (int s = 0; s < num_strips; ++s) {
+                SegmentStrip3D<double> strip;
+                // 为了避免带子重合，给每一条带子加上相位偏移
+                double phase_offset = (static_cast<double>(s) / num_strips) * 2.0 * M_PI;
 
-        Pipeline pipeline(vkInit.getDevice(), renderPass.get(), config);
+                for (int i = 0; i < points_per_strip; ++i) {
+                    // u 是在一条带子上的相对位置 [0, 2π]
+                    double u = (static_cast<double>(i) / (points_per_strip - 1)) * 2.0 * M_PI;
 
-        // 线段数据
-        auto segments = generateHelix(0.6f, 0.8f, 5, 200);
-        size_t segmentsSize = segments.size() * sizeof(Segment);
+                    // 1. 计算三维坐标 (动态环面结 Torus Knot)
+                    double R = 4.0; // 主环半径
+                    double r = 1.5 + 0.5 * std::sin(time * 2.0 + u * 4.0); // 截面半径产生蠕动感
 
-        VkCommandPool uploadPool;
-        VkCommandPoolCreateInfo poolInfo{};
-        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        poolInfo.queueFamilyIndex = vkInit.getGraphicsFamily();
-        poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-        vkCreateCommandPool(vkInit.getDevice(), &poolInfo, nullptr, &uploadPool);
+                    double x = std::sin(p * u + phase_offset) * (R + r * std::cos(q * u));
+                    double y = std::cos(p * u + phase_offset) * (R + r * std::cos(q * u));
+                    double z = r * std::sin(q * u);
 
-        auto segmentBuffer = Buffer::CreateAndUpload(
-            vkInit.getDevice(), vkInit.getPhysicalDevice(), uploadPool,
-            vkInit.getGraphicsQueue(), segments.data(), segmentsSize,
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
-        );
+                    // 应用全局旋转
+                    Eigen::Vector3d pt_vec(x, y, z);
+                    pt_vec = rotMat * pt_vec;
 
-        // 描述符集
-        VkDescriptorPoolSize poolSize{};
-        poolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        poolSize.descriptorCount = 1;
+                    // 2. 创建点并赋予色彩
+                    Point3D<double> pt{pt_vec.x(), pt_vec.y(), pt_vec.z()};
 
-        VkDescriptorPoolCreateInfo descPoolInfo{};
-        descPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        descPoolInfo.poolSizeCount = 1;
-        descPoolInfo.pPoolSizes = &poolSize;
-        descPoolInfo.maxSets = 1;
+                    // 颜色沿着线条平滑渐变，并随时间流动
+                    pt.r = static_cast<float>(0.5 + 0.5 * std::sin(u * 2.0 + time * 3.0 + phase_offset));
+                    pt.g = static_cast<float>(0.5 + 0.5 * std::cos(u * 3.0 - time * 2.0));
+                    pt.b = static_cast<float>(0.5 + 0.5 * std::sin(u * 1.5 + time * 4.0 - phase_offset));
+                    pt.a = 1.0f;
 
-        VkDescriptorPool descPool;
-        vkCreateDescriptorPool(vkInit.getDevice(), &descPoolInfo, nullptr, &descPool);
+                    strip.vertices.push_back(pt);
+                }
 
-        VkDescriptorSetAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocInfo.descriptorPool = descPool;
-        allocInfo.descriptorSetCount = 1;
-        allocInfo.pSetLayouts = &descSetLayout;
-
-        VkDescriptorSet descSet;
-        vkAllocateDescriptorSets(vkInit.getDevice(), &allocInfo, &descSet);
-
-        VkDescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = segmentBuffer.getBuffer();
-        bufferInfo.offset = 0;
-        bufferInfo.range = segmentsSize;
-
-        VkWriteDescriptorSet write{};
-        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet = descSet;
-        write.dstBinding = 0;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        write.descriptorCount = 1;
-        write.pBufferInfo = &bufferInfo;
-
-        vkUpdateDescriptorSets(vkInit.getDevice(), 1, &write, 0, nullptr);
-        vkDestroyCommandPool(vkInit.getDevice(), uploadPool, nullptr);
-
-        // 呈现器
-        Presenter presenter(
-            vkInit.getPhysicalDevice(), vkInit.getDevice(),
-            vkInit.getSurface(), vkInit.getGraphicsFamily(),
-            vkInit.getPresentFamily(), vkInit.getGraphicsQueue(),
-            vkInit.getPresentQueue(), renderPass.get(), vkInit.getWindow()
-        );
-
-        auto startTime = std::chrono::high_resolution_clock::now();
-        bool running = true;
-        SDL_Event event;
-
-        while (running) {
-            while (SDL_PollEvent(&event)) {
-                if (event.type == SDL_EVENT_QUIT) running = false;
-                if (event.type == SDL_EVENT_WINDOW_RESIZED) presenter.markResized();
+                // 将组装好的线段带送入 clip
+                target_clip->segments.push_back(strip);
             }
 
-            uint32_t imageIndex;
-            VkCommandBuffer cmd = presenter.beginFrame(imageIndex);
-            if (cmd == VK_NULL_HANDLE) continue;
+            // --- C. 星尘伴飞 (点云粒子) ---
+            // 在能量带周围生成一些散落的星光点缀
+            int num_particles = 150;
+            for (int i = 0; i < num_particles; ++i) {
+                // 利用互质大质数生成伪随机分布
+                double rnd1 = static_cast<double>((i * 137 + rel_frame * 3) % 1000) / 1000.0;
+                double rnd2 = static_cast<double>((i * 251 + rel_frame * 5) % 1000) / 1000.0;
+                double rnd3 = static_cast<double>((i * 389 + rel_frame * 7) % 1000) / 1000.0;
 
-            VkRenderPassBeginInfo rpBegin{};
-            rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-            rpBegin.renderPass = renderPass.get();
-            rpBegin.framebuffer = presenter.getFramebuffer(imageIndex);
-            rpBegin.renderArea.offset = {0, 0};
-            rpBegin.renderArea.extent = presenter.getExtent();
-            VkClearValue clearColor = {{{0.02f, 0.02f, 0.05f, 1.0f}}};
-            rpBegin.clearValueCount = 1;
-            rpBegin.pClearValues = &clearColor;
+                // 让粒子在一个球形空间内游走
+                double radius = 7.0 * std::cbrt(rnd1);
+                double theta = rnd2 * 2.0 * M_PI;
+                double phi = std::acos(2.0 * rnd3 - 1.0);
 
-            vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+                Point3D<double> particle;
+                particle.x = radius * std::sin(phi) * std::cos(theta);
+                particle.y = radius * std::sin(phi) * std::sin(theta);
+                particle.z = radius * std::cos(phi);
 
-            VkViewport viewport{};
-            viewport.width = static_cast<float>(presenter.getExtent().width);
-            viewport.height = static_cast<float>(presenter.getExtent().height);
-            viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
-            vkCmdSetViewport(cmd, 0, 1, &viewport);
+                // 星尘颜色闪烁 (淡蓝色调)
+                particle.r = 0.2f;
+                particle.g = 0.8f;
+                particle.b = 1.0f;
+                particle.a = static_cast<float>(0.5 + 0.5 * std::sin(time * 5.0 + i)); // 随机呼吸闪烁
 
-            VkRect2D scissor{};
-            scissor.offset = {0, 0};
-            scissor.extent = presenter.getExtent();
-            vkCmdSetScissor(cmd, 0, 1, &scissor);
+                target_clip->points.push_back(particle);
+            }
 
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.get());
-
-            auto now = std::chrono::high_resolution_clock::now();
-            float time = std::chrono::duration<float>(now - startTime).count();
-            float aspect = viewport.width / viewport.height;
-
-            PushConstants pc;
-            computeMVP(time, aspect, pc.mvp);
-            pc.viewportSize[0] = viewport.width;
-            pc.viewportSize[1] = viewport.height;
-            pc.lineWidth = 2.0f;
-
-            vkCmdPushConstants(cmd, pipeline.getLayout(),
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                               0, sizeof(PushConstants), &pc);
-
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    pipeline.getLayout(), 0, 1, &descSet, 0, nullptr);
-
-            vkCmdDraw(cmd, 6, static_cast<uint32_t>(segments.size()), 0, 0);
-
-            vkCmdEndRenderPass(cmd);
-            presenter.endFrame(cmd, imageIndex);
-        }
-
-        vkDeviceWaitIdle(vkInit.getDevice());
-        vkDestroyDescriptorSetLayout(vkInit.getDevice(), descSetLayout, nullptr);
-        vkDestroyDescriptorPool(vkInit.getDevice(), descPool, nullptr);
+            // --- D. 包围盒锚点保护 (必须保留) ---
+            // 锁定 [-7.0, 7.0] 的边界，防止线条蠕动时整个画面疯狂抽搐
+            Point3D<double> anchorMin{-7.0, -7.0, -7.0}; anchorMin.a = 0.0f;
+            Point3D<double> anchorMax{ 7.0,  7.0,  7.0}; anchorMax.a = 0.0f;
+            target_clip->points.push_back(anchorMin);
+            target_clip->points.push_back(anchorMax);
+        };
     }
-    catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
-        return 1;
-    }
+
+    std::cout << ">>> Neon Gravity Knot Engaged <<<" << std::endl;
+    std::cout << "Rendering Gradient Line Strips + Particles simultaneously..." << std::endl;
+
+    // 3. 开始渲染 (60FPS)
+    canvas.render(0, 60);
+
     return 0;
 }

@@ -92,35 +92,16 @@ namespace StuCanvas {
         }
     };
 
+    struct alignas(16) SegmentGPU {
+        float startX, startY, startZ;
+        float _pad0;                  // 必须填充
 
-    // 3D GPU 折线带（顶点为 Point3D_GPU，alignas(16)）
-    struct SegmentStrip3D_GPU {
-        std::vector<Point3D_GPU> vertices;
+        float endX, endY, endZ;
+        float _pad1;                  // 必须填充
 
-        size_t SerializedSize() const {
-            return sizeof(uint32_t) + vertices.size() * sizeof(Point3D_GPU);
-        }
-
-        void Serialize(void* buffer) const {
-            auto* dst = static_cast<uint8_t*>(buffer);
-            uint32_t num = static_cast<uint32_t>(vertices.size());
-            std::memcpy(dst, &num, sizeof(num)); dst += sizeof(num);
-            if (num > 0) {
-                std::memcpy(dst, vertices.data(), num * sizeof(Point3D_GPU));
-            }
-        }
-
-        void Deserialize(const void* buffer, size_t size) {
-            const auto* src = static_cast<const uint8_t*>(buffer);
-            if (size < sizeof(uint32_t)) return;
-            uint32_t num = 0;
-            std::memcpy(&num, src, sizeof(num)); src += sizeof(num);
-            if (size < sizeof(uint32_t) + num * sizeof(Point3D_GPU)) return;
-            vertices.resize(num);
-            if (num > 0) {
-                std::memcpy(vertices.data(), src, num * sizeof(Point3D_GPU));
-            }
-        }
+        float startR, startG, startB, startA; // 起点 RGBA
+        float endR,   endG,   endB,   endA;   // 终点 RGBA
     };
+
 
 } // namespace StuCanvas
