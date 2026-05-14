@@ -29,6 +29,7 @@ namespace StuCanvas
         Point2D() = default;
 
         constexpr Point2D(T _x, T _y) : x(_x), y(_y) {}
+
     };
 
     // ==========================================
@@ -44,6 +45,7 @@ namespace StuCanvas
         Point3D() = default;
 
         constexpr Point3D(T _x, T _y, T _z) : x(_x), y(_y), z(_z) {}
+
 
         // 维度提升：从 2D 点构造 3D 点 (z = 0)
         constexpr Point3D(const Point2D<T>& p2d)

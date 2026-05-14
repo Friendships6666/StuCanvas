@@ -1,9 +1,9 @@
-// path_3d_strip.slang
+// paths.slang - 基于牛顿法精确求解距离
 
 struct Globals {
     float4x4 mvp;
     float2 viewportSize;
-    float strokeWidth; // 像素宽度
+    float strokeWidth;
 };
 [[vk::push_constant]] Globals pc;
 
@@ -13,7 +13,6 @@ struct ControlPoint {
     float4 color;
 };
 
-// 现在绑定的是整个点库
 [[vk::binding(0, 0)]] StructuredBuffer<ControlPoint> allPoints;
 
 struct V2F {
@@ -22,111 +21,111 @@ struct V2F {
     nointerpolation uint instanceId : INST_ID;
 };
 
-static const float2 kRectCorners[4] = {
-    float2(-1.0, -1.0), float2( 1.0, -1.0),
-    float2( 1.0,  1.0), float2(-1.0,  1.0)
-};
-static const uint kTriIndices[6] = { 0, 1, 2, 0, 2, 3 };
+// --- 数学辅助函数 ---
 
-// 3D 投影到像素空间
-float2 projectToPixel(float3 pos, float4x4 mvp, float2 viewport) {
-    float4 clip = mul(mvp, float4(pos, 1.0));
-    float2 ndc = clip.xy / clip.w;
-    return (ndc * 0.5 + 0.5) * viewport;
+// 三次贝塞尔位置 B(t)
+float2 getPos(float2 p0, float2 p1, float2 p2, float2 p3, float t) {
+    float u = 1.0 - t;
+    return u*u*u*p0 + 3.0*u*u*t*p1 + 3.0*u*t*t*p2 + t*t*t*p3;
 }
+
+// 一阶导 B'(t)
+float2 getDeriv1(float2 p0, float2 p1, float2 p2, float2 p3, float t) {
+    float u = 1.0 - t;
+    return 3.0*u*u*(p1 - p0) + 6.0*u*t*(p2 - p1) + 3.0*t*t*(p3 - p2);
+}
+
+// 二阶导 B''(t)
+float2 getDeriv2(float2 p0, float2 p1, float2 p2, float2 p3, float t) {
+    return 6.0*(1.0 - t)*(p2 - 2.0*p1 + p0) + 6.0*t*(p3 - 2.0*p2 + p1);
+}
+
+// 投影函数
+float2 projectToPixel(float3 pos) {
+    float4 clip = mul(pc.mvp, float4(pos, 1.0));
+    return (clip.xy / clip.w * 0.5 + 0.5) * pc.viewportSize;
+}
+
+// --- Shader 阶段 ---
 
 [shader("vertex")]
 V2F vertexMain(uint vId : SV_VertexID, uint iId : SV_InstanceID) {
     V2F output;
-    uint cornerIdx = kTriIndices[vId % 6];
+    static const float2 kCorners[4] = { float2(-1,-1), float2(1,-1), float2(1,1), float2(-1,1) };
+    static const uint kIndices[6] = { 0, 1, 2, 0, 2, 3 };
 
-    // --- Strip 索引逻辑 ---
-    // 第 iId 段曲线对应的起始点索引是 iId * 3
     uint base = iId * 3;
-    float3 p0 = allPoints[base + 0].pos;
-    float3 p1 = allPoints[base + 1].pos;
-    float3 p2 = allPoints[base + 2].pos;
-    float3 p3 = allPoints[base + 3].pos;
+    float2 px[4];
+    for(int i=0; i<4; ++i) px[i] = projectToPixel(allPoints[base+i].pos);
 
-    // 投影到像素空间计算包围盒
-    float2 px0 = projectToPixel(p0, pc.mvp, pc.viewportSize);
-    float2 px1 = projectToPixel(p1, pc.mvp, pc.viewportSize);
-    float2 px2 = projectToPixel(p2, pc.mvp, pc.viewportSize);
-    float2 px3 = projectToPixel(p3, pc.mvp, pc.viewportSize);
-
-    float2 minPx = min(min(px0, px1), min(px2, px3));
-    float2 maxPx = max(max(px0, px1), max(px2, px3));
+    float2 minPx = min(min(px[0], px[1]), min(px[2], px[3]));
+    float2 maxPx = max(max(px[0], px[1]), max(px[2], px[3]));
 
     float padding = pc.strokeWidth * 0.5 + 2.0;
-    minPx -= padding;
-    maxPx += padding;
+    minPx -= padding; maxPx += padding;
 
-    float2 cornerPx = lerp(minPx, maxPx, kRectCorners[cornerIdx] * 0.5 + 0.5);
-    float2 ndc = (cornerPx / pc.viewportSize) * 2.0 - 1.0;
+    uint cornerIdx = kIndices[vId % 6];
+    float2 cornerPx = lerp(minPx, maxPx, kCorners[cornerIdx] * 0.5 + 0.5);
 
-    // 深度处理：取 4 个控制点投影后的平均深度
-    // 实际应用中也可取中心点深度
-    float4 c0 = mul(pc.mvp, float4(p0, 1.0));
-    float4 c3 = mul(pc.mvp, float4(p3, 1.0));
-    float avgZ = (c0.z / c0.w + c3.z / c3.w) * 0.5;
-
-    output.pos = float4(ndc, avgZ, 1.0);
+    output.pos = float4((cornerPx / pc.viewportSize) * 2.0 - 1.0, 0.0, 1.0);
     output.pixelPos = cornerPx;
     output.instanceId = iId;
     return output;
 }
 
-// ── 数学工具 ──
-float2 cubicBezier(float2 p0, float2 p1, float2 p2, float2 p3, float t) {
-    float u = 1.0 - t;
-    float tt = t * t;
-    float uu = u * u;
-    return uu * u * p0 + 3.0 * uu * t * p1 + 3.0 * u * tt * p2 + tt * t * p3;
-}
-
-float4 interpolateColor(float4 c0, float4 c1, float4 c2, float4 c3, float t) {
-    float u = 1.0 - t;
-    float tt = t * t;
-    float uu = u * u;
-    return uu * u * c0 + 3.0 * uu * t * c1 + 3.0 * u * tt * c2 + tt * t * c3;
-}
-
-float sdSegment(float2 p, float2 a, float2 b, out float h) {
-    float2 pa = p - a, ba = b - a;
-    h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-    return length(pa - ba * h);
-}
-
 [shader("fragment")]
 float4 fragmentMain(V2F input) : SV_Target {
     uint base = input.instanceId * 3;
+    float2 p0 = projectToPixel(allPoints[base+0].pos);
+    float2 p1 = projectToPixel(allPoints[base+1].pos);
+    float2 p2 = projectToPixel(allPoints[base+2].pos);
+    float2 p3 = projectToPixel(allPoints[base+3].pos);
+    float2 q  = input.pixelPos;
 
-    // 获取 3D 控制点并投影
-    float2 px0 = projectToPixel(allPoints[base+0].pos, pc.mvp, pc.viewportSize);
-    float2 px1 = projectToPixel(allPoints[base+1].pos, pc.mvp, pc.viewportSize);
-    float2 px2 = projectToPixel(allPoints[base+2].pos, pc.mvp, pc.viewportSize);
-    float2 px3 = projectToPixel(allPoints[base+3].pos, pc.mvp, pc.viewportSize);
-
-    const int STEPS = 12;
-    float minDist = 1e8;
+    // 1. 粗略搜索 (Coarse Search) - 找到牛顿法的起点
+    // 使用 8 个采样点
+    const int SAMPLES = 8;
     float bestT = 0.0;
-
-    float2 lastB = px0;
-    for (int i = 1; i <= STEPS; ++i) {
-        float t = float(i) / float(STEPS);
-        float2 nextB = cubicBezier(px0, px1, px2, px3, t);
-
-        float h;
-        float d = sdSegment(input.pixelPos, lastB, nextB, h);
-        if (d < minDist) {
-            minDist = d;
-            bestT = (float(i - 1) + h) / float(STEPS);
+    float minDistSq = 1e10;
+    for (int i = 0; i <= SAMPLES; ++i) {
+        float t = float(i) / float(SAMPLES);
+        float2 pos = getPos(p0, p1, p2, p3, t);
+        float d2 = dot(pos - q, pos - q);
+        if (d2 < minDistSq) {
+            minDistSq = d2;
+            bestT = t;
         }
-        lastB = nextB;
     }
 
-    float dist = minDist - (pc.strokeWidth * 0.5);
-    float alpha = smoothstep(1.5, 0.0, dist);
+    // 2. 牛顿迭代 (Newton Iteration)
+    // 迭代 4 次通常足以达到像素级精度
+    float currT = bestT;
+    for (int j = 0; j < 4; ++j) {
+        float2 B = getPos(p0, p1, p2, p3, currT);
+        float2 D1 = getDeriv1(p0, p1, p2, p3, currT);
+        float2 D2 = getDeriv2(p0, p1, p2, p3, currT);
+
+        float2 delta = B - q;
+
+        // f'(t) = 2 * (B(t) - Q) . B'(t)
+        float f1 = dot(delta, D1);
+        // f''(t) = 2 * (B'(t)^2 + (B(t) - Q) . B''(t))
+        float f2 = dot(D1, D1) + dot(delta, D2);
+
+        if (abs(f2) < 1e-6) break; // 防止除零
+
+        float nextT = currT - f1 / f2;
+        currT = clamp(nextT, 0.0, 1.0); // 必须限制在 [0, 1] 空间内
+    }
+
+    // 计算最终位置和距离
+    float2 finalPos = getPos(p0, p1, p2, p3, currT);
+    float dist = length(finalPos - q);
+
+    // 3. 渲染
+    float halfWidth = pc.strokeWidth * 0.5;
+    float alpha = smoothstep(halfWidth + 0.75, halfWidth - 0.75, dist);
+
     if (alpha <= 0.0) discard;
 
     // 颜色插值
@@ -134,7 +133,10 @@ float4 fragmentMain(V2F input) : SV_Target {
     float4 c1 = allPoints[base+1].color;
     float4 c2 = allPoints[base+2].color;
     float4 c3 = allPoints[base+3].color;
-    float4 color = interpolateColor(c0, c1, c2, c3, bestT);
+
+    // 使用贝塞尔基函数插值颜色
+    float u = 1.0 - currT;
+    float4 color = u*u*u*c0 + 3.0*u*u*currT*c1 + 3.0*u*currT*currT*c2 + currT*currT*currT*c3;
 
     return float4(color.rgb, color.a * alpha);
 }
