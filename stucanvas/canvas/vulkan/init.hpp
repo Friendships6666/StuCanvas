@@ -245,6 +245,7 @@ private:
         drawParamsFeatures.shaderDrawParameters = VK_TRUE;
 
         VkPhysicalDeviceFeatures features{};
+        features.sampleRateShading = VK_TRUE;
 
 
         VkDeviceCreateInfo createInfo{};

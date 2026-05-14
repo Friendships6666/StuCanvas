@@ -226,18 +226,25 @@ inline VkCommandBuffer Presenter::beginFrame(uint32_t& imageIndex) {
     return cmd;
 }
 
-// 2. 修改 endFrame：信号量改用 imageIndex 索引
+// 找到 stucanvas/canvas/vulkan/present.hpp 中的 endFrame 实现
+
 inline void Presenter::endFrame(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
-    // 结束录制
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
         throw std::runtime_error("Failed to record command buffer");
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-    // 等待图像可用信号量（仍然按 currentFrame_ 索引，因为它是与 CPU 帧循环绑定的）
     VkSemaphore waitSemaphores[] = { imageAvailableSemaphores_[currentFrame_] };
-    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+    // --- 【关键修改点：增加深度测试等待阶段】 ---
+    // 我们不仅要等待颜色输出，还要确保在图像准备好之前，不执行深度测试相关的写入
+    VkPipelineStageFlags waitStages[] = {
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+    };
+    // ----------------------------------------
+
     submitInfo.waitSemaphoreCount = 1;
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
@@ -245,7 +252,6 @@ inline void Presenter::endFrame(VkCommandBuffer commandBuffer, uint32_t imageInd
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
 
-    // 渲染完成信号量：必须使用当前绘制对应的交换链图像索引！
     VkSemaphore signalSemaphores[] = { renderFinishedSemaphores_[imageIndex] };
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
@@ -253,11 +259,10 @@ inline void Presenter::endFrame(VkCommandBuffer commandBuffer, uint32_t imageInd
     if (vkQueueSubmit(graphicsQueue_, 1, &submitInfo, inFlightFences_[currentFrame_]) != VK_SUCCESS)
         throw std::runtime_error("Failed to submit draw command buffer");
 
-    // 呈现：等待与当前图像对应的渲染完成信号量
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = signalSemaphores;       // 就是 renderFinishedSemaphores_[imageIndex]
+    presentInfo.pWaitSemaphores = signalSemaphores;
 
     VkSwapchainKHR swapChains[] = { swapChain_->getSwapChain() };
     presentInfo.swapchainCount = 1;

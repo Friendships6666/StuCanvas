@@ -42,7 +42,7 @@ namespace StuCanvas
         // ---- 四种矢量图形 ----
         std::vector<Point3D<T>> points; ///< 点云
         std::vector<SegmentStrip3D<T>> segments; ///< 线段带
-
+        std::vector<Triangles3D<T>> triangles;
         std::vector<Path3D<T>> paths; ///< 贝塞尔路径
 
 
@@ -327,6 +327,13 @@ namespace StuCanvas
             vkInit.getDevice(), "/home/friendships666/Projects/StuCanvas/stucanvas/shaders/paths.slang", "fragment",
             "fragmentMain");
 
+        auto vertModuleTriangles = ShaderModule::fromSlangFile(
+    vkInit.getDevice(), "/home/friendships666/Projects/StuCanvas/stucanvas/shaders/triangles.slang", "vertex",
+    "vertexMain");
+        auto fragModuleTriangles = ShaderModule::fromSlangFile(
+            vkInit.getDevice(), "/home/friendships666/Projects/StuCanvas/stucanvas/shaders/triangles.slang", "fragment",
+            "fragmentMain");
+
 
         // 3. 描述符集布局
         VkDescriptorSetLayoutBinding layoutBinding{};
@@ -342,9 +349,9 @@ namespace StuCanvas
         vkCreateDescriptorSetLayout(vkInit.getDevice(), &layoutInfo, nullptr, &descSetLayout);
 
         // 4. 管线配置
+        VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_4_BIT;
         PipelineConfig config;
-        config.vertShaderModule = vertModulePoints.getModule();
-        config.fragShaderModule = fragModulePoints.getModule();
+
         config.vertEntry = "main";
         config.fragEntry = "main";
         config.vertexBindingCount = 0;
@@ -354,7 +361,6 @@ namespace StuCanvas
         config.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         config.cullMode = VK_CULL_MODE_NONE;
         config.frontFace = VK_FRONT_FACE_CLOCKWISE;
-        config.cullMode = VK_CULL_MODE_NONE; // 关键：关闭背向剔除
         config.descriptorSetLayouts.push_back(descSetLayout);
 
         // 开启混合，支持抗锯齿圆
@@ -364,12 +370,22 @@ namespace StuCanvas
         config.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         config.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 
+        config.depthTestEnable = VK_TRUE;            // 开启深度测试
+        config.depthWriteEnable = VK_TRUE;           // 开启深度写入
+        config.depthCompareOp = VK_COMPARE_OP_LESS; // 近处的物体遮挡远处的
+        config.rasterizationSamples = msaaSamples; // 这里设置 4x
+        config.sampleShadingEnable = VK_TRUE;     // 强烈建议开启，这会让贝塞尔曲线边缘更加圆润
+        config.minSampleShading = 0.2f;
+
         VkPushConstantRange pcRange{};
         pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pcRange.offset = 0;
-        pcRange.size = sizeof(float) * 16 + sizeof(float) * 2 + sizeof(float);
+        // 【修改这里】精确匹配 96 字节 (24 个 float)
+        pcRange.size = sizeof(float) * 24;
         config.pushConstantRanges.push_back(pcRange);
 
+        config.vertShaderModule = vertModulePoints.getModule();
+        config.fragShaderModule = fragModulePoints.getModule();
         Pipeline pipelinePoints(vkInit.getDevice(), renderPass.get(), config);
 
 
@@ -377,33 +393,53 @@ namespace StuCanvas
         config.fragShaderModule = fragModuleSegments.getModule();
         Pipeline pipelineSegments(vkInit.getDevice(), renderPass.get(), config);
 
+
+
+        config.vertShaderModule = vertModulePaths.getModule();
+        config.fragShaderModule = fragModulePaths.getModule();
+        Pipeline pipelinePaths(vkInit.getDevice(), renderPass.get(), config);
+
+
+        config.vertShaderModule = vertModuleTriangles.getModule();
+        config.fragShaderModule = fragModuleTriangles.getModule();
+        config.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; // 三角形列表
+        config.cullMode = VK_CULL_MODE_NONE; // 必须禁用剔除，支持双面光照
+        Pipeline pipelineTriangles(vkInit.getDevice(), renderPass.get(), config);
+
+
+
         // 5. 描述符池及分配
         VkDescriptorPoolSize poolSize{};
         poolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        poolSize.descriptorCount = 3;
+        poolSize.descriptorCount = 4;
         VkDescriptorPoolCreateInfo descPoolInfo{};
         descPoolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         descPoolInfo.poolSizeCount = 1;
         descPoolInfo.pPoolSizes = &poolSize;
-        descPoolInfo.maxSets = 3;
+        descPoolInfo.maxSets = 4;
         VkDescriptorPool descPool;
         vkCreateDescriptorPool(vkInit.getDevice(), &descPoolInfo, nullptr, &descPool);
-        std::vector<VkDescriptorSetLayout> layouts = {descSetLayout, descSetLayout, descSetLayout};
+        std::vector<VkDescriptorSetLayout> layouts = {descSetLayout, descSetLayout, descSetLayout,descSetLayout};
 
         VkDescriptorSetAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         allocInfo.descriptorPool = descPool;
-        allocInfo.descriptorSetCount = 3;
+        allocInfo.descriptorSetCount = 4;
         allocInfo.pSetLayouts = &descSetLayout;
         allocInfo.pSetLayouts = layouts.data();
-        VkDescriptorSet descSets[3]; // descSets[0]给点云，descSets[1]给线段
+        VkDescriptorSet descSets[4]; // descSets[0]给点云，descSets[1]给线段
         vkAllocateDescriptorSets(vkInit.getDevice(), &allocInfo, descSets);
         VkDescriptorSet descSetPoints = descSets[0];
         VkDescriptorSet descSetSegments = descSets[1];
         VkDescriptorSet descSetPaths = descSets[2];
-        config.vertShaderModule = vertModulePaths.getModule();
-        config.fragShaderModule = fragModulePaths.getModule();
-        Pipeline pipelinePaths(vkInit.getDevice(), renderPass.get(), config);
+        VkDescriptorSet descSetTriangles = descSets[3];
+
+
+
+
+
+
+
         Presenter presenter(
             vkInit.getPhysicalDevice(), vkInit.getDevice(),
             vkInit.getSurface(), vkInit.getGraphicsFamily(),
@@ -426,6 +462,9 @@ namespace StuCanvas
         size_t numSegmentsToDraw = 0;
         Vulkan::Buffer pathBuffer;
         size_t totalPathPoints = 0;
+        Vulkan::Buffer triangleVertexBuffer;
+        Vulkan::Buffer triangleIndexBuffer;
+        size_t numTriIndicesToDraw = 0;
 
         // 6. 主渲染循环
         while (running)
@@ -548,12 +587,25 @@ namespace StuCanvas
                             hasData = true;
                         }
                     }
+
+                    for (const auto& tri : clip->triangles) {
+                        // 注意：成员名是 .points 而不是 .vertices
+                        for (const auto& p : tri.points) {
+                            // 注意：Point3D 直接访问 .x, .y, .z，没有 .position
+                            minX = std::min(minX, p.x); maxX = std::max(maxX, p.x);
+                            minY = std::min(minY, p.y); maxY = std::max(maxY, p.y);
+                            minZ = std::min(minZ, p.z); maxZ = std::max(maxZ, p.z);
+                            hasData = true;
+                        }
+                    }
                 }
 
 
                 std::vector<PointDataGPU> allPoints;
                 std::vector<SegmentGPU> allSegments;
                 std::vector<PointDataGPU> allPathPoints;
+                std::vector<PointDataGPU> allTriVertices;
+                std::vector<uint32_t> allTriIndices;
                 if (hasData)
                 {
                     T centerX = (minX + maxX) * static_cast<T>(0.5);
@@ -634,15 +686,40 @@ namespace StuCanvas
                                 allPathPoints.push_back(gpu);
                             }
                         }
+                        for (const auto& tri : clip->triangles) {
+                            // 记录合并网格时的顶点偏移
+                            uint32_t baseVertex = static_cast<uint32_t>(allTriVertices.size());
+
+                            // 1. 处理顶点 (Point3D -> PointDataGPU)
+                            for (const auto& p : tri.points) { // 修改为 .points
+                                PointDataGPU gpu{};
+                                gpu.x = static_cast<float>((p.x - curCenterX_) / curScale_);
+                                gpu.y = static_cast<float>((p.y - curCenterY_) / curScale_);
+                                gpu.z = static_cast<float>((p.z - curCenterZ_) / curScale_);
+                                gpu._pad0 = 0.0f;
+                                // Point3D 内部自带了 r, g, b, a
+                                gpu.r = p.r;
+                                gpu.g = p.g;
+                                gpu.b = p.b;
+                                gpu.a = p.a;
+                                allTriVertices.push_back(gpu);
+                            }
+
+                            // 2. 处理索引 (应用偏移)
+                            for (auto idx : tri.indices) {
+                                allTriIndices.push_back(baseVertex + idx);
+                            }
+                        }
                     }
                 }
 
                 numPointsToDraw = allPoints.size();
                 numSegmentsToDraw = allSegments.size();
                 totalPathPoints = allPathPoints.size();
+                numTriIndicesToDraw = allTriIndices.size();
 
                 // 重新上传缓冲区并关联描述符集
-                if (numPointsToDraw > 0 || numSegmentsToDraw > 0 || totalPathPoints > 0)
+                if (numPointsToDraw > 0 || numSegmentsToDraw > 0 || totalPathPoints > 0 || numTriIndicesToDraw > 0)
                 {
                     // 等待之前的渲染操作结束才能替换缓冲区（简易同步手段）
                     vkDeviceWaitIdle(vkInit.getDevice());
@@ -731,6 +808,40 @@ namespace StuCanvas
                         vkUpdateDescriptorSets(vkInit.getDevice(), 1, &write, 0, nullptr);
                     }
 
+                    // --------------------------
+                    // 4. 上传三角面数据 (Vertices & Indices)
+                    // --------------------------
+                    if (numTriIndicesToDraw > 0) {
+                        // A. 上传顶点到 SSBO (供 Shader Binding 0 使用)
+                        size_t vBufferSize = allTriVertices.size() * sizeof(PointDataGPU);
+                        triangleVertexBuffer = Buffer::CreateAndUpload(
+                            vkInit.getDevice(), vkInit.getPhysicalDevice(), uploadPool,
+                            vkInit.getGraphicsQueue(), allTriVertices.data(), vBufferSize,
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
+                        // B. 上传索引到 Index Buffer (供 vkCmdBindIndexBuffer 使用)
+                        size_t iBufferSize = allTriIndices.size() * sizeof(uint32_t);
+                        triangleIndexBuffer = Buffer::CreateAndUpload(
+                            vkInit.getDevice(), vkInit.getPhysicalDevice(), uploadPool,
+                            vkInit.getGraphicsQueue(), allTriIndices.data(), iBufferSize,
+                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+
+                        // C. 更新描述符集 (将顶点 Buffer 绑定到三角形 Shader 的 Binding 0)
+                        VkDescriptorBufferInfo triBufferInfo{};
+                        triBufferInfo.buffer = triangleVertexBuffer.getBuffer();
+                        triBufferInfo.offset = 0;
+                        triBufferInfo.range  = vBufferSize;
+
+                        VkWriteDescriptorSet triWrite{};
+                        triWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                        triWrite.dstSet = descSetTriangles; // 确保这是分配的第4个描述符集
+                        triWrite.dstBinding = 0;
+                        triWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                        triWrite.descriptorCount = 1;
+                        triWrite.pBufferInfo = &triBufferInfo;
+                        vkUpdateDescriptorSets(vkInit.getDevice(), 1, &triWrite, 0, nullptr);
+                    }
+
                     // 销毁临时的指令池
                     vkDestroyCommandPool(vkInit.getDevice(), uploadPool, nullptr);
                 }
@@ -754,12 +865,17 @@ namespace StuCanvas
             Eigen::Matrix4f projMat = ComputeProjectionMatrix(transformedCam, aspect);
             Eigen::Matrix4f mvpMat = projMat * viewMat;
 
-            struct PushConstants
-            {
-                float mvp[16];
-                float viewportSize[2];
-                float pointRadius;
+            struct PushConstants {
+                float mvp[16];        // 64 bytes
+                float camPos[3];      // 12 bytes
+                float _pad0;          // 4 bytes (显式对齐)
+                float viewportSize[2];// 8 bytes
+                float pointRadius;    // 4 bytes (在三角形中可忽略或复用)
+                float _pad1;          // 4 bytes (补齐至 96 字节，对齐 16)
             } pc;
+            pc.camPos[0] = transformedCam.posX;
+            pc.camPos[1] = transformedCam.posY;
+            pc.camPos[2] = transformedCam.posZ;
             // 将 Column-Major 改为 Row-Major 拷贝，适配 Slang 的 mul(M, v)
             for (int row = 0; row < 4; ++row)
             {
@@ -778,13 +894,15 @@ namespace StuCanvas
             rpBegin.framebuffer = presenter.getFramebuffer(imageIndex);
             rpBegin.renderArea.offset = {0, 0};
             rpBegin.renderArea.extent = extent;
-            VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
-            rpBegin.clearValueCount = 1;
-            rpBegin.pClearValues = &clearColor;
+            std::array<VkClearValue, 2> clearValues{};
+            clearValues[0].color = {{0.1f, 0.1f, 0.1f, 1.0f}}; // 背景色
+            clearValues[1].depthStencil = {1.0f, 0};           // 深度清空为 1.0 (最远)
+            rpBegin.clearValueCount = 2;
+            rpBegin.pClearValues = clearValues.data();
 
             vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
 
-            if (numPointsToDraw > 0 || numSegmentsToDraw > 0 || totalPathPoints > 0)
+            if (numPointsToDraw > 0 || numSegmentsToDraw > 0 || totalPathPoints > 0 || numTriIndicesToDraw > 0)
             {
                 VkViewport viewport{};
                 viewport.x = 0.0f;
@@ -857,6 +975,28 @@ namespace StuCanvas
 
                 // 绘制：每个 Instance 是一个四边形(6顶点)，覆盖一段曲线
                 vkCmdDraw(cmd, 6, segmentCount, 0, 0);
+            }
+
+            // --------------------------
+            // 绘制 4：三角面网格 (Triangle Mesh)
+            // --------------------------
+            if (numTriIndicesToDraw > 0) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineTriangles.get());
+
+                // 更新包含 camPos 的 PushConstants (确保 pc 结构体为 96 字节)
+                vkCmdPushConstants(cmd, pipelineTriangles.getLayout(),
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                   0, sizeof(PushConstants), &pc);
+
+                // 绑定描述符集 (这会自动绑定顶点 SSBO)
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        pipelineTriangles.getLayout(), 0, 1, &descSetTriangles, 0, nullptr);
+
+                // 绑定物理索引缓冲
+                vkCmdBindIndexBuffer(cmd, triangleIndexBuffer.getBuffer(), 0, VK_INDEX_TYPE_UINT32);
+
+                // 执行索引绘制：索引总数，1个实例，起始索引0，顶点偏移0，起始实例0
+                vkCmdDrawIndexed(cmd, static_cast<uint32_t>(numTriIndicesToDraw), 1, 0, 0, 0);
             }
 
             vkCmdEndRenderPass(cmd);

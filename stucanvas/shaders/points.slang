@@ -4,9 +4,12 @@
 // 1. 全局参数 (Push Constants)
 // ==========================================
 struct Globals {
-    float4x4 mvp;               // 列主序 MVP 矩阵 (64 bytes)
-    float2 viewportSize;        // 屏幕像素尺寸 (8 bytes)
-    float pointRadius;          // 圆的屏幕像素半径 (4 bytes)
+    float4x4 mvp;           // Offset 0, Size 64
+    float3   camPos;        // Offset 64, Size 12 (即便这里不使用，也要占位)
+    float    _pad0;         // Offset 76, Size 4
+    float2   viewportSize;  // Offset 80, Size 8
+    float    pointRadius;   // Offset 88, Size 4
+    float    _pad1;         // Offset 92, Size 4
 };
 
 [[vk::push_constant]]

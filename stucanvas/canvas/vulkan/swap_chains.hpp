@@ -48,6 +48,8 @@ public:
     {
         createSwapChain(oldSwapChain);
         createImageViews();
+        createColorResources(); // 生成 colorImageView_ (Attachment 0)
+        createDepthResources();
         if (renderPass_ != VK_NULL_HANDLE) {
             createFramebuffers();
         }
@@ -111,10 +113,17 @@ public:
      *        自动查询当前窗口尺寸，销毁旧资源并构建新链。
      */
     void recreate() {
+
+
+
         vkDeviceWaitIdle(device_);
+
         cleanup();
         createSwapChain(VK_NULL_HANDLE);
         createImageViews();
+        createColorResources();
+        createDepthResources();
+
         if (renderPass_ != VK_NULL_HANDLE) {
             createFramebuffers();
         }
@@ -128,6 +137,19 @@ private:
     uint32_t         graphicsFamily_;
     uint32_t         presentFamily_;
     SDL_Window*      window_;
+
+
+    VkImage        depthImage_       = VK_NULL_HANDLE;
+    VkDeviceMemory depthImageMemory_ = VK_NULL_HANDLE;
+    VkImageView    depthImageView_   = VK_NULL_HANDLE;
+
+
+    // MSAA 颜色缓冲区资源（新增）
+    VkImage        colorImage_       = VK_NULL_HANDLE;
+    VkDeviceMemory colorImageMemory_ = VK_NULL_HANDLE;
+    VkImageView    colorImageView_   = VK_NULL_HANDLE;
+
+
 
     VkSwapchainKHR   swapChain_ = VK_NULL_HANDLE;
     std::vector<VkImage> images_;
@@ -164,6 +186,143 @@ private:
         }
         return details;
     }
+
+
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+        VkPhysicalDeviceMemoryProperties memProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice_, &memProperties);
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+        throw std::runtime_error("failed to find suitable memory type!");
+    }
+    void createImage(uint32_t width, uint32_t height, VkSampleCountFlagBits numSamples,
+                 VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
+                 VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
+        VkImageCreateInfo imageInfo{};
+        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.extent.width = width;
+        imageInfo.extent.height = height;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.format = format;
+        imageInfo.tiling = tiling;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        imageInfo.usage = usage;
+        imageInfo.samples = numSamples; // 关键参数
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateImage(device_, &imageInfo, nullptr, &image) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create image!");
+        }
+
+        VkMemoryRequirements memRequirements;
+        vkGetImageMemoryRequirements(device_, image, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+        if (vkAllocateMemory(device_, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate image memory!");
+        }
+
+        vkBindImageMemory(device_, image, imageMemory, 0);
+    }
+
+    void createColorResources() {
+        VkFormat colorFormat = imageFormat_; // 与交换链格式一致
+
+        createImage(extent_.width, extent_.height, VK_SAMPLE_COUNT_4_BIT, colorFormat,
+                    VK_IMAGE_TILING_OPTIMAL,
+                    // 注意：由于这张图只在 subpass 内部使用，标记为 TRANSIENT 可在移动端等设备大幅省电
+                    VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, colorImage_, colorImageMemory_);
+
+        // 创建 View
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = colorImage_;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = colorFormat;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        vkCreateImageView(device_, &viewInfo, nullptr, &colorImageView_);
+    }
+
+void createDepthResources() {
+        // 深度格式通常使用 D32_SFLOAT，确保 RenderPass 中也是这个格式
+        VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
+
+        // 1. 创建支持 MSAA 的深度 Image
+        VkImageCreateInfo imageInfo{};
+        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.extent.width = extent_.width;
+        imageInfo.extent.height = extent_.height;
+        imageInfo.extent.depth = 1;
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.format = depthFormat;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+        // 【关键修改】：这里必须使用 msaaSamples_（如 VK_SAMPLE_COUNT_4_BIT）
+        // 只有这里和颜色缓冲的采样数一致，硬件才能在样本级别进行深度测试
+        imageInfo.samples = VK_SAMPLE_COUNT_4_BIT;
+
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateImage(device_, &imageInfo, nullptr, &depthImage_) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create depth image!");
+        }
+
+        // 2. 为深度图分配并绑定显存
+        VkMemoryRequirements memRequirements;
+        vkGetImageMemoryRequirements(device_, depthImage_, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+
+        // 深度图通常存储在 DEVICE_LOCAL（显存）中以获得最高读写性能
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        if (vkAllocateMemory(device_, &allocInfo, nullptr, &depthImageMemory_) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate depth image memory!");
+        }
+
+        vkBindImageMemory(device_, depthImage_, depthImageMemory_, 0);
+
+        // 3. 创建深度图像视图 (ImageView)
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = depthImage_;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = depthFormat;
+
+        // 设置 AspectMask 为 DEPTH 位
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        if (vkCreateImageView(device_, &viewInfo, nullptr, &depthImageView_) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create depth image view!");
+        }
+    }
+
+
+
 
     VkSurfaceFormatKHR chooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& available) const {
         for (const auto& fmt : available) {
@@ -290,19 +449,27 @@ private:
     void createFramebuffers() {
         framebuffers_.resize(imageViews_.size());
         for (size_t i = 0; i < imageViews_.size(); ++i) {
-            VkImageView attachments[] = { imageViews_[i] };
+            // 顺序必须与 RenderPass 的 Attachment 对应：
+            // 0: MSAA Color (目标)
+            // 1: MSAA Depth (测试)
+            // 2: Swapchain Image (Resolve 目标)
+            std::array<VkImageView, 3> attachments = {
+                colorImageView_,
+                depthImageView_,
+                imageViews_[i]
+            };
 
             VkFramebufferCreateInfo framebufferInfo{};
-            framebufferInfo.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-            framebufferInfo.renderPass      = renderPass_;
-            framebufferInfo.attachmentCount = 1;
-            framebufferInfo.pAttachments    = attachments;
-            framebufferInfo.width           = extent_.width;
-            framebufferInfo.height          = extent_.height;
-            framebufferInfo.layers          = 1;
+            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebufferInfo.renderPass = renderPass_;
+            framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size()); // 3
+            framebufferInfo.pAttachments = attachments.data();
+            framebufferInfo.width = extent_.width;
+            framebufferInfo.height = extent_.height;
+            framebufferInfo.layers = 1;
 
             if (vkCreateFramebuffer(device_, &framebufferInfo, nullptr, &framebuffers_[i]) != VK_SUCCESS) {
-                throw std::runtime_error("Failed to create framebuffer");
+                throw std::runtime_error("failed to create framebuffer!");
             }
         }
     }
@@ -310,12 +477,47 @@ private:
     void cleanup() {
         if (device_ == VK_NULL_HANDLE) return;
 
+        // 1. 销毁帧缓冲
         for (auto fb : framebuffers_) {
             vkDestroyFramebuffer(device_, fb, nullptr);
         }
+        framebuffers_.clear();
+
+        // 2. 销毁 MSAA 颜色资源
+        if (colorImageView_ != VK_NULL_HANDLE) {
+            vkDestroyImageView(device_, colorImageView_, nullptr);
+            colorImageView_ = VK_NULL_HANDLE;
+        }
+        if (colorImage_ != VK_NULL_HANDLE) {
+            vkDestroyImage(device_, colorImage_, nullptr);
+            colorImage_ = VK_NULL_HANDLE;
+        }
+        if (colorImageMemory_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, colorImageMemory_, nullptr);
+            colorImageMemory_ = VK_NULL_HANDLE;
+        }
+
+        // 3. 销毁 MSAA 深度资源
+        if (depthImageView_ != VK_NULL_HANDLE) {
+            vkDestroyImageView(device_, depthImageView_, nullptr);
+            depthImageView_ = VK_NULL_HANDLE;
+        }
+        if (depthImage_ != VK_NULL_HANDLE) {
+            vkDestroyImage(device_, depthImage_, nullptr);
+            depthImage_ = VK_NULL_HANDLE;
+        }
+        if (depthImageMemory_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_, depthImageMemory_, nullptr);
+            depthImageMemory_ = VK_NULL_HANDLE;
+        }
+
+        // 4. 销毁交换链图像视图
         for (auto iv : imageViews_) {
             vkDestroyImageView(device_, iv, nullptr);
         }
+        imageViews_.clear();
+
+        // 5. 销毁交换链本身
         if (swapChain_ != VK_NULL_HANDLE) {
             vkDestroySwapchainKHR(device_, swapChain_, nullptr);
             swapChain_ = VK_NULL_HANDLE;

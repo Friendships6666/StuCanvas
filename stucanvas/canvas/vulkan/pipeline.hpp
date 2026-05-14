@@ -30,7 +30,11 @@ struct PipelineConfig {
     // ── 输入装配 ──
     VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     VkBool32 primitiveRestart = VK_FALSE;
+    VkSampleCountFlagBits rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+    // 是否开启硬件级样本着色 (提升内边抗锯齿)
+    VkBool32 sampleShadingEnable = VK_FALSE;
+    float minSampleShading = 0.2f;
     // ── 视口与裁剪（如果设为动态，则忽略下面静态值）──
     bool dynamicViewport = true;
     bool dynamicScissor  = true;
@@ -50,9 +54,7 @@ struct PipelineConfig {
     VkBool32 rasterizerDiscardEnable = VK_FALSE;
 
     // ── 多重采样 ──
-    VkSampleCountFlagBits rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    VkBool32 sampleShadingEnable = VK_FALSE;
-    float minSampleShading = 1.f;
+
 
     // ── 深度与模板（如需深度，可设置 depthTestEnable = VK_TRUE 并提供深度附件格式）──
     VkBool32 depthTestEnable = VK_FALSE;
@@ -231,9 +233,27 @@ private:
         // ── 多重采样 ──
         VkPipelineMultisampleStateCreateInfo multisampling{};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+
+        // 【关键点 1】：必须与 RenderPass 的 samples 严格一致
+        // 如果 RenderPass 是 4x，这里必须是 VK_SAMPLE_COUNT_4_BIT
         multisampling.rasterizationSamples = config.rasterizationSamples;
-        multisampling.sampleShadingEnable = config.sampleShadingEnable;
-        multisampling.minSampleShading = config.minSampleShading;
+
+        // 【关键点 2】：样本着色 (Sample Shading)
+        // 开启它可以显著提升 Shader 内部逻辑（如你的贝塞尔曲线 SDF）的抗锯齿质量
+        // 它会让片元着色器在像素内部运行多次。
+        if (config.sampleShadingEnable) {
+            multisampling.sampleShadingEnable = VK_TRUE;
+            // minSampleShading 决定了采样的频率。1.0f 表示每个样本都运行一次片元着色器（最清晰但也最累）
+            // 0.2f 是一个折中值，可以有效减少线条的闪烁。
+            multisampling.minSampleShading = config.minSampleShading;
+        } else {
+            multisampling.sampleShadingEnable = VK_FALSE;
+            multisampling.minSampleShading = 1.0f;
+        }
+
+        multisampling.pSampleMask = nullptr; // 可选
+        multisampling.alphaToCoverageEnable = VK_FALSE; // 如果做植被等半透明裁剪可开启
+        multisampling.alphaToOneEnable = VK_FALSE;      // 可选
 
         // ── 深度模板 ──
         VkPipelineDepthStencilStateCreateInfo depthStencil{};
