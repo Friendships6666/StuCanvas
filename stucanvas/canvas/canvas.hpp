@@ -21,7 +21,7 @@
 #include "../canvas/vulkan/shader_module.hpp"
 #include "../canvas/vulkan/buffer.hpp"
 #include "../canvas/vulkan/present.hpp"
-
+#include "../utils/block_deque.hpp"
 namespace StuCanvas
 {
     /**
@@ -32,7 +32,7 @@ namespace StuCanvas
     template <typename T>
     struct Clip
     {
-        using UpdateFunc = std::function<void(uint64_t)>; ///< 每相对帧调用的更新函数
+        using UpdateFunc = std::function<void(Clip<T>&, uint64_t, double)>;
 
         uint64_t start_frame{}; ///< 起始绝对帧
         uint64_t end_frame{}; ///< 结束绝对帧（含）
@@ -61,13 +61,17 @@ namespace StuCanvas
             return global_frame >= start_frame && global_frame <= end_frame;
         }
 
-        /// 调用更新函数，传入相对帧 t = global_frame - start_frame
-        void Update(uint64_t global_frame)
+        void Update(uint64_t global_frame, uint32_t fps)
         {
             if (update_func && ContainsFrame(global_frame))
             {
-                uint64_t rel_t = global_frame - start_frame;
-                update_func(rel_t);
+                uint64_t rel_f = global_frame - start_frame;
+
+                // 计算相对毫秒: (帧数 * 1000) / fps
+                // 使用 double 避免整数除法的精度损失
+                double rel_ms = (static_cast<double>(rel_f) * 1000.0) / static_cast<double>(fps);
+
+                update_func(*this, rel_f, rel_ms);
             }
         }
     };
@@ -135,6 +139,72 @@ namespace StuCanvas
 
             return normalized;
         }
+
+
+        /**
+         * @brief 设置相机在世界空间的位置
+         */
+        void SetPosition(T x, T y, T z) {
+            posX = x; posY = y; posZ = z;
+        }
+
+        /**
+         * @brief 设置相机看向的目标点
+         */
+        void SetLookAt(T x, T y, T z) {
+            lookX = x; lookY = y; lookZ = z;
+        }
+
+
+
+        void SetRotation(float yaw_deg, float pitch_deg, float roll_deg = 0.0f) {
+            // 转为弧度
+            float yaw = yaw_deg * (M_PI / 180.0f);
+            float pitch = pitch_deg * (M_PI / 180.0f);
+            float roll = roll_deg * (M_PI / 180.0f);
+
+            // 1. 计算前向向量 (Forward Vector)
+            // 在右手系/Vulkan中，默认前向是 -Z
+            float dx = std::cos(pitch) * std::sin(yaw);
+            float dy = std::sin(pitch);
+            float dz = -std::cos(pitch) * std::cos(yaw);
+
+            // 更新 LookAt 点：基于当前位置 + 方向向量
+            lookX = posX + static_cast<T>(dx);
+            lookY = posY + static_cast<T>(dy);
+            lookZ = posZ + static_cast<T>(dz);
+
+            // 2. 计算上向量 (Up Vector) 考虑 Roll
+            // 如果没有 Roll，Up 通常是 (0, 1, 0)
+            // 如果有 Roll，我们需要在垂直于前向向量的平面内旋转 Up 向量
+            if (std::abs(roll_deg) < 0.0001f) {
+                upX = 0.0f; upY = 1.0f; upZ = 0.0f;
+            } else {
+                // 计算右向量 (Right = Forward x WorldUp)
+                Eigen::Vector3f f(dx, dy, dz);
+                f.normalize();
+                Eigen::Vector3f worldUp(0, 1, 0);
+                Eigen::Vector3f r = f.cross(worldUp).normalized();
+                Eigen::Vector3f u = r.cross(f).normalized(); // 修正后的基准上向量
+
+                // 应用 Roll：Up_final = u*cos(roll) - r*sin(roll)
+                Eigen::Vector3f finalUp = u * std::cos(roll) - r * std::sin(roll);
+                upX = finalUp.x();
+                upY = finalUp.y();
+                upZ = finalUp.z();
+            }
+        }
+
+        Eigen::Vector3f GetEulerAngles() const {
+            float dx = static_cast<float>(lookX - posX);
+            float dy = static_cast<float>(lookY - posY);
+            float dz = static_cast<float>(lookZ - posZ);
+            float pitch = std::asin(dy / std::sqrt(dx*dx + dy*dy + dz*dz));
+            float yaw = std::atan2(dx, -dz);
+            return Eigen::Vector3f(yaw * (180.0f/M_PI), pitch * (180.0f/M_PI), 0.0f);
+        }
+
+
     };
 
 
@@ -212,20 +282,44 @@ namespace StuCanvas
         CameraConfig<T>& GetCameraConfig() { return camera_; }
         [[nodiscard]] const CameraConfig<T>& GetCameraConfig() const { return camera_; }
 
-        /**
-         * @brief 添加一个片段。
-         */
-        void AddClip(const CanvasClip& clip)
+
+
+        CanvasClip* AddClip(CanvasClip clip)
         {
-            clips_.push_back(clip);
+            clips_.push_back(std::move(clip));
+            size_t new_idx = clips_.size() - 1;
+
             // 更新排序索引：插入后保持按 start_frame 升序
-            size_t idx = clips_.size() - 1;
-            auto it = std::lower_bound(sorted_indices_.begin(), sorted_indices_.end(), idx,
+            auto it = std::lower_bound(sorted_indices_.begin(), sorted_indices_.end(), new_idx,
                                        [this](size_t a, size_t b)
                                        {
                                            return clips_[a].start_frame < clips_[b].start_frame;
                                        });
-            sorted_indices_.insert(it, idx);
+            sorted_indices_.insert(it, new_idx);
+
+            // 返回 vector 中最后一个元素的地址
+            return &clips_.back();
+        }
+
+        /**
+         * @brief 更加简洁的创建片段方式 (类似 emplace)
+         */
+        template<typename... Args>
+        CanvasClip* CreateClip(Args&&... args) {
+            // 1. 利用 BlockDeque 的 emplace_back 构造对象
+            // 由于 BlockDeque 保证了内存地址稳定，这个返回的引用转指针是安全的
+            CanvasClip& ref = clips_.emplace_back(std::forward<Args>(args)...);
+            CanvasClip* new_clip_ptr = &ref;
+
+            // 2. 维护排序索引 (保持按 start_frame 升序)
+            size_t new_idx = clips_.size() - 1;
+            auto it = std::lower_bound(sorted_indices_.begin(), sorted_indices_.end(), new_idx,
+                                       [this](size_t a, size_t b) {
+                                           return clips_[a].start_frame < clips_[b].start_frame;
+                                       });
+            sorted_indices_.insert(it, new_idx);
+
+            return new_clip_ptr;
         }
 
         // 非 const 版本（用于需要修改 Clip 的场合）
@@ -277,7 +371,7 @@ namespace StuCanvas
         void render(uint64_t start_frame = 0, uint32_t fps = 60);
 
     private:
-        std::vector<CanvasClip> clips_; ///< 所有片段
+        utils::BlockDeque<CanvasClip, 256> clips_;
         std::vector<size_t> sorted_indices_; ///< 按 start_frame 升序的索引
         CameraConfig<T> camera_;
         // 缓存当前的归一化参数，用于矩阵计算
@@ -535,7 +629,11 @@ namespace StuCanvas
                 // 执行当前帧的动画逻辑
                 for (auto* clip : clips)
                 {
-                    clip->Update(current_frame);
+                    clip->points.clear();
+                    clip->paths.clear();
+                    clip->triangles.clear();
+                    clip->segments.clear();
+                    clip->Update(current_frame,fps);
                 }
 
                 // 收集包围盒用于局部归一化
@@ -895,7 +993,7 @@ namespace StuCanvas
             rpBegin.renderArea.offset = {0, 0};
             rpBegin.renderArea.extent = extent;
             std::array<VkClearValue, 2> clearValues{};
-            clearValues[0].color = {{0.1f, 0.1f, 0.1f, 1.0f}}; // 背景色
+            clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}}; // 背景色
             clearValues[1].depthStencil = {1.0f, 0};           // 深度清空为 1.0 (最远)
             rpBegin.clearValueCount = 2;
             rpBegin.pClearValues = clearValues.data();
