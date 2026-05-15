@@ -29,6 +29,20 @@ namespace StuCanvas
 
     namespace Vulkan
     {
+
+        struct IVFHeader {
+            char signature[4] = {'D', 'K', 'I', 'F'}; // signature
+            uint16_t version = 0;
+            uint16_t header_size = 32;
+            char fourcc[4] = {'A', 'V', '0', '1'};   // AV1
+            uint16_t width{};
+            uint16_t height{};
+            uint32_t frame_rate_num{};
+            uint32_t frame_rate_den = 1;
+            uint32_t total_frames{};
+            uint32_t reserved = 0;
+        };
+
         struct CanvasPushConstants {
             float mvp[16];         // Offset 0,   Size 64
             float camPos[3];       // Offset 64,  Size 12
@@ -1158,6 +1172,19 @@ namespace StuCanvas
                     vkDestroyDescriptorSetLayout(device, descSetLayout, nullptr);
                 }
             }
+        }
+
+
+
+        [[nodiscard]] std::pair<uint64_t, uint64_t> GetGlobalFrameRange() const {
+            if (sorted_indices_.empty()) return {0, 0};
+            uint64_t min_s = std::numeric_limits<uint64_t>::max();
+            uint64_t max_e = 0;
+            for (const auto& clip : clips_) {
+                min_s = std::min(min_s, clip.start_frame);
+                max_e = std::max(max_e, clip.end_frame);
+            }
+            return {min_s, max_e};
         }
     };
 

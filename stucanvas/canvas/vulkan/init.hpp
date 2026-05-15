@@ -14,30 +14,49 @@
 #include <iostream>
 
 namespace StuCanvas::Vulkan {
+
 class VulkanInit {
 public:
+    struct QueueFamilyIndices {
+        std::optional<uint32_t> graphicsFamily;
+        std::optional<uint32_t> presentFamily;
+        std::optional<uint32_t> videoEncodeFamily; // 新增：视频编码队列
+
+        bool isComplete(bool headless) const {
+            if (headless) {
+                // Headless 模式下只需要图形和编码队列
+                return graphicsFamily.has_value() && videoEncodeFamily.has_value();
+            }
+            return graphicsFamily.has_value() && presentFamily.has_value();
+        }
+    };
+
     VulkanInit(const char* appName = "StuCanvas",
                uint32_t width = 800, uint32_t height = 600,
-               bool enableValidation = true)
-        : validationEnabled_(enableValidation)
+               bool enableValidation = true,
+               bool headless = false) // 新增参数
+        : validationEnabled_(enableValidation), headless_(headless)
     {
-        // 1. 初始化 SDL 窗口
-        if (!SDL_Init(SDL_INIT_VIDEO)) {
-            throw std::runtime_error("Failed to initialize SDL: " + std::string(SDL_GetError()));
+        // 1. 初始化 SDL (仅在非 Headless 模式下创建窗口)
+        if (!headless_) {
+            if (!SDL_Init(SDL_INIT_VIDEO)) {
+                throw std::runtime_error("Failed to initialize SDL: " + std::string(SDL_GetError()));
+            }
+            window_ = SDL_CreateWindow(appName, width, height,
+                                       SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+            if (!window_)
+                throw std::runtime_error("Failed to create SDL window: " + std::string(SDL_GetError()));
         }
 
-        window_ = SDL_CreateWindow(appName, width, height,
-                                   SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
-        if (!window_)
-            throw std::runtime_error("Failed to create SDL window: " + std::string(SDL_GetError()));
-
-        // 2. 创建 Vulkan 实例（含调试信使，如果启用）
+        // 2. 创建 Vulkan 实例
         createInstance(appName);
         if (validationEnabled_)
             setupDebugMessenger();
 
-        // 3. 创建表面
-        createSurface();
+        // 3. 创建表面 (Headless 模式不需要)
+        if (!headless_) {
+            createSurface();
+        }
 
         // 4. 选择物理设备
         pickPhysicalDevice();
@@ -63,7 +82,7 @@ public:
         if (window_)
             SDL_DestroyWindow(window_);
 
-        SDL_Quit();
+        if (!headless_) SDL_Quit();
     }
 
     // 禁止拷贝
@@ -76,20 +95,16 @@ public:
     VkDevice         getDevice()         const { return device_; }
     VkSurfaceKHR     getSurface()        const { return surface_; }
     SDL_Window*      getWindow()         const { return window_; }
+    bool             isHeadless()        const { return headless_; }
 
-    VkQueue getGraphicsQueue() const { return graphicsQueue_; }
-    VkQueue getPresentQueue()  const { return presentQueue_; }
+    VkQueue getGraphicsQueue()    const { return graphicsQueue_; }
+    VkQueue getPresentQueue()     const { return presentQueue_; }
+    VkQueue getVideoEncodeQueue() const { return videoEncodeQueue_; }
 
-    uint32_t getGraphicsFamily() const { return queueIndices_.graphicsFamily.value(); }
-    uint32_t getPresentFamily()  const { return queueIndices_.presentFamily.value(); }
+    uint32_t getGraphicsFamily()    const { return queueIndices_.graphicsFamily.value(); }
+    uint32_t getPresentFamily()     const { return queueIndices_.presentFamily.value_or(0); }
+    uint32_t getVideoEncodeFamily() const { return queueIndices_.videoEncodeFamily.value_or(0); }
 
-    struct QueueFamilyIndices {
-        std::optional<uint32_t> graphicsFamily;
-        std::optional<uint32_t> presentFamily;
-        bool isComplete() const {
-            return graphicsFamily.has_value() && presentFamily.has_value();
-        }
-    };
     const QueueFamilyIndices& getQueueFamilyIndices() const { return queueIndices_; }
 
 private:
@@ -101,11 +116,13 @@ private:
     VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
     VkDevice         device_         = VK_NULL_HANDLE;
 
-    VkQueue graphicsQueue_ = VK_NULL_HANDLE;
-    VkQueue presentQueue_  = VK_NULL_HANDLE;
+    VkQueue graphicsQueue_    = VK_NULL_HANDLE;
+    VkQueue presentQueue_     = VK_NULL_HANDLE;
+    VkQueue videoEncodeQueue_ = VK_NULL_HANDLE;
 
     QueueFamilyIndices queueIndices_;
     bool validationEnabled_;
+    bool headless_;
 
     // ── Instance 创建 ─────────────────────
     void createInstance(const char* appName) {
@@ -142,12 +159,6 @@ private:
             throw std::runtime_error("Failed to create Vulkan instance");
     }
 
-    void setupDebugMessenger() {
-        VkDebugUtilsMessengerCreateInfoEXT createInfo{};
-        populateDebugMessengerCreateInfo(createInfo);
-        if (CreateDebugUtilsMessengerEXT(instance_, &createInfo, nullptr, &debugMessenger_) != VK_SUCCESS)
-            throw std::runtime_error("Failed to set up debug messenger");
-    }
 
     void createSurface() {
         if (!SDL_Vulkan_CreateSurface(window_, instance_, nullptr, &surface_))
@@ -158,8 +169,7 @@ private:
     void pickPhysicalDevice() {
         uint32_t count = 0;
         vkEnumeratePhysicalDevices(instance_, &count, nullptr);
-        if (count == 0)
-            throw std::runtime_error("No Vulkan-capable GPU found");
+        if (count == 0) throw std::runtime_error("No Vulkan GPU found");
 
         std::vector<VkPhysicalDevice> devices(count);
         vkEnumeratePhysicalDevices(instance_, &count, devices.data());
@@ -170,38 +180,45 @@ private:
                 break;
             }
         }
-
-        if (physicalDevice_ == VK_NULL_HANDLE)
-            throw std::runtime_error("No suitable GPU found");
+        if (physicalDevice_ == VK_NULL_HANDLE) throw std::runtime_error("No suitable GPU for 8K Export found");
     }
 
     bool isDeviceSuitable(VkPhysicalDevice device) {
         QueueFamilyIndices indices = findQueueFamilies(device);
         bool extensionsOk = checkDeviceExtensionSupport(device);
-        return indices.isComplete() && extensionsOk;
+
+        // 如果是导出模式，我们需要检查编码功能是否支持
+        return indices.isComplete(headless_) && extensionsOk;
     }
 
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
         QueueFamilyIndices indices;
-
         uint32_t queueFamilyCount = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
         std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
         for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+            // 图形队列
             if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
                 indices.graphicsFamily = i;
 
-            VkBool32 presentSupport = false;
-            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface_, &presentSupport);
-            if (presentSupport)
-                indices.presentFamily = i;
+            // 呈现队列 (非 Headless 模式必需)
+            if (!headless_) {
+                VkBool32 presentSupport = false;
+                vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface_, &presentSupport);
+                if (presentSupport) indices.presentFamily = i;
+            }
 
-            if (indices.isComplete()) break;
+            // 视频编码队列 (所有模式建议拥有，导出模式必需)
+            // 需要包含 VIDEO_ENCODE_BIT_KHR (0x00000040)
+            if (queueFamilies[i].queueFlags & 0x00000040) {
+                indices.videoEncodeFamily = i;
+            }
+
+            if (indices.isComplete(headless_)) break;
         }
-
-        queueIndices_ = indices;   // 保存下来供创建逻辑设备使用
+        queueIndices_ = indices;
         return indices;
     }
 
@@ -211,7 +228,17 @@ private:
         std::vector<VkExtensionProperties> available(extCount);
         vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount, available.data());
 
-        std::set<std::string> required(deviceExtensions_.begin(), deviceExtensions_.end());
+        std::vector<const char*> requiredExtensions;
+        if (!headless_) {
+            requiredExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+        } else {
+            // Headless 导出所需的关键视频扩展
+            requiredExtensions.push_back("VK_KHR_video_queue");
+            requiredExtensions.push_back("VK_KHR_video_encode_queue");
+            requiredExtensions.push_back("VK_EXT_video_encode_av1");
+        }
+
+        std::set<std::string> required(requiredExtensions.begin(), requiredExtensions.end());
         for (const auto& ext : available)
             required.erase(ext.extensionName);
 
@@ -220,48 +247,44 @@ private:
 
     // ── 逻辑设备创建 ──────────────────────
     void createLogicalDevice() {
-        // 确保 queueIndices_ 已填充（已在 pickPhysicalDevice 中调用 findQueueFamilies）
-        queueIndices_ = findQueueFamilies(physicalDevice_);
-
-        std::set<uint32_t> uniqueFamilies = {
-            queueIndices_.graphicsFamily.value(),
-            queueIndices_.presentFamily.value()
-        };
+        std::set<uint32_t> uniqueFamilies = { queueIndices_.graphicsFamily.value() };
+        if (queueIndices_.presentFamily.has_value()) uniqueFamilies.insert(queueIndices_.presentFamily.value());
+        if (queueIndices_.videoEncodeFamily.has_value()) uniqueFamilies.insert(queueIndices_.videoEncodeFamily.value());
 
         std::vector<VkDeviceQueueCreateInfo> queueInfos;
         float priority = 1.0f;
         for (uint32_t family : uniqueFamilies) {
-            VkDeviceQueueCreateInfo qInfo{};
-            qInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            VkDeviceQueueCreateInfo qInfo{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
             qInfo.queueFamilyIndex = family;
             qInfo.queueCount = 1;
             qInfo.pQueuePriorities = &priority;
             queueInfos.push_back(qInfo);
         }
-
         VkPhysicalDeviceShaderDrawParametersFeatures drawParamsFeatures{};
         drawParamsFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
         drawParamsFeatures.shaderDrawParameters = VK_TRUE;
 
+        // 启用功能
         VkPhysicalDeviceFeatures features{};
         features.sampleRateShading = VK_TRUE;
 
-
-        VkDeviceCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        // 视频编码需要额外的链式结构
+        VkDeviceCreateInfo createInfo{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
         createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueInfos.size());
         createInfo.pQueueCreateInfos    = queueInfos.data();
         createInfo.pEnabledFeatures     = &features;
-        createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions_.size());
-        createInfo.ppEnabledExtensionNames = deviceExtensions_.data();
-        createInfo.pNext = &drawParamsFeatures;   // 关键：链接到 pNext 链
-
-        if (validationEnabled_) {
-            createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers_.size());
-            createInfo.ppEnabledLayerNames = validationLayers_.data();
+        createInfo.pNext = &drawParamsFeatures;
+        std::vector<const char*> extensions;
+        if (!headless_) {
+            extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
         } else {
-            createInfo.enabledLayerCount = 0;
+            extensions.push_back("VK_KHR_video_queue");
+            extensions.push_back("VK_KHR_video_encode_queue");
+            extensions.push_back("VK_EXT_video_encode_av1");
         }
+        createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+        createInfo.ppEnabledExtensionNames = extensions.data();
+
 
         if (vkCreateDevice(physicalDevice_, &createInfo, nullptr, &device_) != VK_SUCCESS)
             throw std::runtime_error("Failed to create logical device");
@@ -269,17 +292,33 @@ private:
 
     void retrieveQueues() {
         vkGetDeviceQueue(device_, queueIndices_.graphicsFamily.value(), 0, &graphicsQueue_);
-        vkGetDeviceQueue(device_, queueIndices_.presentFamily.value(), 0, &presentQueue_);
+        if (queueIndices_.presentFamily.has_value())
+            vkGetDeviceQueue(device_, queueIndices_.presentFamily.value(), 0, &presentQueue_);
+        if (queueIndices_.videoEncodeFamily.has_value())
+            vkGetDeviceQueue(device_, queueIndices_.videoEncodeFamily.value(), 0, &videoEncodeQueue_);
     }
 
-    // ── 辅助函数 ──────────────────────────
     std::vector<const char*> getRequiredInstanceExtensions() const {
-        uint32_t sdlExtCount = 0;
-        const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
-        std::vector<const char*> extensions(sdlExts, sdlExts + sdlExtCount);
+        std::vector<const char*> extensions;
+        if (!headless_) {
+            uint32_t sdlExtCount = 0;
+            const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
+            for(uint32_t i=0; i<sdlExtCount; ++i) extensions.push_back(sdlExts[i]);
+        } else {
+            // Headless 模式的基础实例扩展
+            // 如果后续需要使用 VkVideoSession，可能需要一些特定的外部内存扩展
+        }
+
         if (validationEnabled_)
             extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         return extensions;
+    }
+
+    void setupDebugMessenger() {
+        VkDebugUtilsMessengerCreateInfoEXT createInfo{};
+        populateDebugMessengerCreateInfo(createInfo);
+        if (CreateDebugUtilsMessengerEXT(instance_, &createInfo, nullptr, &debugMessenger_) != VK_SUCCESS)
+            throw std::runtime_error("Failed to set up debug messenger");
     }
 
     bool checkValidationLayerSupport() const {
@@ -291,55 +330,35 @@ private:
         for (const char* layerName : validationLayers_) {
             bool found = false;
             for (const auto& layer : availableLayers)
-                if (strcmp(layerName, layer.layerName) == 0) {
-                    found = true;
-                    break;
-                }
+                if (strcmp(layerName, layer.layerName) == 0) { found = true; break; }
             if (!found) return false;
         }
         return true;
     }
 
     static void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& createInfo) {
-        createInfo = {};
-        createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-        createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT
-                                   | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-                                   | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-        createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-                               | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-                               | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+        createInfo = { VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT };
+        createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+        createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT;
         createInfo.pfnUserCallback = debugCallback;
     }
 
-    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-        VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-        VkDebugUtilsMessageTypeFlagsEXT type,
-        const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-        void* pUserData)
-    {
-        std::cerr << "Validation: " << pCallbackData->pMessage << std::endl;
+    static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT s, VkDebugUtilsMessageTypeFlagsEXT t, const VkDebugUtilsMessengerCallbackDataEXT* p, void* u) {
+        std::cerr << "Validation: " << p->pMessage << std::endl;
         return VK_FALSE;
     }
 
-    static VkResult CreateDebugUtilsMessengerEXT(VkInstance instance,
-                                                  const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
-                                                  const VkAllocationCallbacks* pAllocator,
-                                                  VkDebugUtilsMessengerEXT* pDebugMessenger) {
-        auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
-        return func ? func(instance, pCreateInfo, pAllocator, pDebugMessenger)
-                    : VK_ERROR_EXTENSION_NOT_PRESENT;
+    static VkResult CreateDebugUtilsMessengerEXT(VkInstance inst, const VkDebugUtilsMessengerCreateInfoEXT* p, const VkAllocationCallbacks* a, VkDebugUtilsMessengerEXT* m) {
+        auto func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(inst, "vkCreateDebugUtilsMessengerEXT");
+        return func ? func(inst, p, a, m) : VK_ERROR_EXTENSION_NOT_PRESENT;
     }
 
-    static void DestroyDebugUtilsMessengerEXT(VkInstance instance,
-                                               VkDebugUtilsMessengerEXT messenger,
-                                               const VkAllocationCallbacks* pAllocator) {
-        auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-        if (func) func(instance, messenger, pAllocator);
+    static void DestroyDebugUtilsMessengerEXT(VkInstance inst, VkDebugUtilsMessengerEXT m, const VkAllocationCallbacks* a) {
+        auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(inst, "vkDestroyDebugUtilsMessengerEXT");
+        if (func) func(inst, m, a);
     }
 
     const std::vector<const char*> validationLayers_ = { "VK_LAYER_KHRONOS_validation" };
-    const std::vector<const char*> deviceExtensions_ = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 };
 
 } // namespace StuCanvas::Vulkan
