@@ -998,6 +998,167 @@ namespace StuCanvas
 
             return pc;
         }
+
+
+        void CmdBeginRenderPass(
+            VkCommandBuffer cmd,
+            VkRenderPass renderPass,
+            VkFramebuffer framebuffer,
+            VkExtent2D extent,
+            VkClearColorValue clearColor = {{0.0f, 0.0f, 0.0f, 1.0f}})
+        {
+            // 1. 配置清除值 (颜色 + 深度)
+            std::array<VkClearValue, 2> clearValues{};
+            clearValues[0].color = clearColor;
+            clearValues[1].depthStencil = {1.0f, 0}; // 深度清空为最远
+
+            // 2. 配置开始信息
+            VkRenderPassBeginInfo rpBegin{ VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+            rpBegin.renderPass = renderPass;
+            rpBegin.framebuffer = framebuffer;
+            rpBegin.renderArea.offset = {0, 0};
+            rpBegin.renderArea.extent = extent;
+            rpBegin.clearValueCount = static_cast<uint32_t>(clearValues.size());
+            rpBegin.pClearValues = clearValues.data();
+
+            // 3. 开启渲染通路
+            vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+
+            // 4. 顺便设置动态视口和剪裁 (几乎所有绘制都需要)
+            VkViewport viewport{0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f};
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+            VkRect2D scissor{{0, 0}, extent};
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+        }
+
+
+
+
+    void RecordGraphicsCommands(
+        VkCommandBuffer cmd,
+        const ProcessedFrameData<T>& frameData,
+        const Vulkan::CanvasPipelineGroup& pipelines,
+        const Vulkan::CanvasDescriptorGroup& descriptors,
+        const Vulkan::CanvasBufferGroup& buffers,
+        Vulkan::CanvasPushConstants pc) // 值传递，允许内部修改 radius
+    {
+        if (frameData.isEmpty()) return;
+
+        // --------------------------
+        // 1. 绘制线段 (Segments)
+        // --------------------------
+        if (!frameData.allSegments.empty())
+        {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.segments->get());
+
+            pc.pointRadius = 3.0f; // 线宽 (lineWidth)
+            vkCmdPushConstants(cmd, pipelines.segments->getLayout(),
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(pc), &pc);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelines.segments->getLayout(), 0, 1, &descriptors.segments, 0, nullptr);
+
+            // 线段实例化渲染 (每个线段 6 个顶点组成 Quad)
+            vkCmdDraw(cmd, 6, static_cast<uint32_t>(frameData.allSegments.size()), 0, 0);
+        }
+
+        // --------------------------
+        // 2. 绘制点云 (Points)
+        // --------------------------
+        if (!frameData.allPoints.empty())
+        {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.points->get());
+
+            pc.pointRadius = 5.0f; // 恢复点半径
+            vkCmdPushConstants(cmd, pipelines.points->getLayout(),
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(pc), &pc);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelines.points->getLayout(), 0, 1, &descriptors.points, 0, nullptr);
+
+            // 点云实例化渲染 (每个点 3 个顶点组成包裹圆的三角形)
+            vkCmdDraw(cmd, 3, static_cast<uint32_t>(frameData.allPoints.size()), 0, 0);
+        }
+
+        // --------------------------
+        // 3. 绘制贝塞尔路径 (Paths)
+        // --------------------------
+        if (frameData.allPathPoints.size() >= 4)
+        {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.paths->get());
+
+            pc.pointRadius = 4.0f; // 路径宽度 (strokeWidth)
+            vkCmdPushConstants(cmd, pipelines.paths->getLayout(),
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(pc), &pc);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelines.paths->getLayout(), 0, 1, &descriptors.paths, 0, nullptr);
+
+            // 每 4 个点构成一段，计算段数: (N-1)/3
+            uint32_t segmentCount = (static_cast<uint32_t>(frameData.allPathPoints.size()) - 1) / 3;
+            vkCmdDraw(cmd, 6, segmentCount, 0, 0);
+        }
+
+        // --------------------------
+        // 4. 绘制三角面网格 (Triangles)
+        // --------------------------
+        if (!frameData.allTriVertices.empty())
+        {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.triangles->get());
+
+            vkCmdPushConstants(cmd, pipelines.triangles->getLayout(),
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(pc), &pc);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    pipelines.triangles->getLayout(), 0, 1, &descriptors.triangles, 0, nullptr);
+
+            // 绑定索引缓冲并执行索引绘制
+            vkCmdBindIndexBuffer(cmd, buffers.triangleIndices.getBuffer(), 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, static_cast<uint32_t>(frameData.allTriIndices.size()), 1, 0, 0, 0);
+        }
+    }
+
+        void CleanupVulkanResources(
+            VkDevice device,
+            VkDescriptorSetLayout descSetLayout,
+            VkCommandPool uploadPool,
+            Vulkan::CanvasDescriptorGroup& descriptors,
+            Vulkan::CanvasPipelineGroup& pipelines)
+        {
+            // 1. 核心：首先确保 GPU 已经完全停止工作，不再引用任何资源
+            if (device != VK_NULL_HANDLE) {
+                vkDeviceWaitIdle(device);
+
+                // 2. 销毁管线对象 (Pipeline 依赖于 PipelineLayout 和 DescriptorSetLayout)
+                // 由于使用了 unique_ptr，调用 reset() 会显式触发销毁
+                pipelines.points.reset();
+                pipelines.segments.reset();
+                pipelines.paths.reset();
+                pipelines.triangles.reset();
+
+                // 3. 销毁描述符池 (这会自动释放从该池分配的所有 Descriptor Sets)
+                if (descriptors.pool != VK_NULL_HANDLE) {
+                    vkDestroyDescriptorPool(device, descriptors.pool, nullptr);
+                    descriptors.pool = VK_NULL_HANDLE;
+                }
+
+                // 4. 销毁上传专用的指令池
+                if (uploadPool != VK_NULL_HANDLE) {
+                    vkDestroyCommandPool(device, uploadPool, nullptr);
+                }
+
+                // 5. 最后销毁布局 (Layout) 资源
+                // 它是基础定义，必须在所有依赖它的实例（Pipeline, Pool）消失后销毁
+                if (descSetLayout != VK_NULL_HANDLE) {
+                    vkDestroyDescriptorSetLayout(device, descSetLayout, nullptr);
+                }
+            }
+        }
     };
 
     template <typename T>
@@ -1006,7 +1167,7 @@ namespace StuCanvas
         using namespace Vulkan;
 
         // 1. Vulkan 初始化
-        VulkanInit vkInit("StuCanvas Point Render", 800, 600, true);
+        VulkanInit vkInit("StuCanvas Render", 800, 600, true);
         VkDevice device = vkInit.getDevice();
 
         VkFormat swapchainFormat;
@@ -1053,41 +1214,29 @@ namespace StuCanvas
                                                      VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 
         // 6. 主渲染循环
+       // 6. 主渲染循环
         while (running)
         {
-            // --- A. 事件处理与按键交互 ---
+            // --- A. 事件处理 ---
             while (SDL_PollEvent(&event))
             {
                 if (event.type == SDL_EVENT_QUIT) running = false;
-                if (event.type == SDL_EVENT_WINDOW_RESIZED) presenter.markResized();
+                if (event.type == SDL_EVENT_WINDOW_RESIZED) {
+                    presenter.markResized();
+                    // 窗口缩放后，即使暂停也需要强制重新录制指令
+                }
                 if (event.type == SDL_EVENT_KEY_DOWN)
                 {
                     auto key = event.key.key;
-                    if (key == SDLK_ESCAPE)
-                    {
-                        running = false;
-                    }
-                    else if (key == SDLK_SPACE)
-                    {
+                    if (key == SDLK_ESCAPE) running = false;
+                    else if (key == SDLK_SPACE) {
                         is_paused = !is_paused;
-                        last_time = SDL_GetTicks(); // 恢复播放时重置时间戳，防止跳帧
+                        last_time = SDL_GetTicks();
                         frame_dirty = true;
                     }
-                    else if (key == SDLK_LEFT)
-                    {
-                        if (current_frame > 0) current_frame--;
-                        frame_dirty = true;
-                    }
-                    else if (key == SDLK_RIGHT)
-                    {
-                        current_frame++;
-                        frame_dirty = true;
-                    }
-                    else if (key == SDLK_R)
-                    {
-                        current_frame = 0;
-                        frame_dirty = true;
-                    }
+                    else if (key == SDLK_LEFT) { if (current_frame > 0) current_frame--; frame_dirty = true; }
+                    else if (key == SDLK_RIGHT) { current_frame++; frame_dirty = true; }
+                    else if (key == SDLK_R) { current_frame = 0; frame_dirty = true; }
                 }
             }
 
@@ -1104,158 +1253,46 @@ namespace StuCanvas
                 }
             }
 
-
+            // --- C. 数据准备逻辑：仅在帧改变时执行 ---
             if (frame_dirty)
             {
-                // 动态更新窗口标题反馈当前状态
                 std::string title = "StuCanvas Render - Frame: " + std::to_string(current_frame) +
                     (is_paused ? " (Paused)" : " (Playing)");
                 SDL_SetWindowTitle(vkInit.getWindow(), title.c_str());
 
-                auto clips = GetClipsAtFrame(current_frame);
-                std::sort(clips.begin(), clips.end(), [](const CanvasClip* a, const CanvasClip* b)
-                {
-                    return a->render_order < b->render_order;
-                });
-
+                // 准备数据包
                 frameData = PrepareFrameData(current_frame);
+
+                // 上传到 GPU 缓冲区
                 UploadFrameData(device, vkInit.getPhysicalDevice(), uploadPool,
                                 vkInit.getGraphicsQueue(), frameData, descriptors, buffers);
+
                 frame_dirty = false;
-
-
-                // --- D. 实际画面呈现 (不论帧变没变，屏幕需要保持渲染状态) ---
-                uint32_t imageIndex;
-                VkCommandBuffer cmd = presenter.beginFrame(imageIndex);
-                if (cmd == VK_NULL_HANDLE) continue;
-
-                auto extent = presenter.getExtent();
-                CameraConfig<float> transformedCam = camera_.GetNormalizedConfig(
-                    curCenterX_, curCenterY_, curCenterZ_, curScale_);
-                auto viewW = static_cast<float>(extent.width);
-                auto viewH = static_cast<float>(extent.height);
-                auto pc = ComputePushConstants(extent, frameData);
-
-                VkRenderPassBeginInfo rpBegin{};
-                rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                rpBegin.renderPass = renderPass.get();
-                rpBegin.framebuffer = presenter.getFramebuffer(imageIndex);
-                rpBegin.renderArea.offset = {0, 0};
-                rpBegin.renderArea.extent = extent;
-                std::array<VkClearValue, 2> clearValues{};
-                clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}}; // 背景色
-                clearValues[1].depthStencil = {1.0f, 0}; // 深度清空为 1.0 (最远)
-                rpBegin.clearValueCount = 2;
-                rpBegin.pClearValues = clearValues.data();
-
-                vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
-
-                if (!frameData.isEmpty())
-                {
-                    VkViewport viewport{};
-                    viewport.x = 0.0f;
-                    viewport.y = 0.0f;
-                    viewport.width = viewW;
-                    viewport.height = viewH;
-                    viewport.minDepth = 0.0f;
-                    viewport.maxDepth = 1.0f;
-                    vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-                    VkRect2D scissor{{0, 0}, extent};
-                    vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-                    // --------------------------
-                    // 绘制 1：线段
-                    // --------------------------
-                    if (!frameData.allSegments.empty())
-                    {
-                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.segments->get());
-
-                        pc.pointRadius = 3.0f; // 复用同一个内存位：这是线宽 (lineWidth)
-                        vkCmdPushConstants(cmd, pipelines.segments->getLayout(),
-                                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                           0, sizeof(pc), &pc);
-
-                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                pipelines.segments->getLayout(), 0, 1, &descriptors.segments, 0,
-                                                nullptr);
-
-                        // 线段实例化渲染 (每个线段 6 个顶点组成 Quad)
-                        vkCmdDraw(cmd, 6, static_cast<uint32_t>(frameData.allSegments.size()), 0, 0);
-                    }
-
-                    // --------------------------
-                    // 绘制 2：点云
-                    // --------------------------
-                    if (!frameData.allPoints.empty())
-                    {
-                        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.points->get());
-
-                        pc.pointRadius = 5.0f; // 恢复点半径
-                        vkCmdPushConstants(cmd, pipelines.points->getLayout(),
-                                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                           0, sizeof(pc), &pc);
-
-                        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                                pipelines.points->getLayout(), 0, 1, &descriptors.points, 0, nullptr);
-
-                        // 点云实例化渲染 (每个点 3 个顶点组成超大三角形包裹圆)
-                        vkCmdDraw(cmd, 3, static_cast<uint32_t>(frameData.allPoints.size()), 0, 0);
-                    }
-                }
-
-                if (!frameData.allPathPoints.empty())
-                {
-                    // 至少有 4 个点才能构成一段三次贝塞尔
-                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.paths->get());
-
-                    // 设置路径宽度 (利用 pc.pointRadius 对应的位置，Shader 里叫 strokeWidth)
-                    pc.pointRadius = 4.0f;
-                    vkCmdPushConstants(cmd, pipelines.paths->getLayout(),
-                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                       0, sizeof(pc), &pc);
-
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                            pipelines.paths->getLayout(), 0, 1, &descriptors.paths, 0, nullptr);
-
-                    // 计算总段数：(总点数 - 1) / 3
-                    // 注意：如果存在多条独立的 Path，建议在 CPU 端循环调用，或在 Buffer 中处理间隙
-                    uint32_t segmentCount = (static_cast<uint32_t>(frameData.allPathPoints.size()) - 1) / 3;
-
-                    // 绘制：每个 Instance 是一个四边形(6顶点)，覆盖一段曲线
-                    vkCmdDraw(cmd, 6, segmentCount, 0, 0);
-                }
-
-                // --------------------------
-                // 绘制 4：三角面网格 (Triangle Mesh)
-                // --------------------------
-                if (!frameData.allTriVertices.empty())
-                {
-                    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.triangles->get());
-
-                    // 更新包含 camPos 的 PushConstants (确保 pc 结构体为 96 字节)
-                    vkCmdPushConstants(cmd, pipelines.triangles->getLayout(),
-                                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                       0, sizeof(pc), &pc);
-
-                    // 绑定描述符集 (这会自动绑定顶点 SSBO)
-                    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                            pipelines.triangles->getLayout(), 0, 1, &descriptors.triangles, 0, nullptr);
-
-                    // 绑定物理索引缓冲
-                    vkCmdBindIndexBuffer(cmd, buffers.triangleIndices.getBuffer(), 0, VK_INDEX_TYPE_UINT32);
-
-                    // 执行索引绘制：索引总数，1个实例，起始索引0，顶点偏移0，起始实例0
-                    vkCmdDrawIndexed(cmd, static_cast<uint32_t>(frameData.allTriIndices.size()), 1, 0, 0, 0);
-                }
-
-                vkCmdEndRenderPass(cmd);
-                presenter.endFrame(cmd, imageIndex);
             }
+
+            // --- D. 画面呈现逻辑：每一帧都运行，确保窗口缩放、遮挡恢复能正常响应 ---
+            uint32_t imageIndex;
+            VkCommandBuffer cmd = presenter.beginFrame(imageIndex);
+
+            // 如果窗口被最小化或交换链正在重建，beginFrame 会返回 NULL，此时跳过绘制
+            if (cmd == VK_NULL_HANDLE) continue;
+
+            auto extent = presenter.getExtent();
+
+            // 重新计算常量（因为 extent 可能随缩放改变了，即便 frameData 没变）
+            auto pc = ComputePushConstants(extent, frameData);
+
+            // 开始录制
+            CmdBeginRenderPass(cmd, renderPass.get(), presenter.getFramebuffer(imageIndex), extent);
+
+            // 无论是否暂停，都根据当前已有的 buffers 录制绘制指令
+            RecordGraphicsCommands(cmd, frameData, pipelines, descriptors, buffers, pc);
+
+            vkCmdEndRenderPass(cmd);
+
+            // 提交显示
+            presenter.endFrame(cmd, imageIndex);
         }
-        vkDeviceWaitIdle(vkInit.getDevice());
-        vkDestroyDescriptorSetLayout(vkInit.getDevice(), descSetLayout, nullptr);
-        vkDestroyCommandPool(vkInit.getDevice(), uploadPool, nullptr);
-        vkDestroyDescriptorPool(vkInit.getDevice(), descriptors.pool, nullptr);
+        CleanupVulkanResources(device, descSetLayout, uploadPool, descriptors, pipelines);
     }
 } // namespace StuCanvas
