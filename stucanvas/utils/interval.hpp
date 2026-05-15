@@ -2186,8 +2186,6 @@ namespace StuCanvas
     }
 }
 
-
-
 #if !defined(STUCANVAS_HEADER_ONLY) && !defined(STUCANVAS_COMPILING_LIBRARY)
 
 // 1. 拦截 Interval 和 IntervalSet 的 double 实例

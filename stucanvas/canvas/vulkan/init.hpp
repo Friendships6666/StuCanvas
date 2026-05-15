@@ -14,7 +14,6 @@
 #include <iostream>
 
 namespace StuCanvas::Vulkan {
-
 class VulkanInit {
 public:
     VulkanInit(const char* appName = "StuCanvas",

@@ -40,10 +40,11 @@ public:
               uint32_t graphicsFamily,
               uint32_t presentFamily,
               SDL_Window* window,
+              VkSampleCountFlagBits msaaSamples,
               VkSwapchainKHR oldSwapChain = VK_NULL_HANDLE)
         : physicalDevice_(physicalDevice), device_(device),
           surface_(surface), renderPass_(renderPass),
-          graphicsFamily_(graphicsFamily), presentFamily_(presentFamily),
+          graphicsFamily_(graphicsFamily), presentFamily_(presentFamily),msaaSamples_(msaaSamples),
           window_(window)
     {
         createSwapChain(oldSwapChain);
@@ -74,7 +75,8 @@ public:
           imageFormat_(other.imageFormat_),
           extent_(other.extent_),
           imageViews_(std::move(other.imageViews_)),
-          framebuffers_(std::move(other.framebuffers_))
+          framebuffers_(std::move(other.framebuffers_)),
+    msaaSamples_(other.msaaSamples_)
     {
         other.swapChain_ = VK_NULL_HANDLE;
     }
@@ -137,6 +139,7 @@ private:
     uint32_t         graphicsFamily_;
     uint32_t         presentFamily_;
     SDL_Window*      window_;
+    VkSampleCountFlagBits msaaSamples_;
 
 
     VkImage        depthImage_       = VK_NULL_HANDLE;
@@ -238,7 +241,7 @@ private:
     void createColorResources() {
         VkFormat colorFormat = imageFormat_; // 与交换链格式一致
 
-        createImage(extent_.width, extent_.height, VK_SAMPLE_COUNT_4_BIT, colorFormat,
+        createImage(extent_.width, extent_.height, msaaSamples_, colorFormat,
                     VK_IMAGE_TILING_OPTIMAL,
                     // 注意：由于这张图只在 subpass 内部使用，标记为 TRANSIENT 可在移动端等设备大幅省电
                     VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
@@ -275,9 +278,8 @@ void createDepthResources() {
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
-        // 【关键修改】：这里必须使用 msaaSamples_（如 VK_SAMPLE_COUNT_4_BIT）
-        // 只有这里和颜色缓冲的采样数一致，硬件才能在样本级别进行深度测试
-        imageInfo.samples = VK_SAMPLE_COUNT_4_BIT;
+
+        imageInfo.samples = msaaSamples_;
 
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 

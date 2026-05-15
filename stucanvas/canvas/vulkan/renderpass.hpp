@@ -20,8 +20,8 @@ public:
      * @param device        Vulkan 逻辑设备句柄。
      * @param colorFormat   颜色附件的格式（通常与交换链图像格式一致）。
      */
-    RenderPass(VkDevice device, VkFormat colorFormat)
-        : device_(device), renderPass_(VK_NULL_HANDLE)
+    RenderPass(VkDevice device, VkFormat colorFormat,VkSampleCountFlagBits msaaSamples)
+        : device_(device), renderPass_(VK_NULL_HANDLE),msaaSamples_(msaaSamples)
     {
         createRenderPass(colorFormat);
     }
@@ -58,6 +58,8 @@ public:
 private:
     VkDevice device_;
     VkRenderPass renderPass_;
+    VkSampleCountFlagBits msaaSamples_;
+
 
     void createRenderPass(VkFormat colorFormat) {
         // 1. 颜色附件描述
@@ -68,7 +70,7 @@ private:
 
         VkAttachmentDescription colorAttachment{};
         colorAttachment.format         = colorFormat;
-        colorAttachment.samples        = VK_SAMPLE_COUNT_4_BIT;
+        colorAttachment.samples        = msaaSamples_;
         colorAttachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;   // 渲染前清空
         colorAttachment.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;  // 渲染后保存以供显示
         colorAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -79,7 +81,7 @@ private:
         // 2. 深度附件描述
         VkAttachmentDescription depthAttachment{};
         depthAttachment.format         = VK_FORMAT_D32_SFLOAT;          // 标准深度格式
-        depthAttachment.samples        = VK_SAMPLE_COUNT_4_BIT;
+        depthAttachment.samples        = msaaSamples_;
         depthAttachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;   // 渲染前清空深度缓冲区
         depthAttachment.storeOp        = VK_ATTACHMENT_STORE_OP_DONT_CARE; // 渲染后不需要保存深度数据
         depthAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;

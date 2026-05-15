@@ -47,7 +47,7 @@ public:
     Presenter(VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface,
               uint32_t graphicsFamily, uint32_t presentFamily,
               VkQueue graphicsQueue, VkQueue presentQueue,
-              VkRenderPass renderPass, SDL_Window* window);
+              VkRenderPass renderPass, SDL_Window* window,VkSampleCountFlagBits msaaSamples);
 
     ~Presenter();
 
@@ -98,6 +98,7 @@ private:
     VkQueue          graphicsQueue_, presentQueue_;
     VkRenderPass     renderPass_;
     SDL_Window*      window_;
+    VkSampleCountFlagBits msaaSamples_;
 
     std::unique_ptr<SwapChain> swapChain_;
 
@@ -121,15 +122,15 @@ inline Presenter::Presenter(VkPhysicalDevice physicalDevice, VkDevice device,
                             VkSurfaceKHR surface, uint32_t graphicsFamily,
                             uint32_t presentFamily, VkQueue graphicsQueue,
                             VkQueue presentQueue, VkRenderPass renderPass,
-                            SDL_Window* window)
+                            SDL_Window* window,VkSampleCountFlagBits msaaSamples_)
     : physicalDevice_(physicalDevice), device_(device), surface_(surface),
       graphicsFamily_(graphicsFamily), presentFamily_(presentFamily),
       graphicsQueue_(graphicsQueue), presentQueue_(presentQueue),
-      renderPass_(renderPass), window_(window)
+      renderPass_(renderPass), window_(window),msaaSamples_(msaaSamples_)
 {
     swapChain_ = std::make_unique<SwapChain>(
         physicalDevice_, device_, surface_, renderPass_,
-        graphicsFamily_, presentFamily_, window_);
+        graphicsFamily_, presentFamily_, window_,msaaSamples_);
 
     createCommandPool();
     createSyncObjects();
