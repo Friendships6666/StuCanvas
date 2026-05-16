@@ -201,134 +201,128 @@ namespace StuCanvas::Vulkan
             // 将在此析构函数结束时自动触发其内部的 vkDestroyBuffer 和 vkFreeMemory。
         }
 
-        /**
-         * @brief 录制单帧 AV1 编码指令
-         * @param cmd 视频编码队列的 Command Buffer
-         * @param srcView 必须是 NV12 (2PLANE) 格式且带有 VIDEO_ENCODE_SRC 标志的 ImageView
-         * @param frameIdx 全局绝对帧序号
-         */
-        void EncodeFrame(VkCommandBuffer cmd, VkImageView srcView, uint32_t frameIdx)
-        {
-            bool isKeyFrame = (frameIdx % settings_.gopSize == 0);
-            uint32_t querySlot = frameIdx % MAX_ENCODE_QUERIES;
+/**
+ * @brief 录制单帧 AV1 编码指令 (2026 正式版严谨实现)
+ * @param cmd 视频编码队列的 Command Buffer
+ * @param srcView 带有 VIDEO_ENCODE_SRC 标志的 NV12 视图
+ * @param frameIdx 全局帧索引
+ */
+void EncodeFrame(VkCommandBuffer cmd, VkImageView srcView, uint32_t frameIdx)
+{
+    const bool isKeyFrame = (frameIdx % settings_.gopSize == 0);
+    const uint32_t querySlot = frameIdx % MAX_ENCODE_QUERIES;
+    const VkDeviceSize bitstreamOffset = (VkDeviceSize)querySlot * (32 * 1024 * 1024);
 
-            // 8K 场景下，为了支持流水线并行，建议 dstBuffer 偏移量随 querySlot 移动
-            // 防止当前帧还在编码时，下一帧的录制覆盖了 Buffer 空间
-            VkDeviceSize bitstreamOffset = querySlot * (32 * 1024 * 1024);
+    // ---------------------------------------------------------
+    // 1. 状态机 Reset (解决 VUID-07012: Session Uninitialized)
+    // ---------------------------------------------------------
+    if (frameIdx == 0 || isKeyFrame)
+    {
+        VkVideoCodingControlInfoKHR controlInfo{ VK_STRUCTURE_TYPE_VIDEO_CODING_CONTROL_INFO_KHR };
+        controlInfo.flags = VK_VIDEO_CODING_CONTROL_RESET_BIT_KHR;
+        pfnVkCmdControlVideoCodingKHR(cmd, &controlInfo);
+    }
 
-            // ---------------------------------------------------------
-            // 1. 配置 AV1 标准参考帧管理 (DPB Logic)
-            // ---------------------------------------------------------
-            StdVideoEncodeAV1PictureInfo stdPicInfo{};
-            stdPicInfo.frame_type = isKeyFrame ? STD_VIDEO_AV1_FRAME_TYPE_KEY : STD_VIDEO_AV1_FRAME_TYPE_INTER;
-            stdPicInfo.order_hint = (uint8_t)(frameIdx % 256);
+    // ---------------------------------------------------------
+    // 2. 定义当前帧的物理资源 (用于输入和重建像素存储)
+    // ---------------------------------------------------------
+    VkVideoPictureResourceInfoKHR pictureResource{ VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR };
+    pictureResource.imageViewBinding = srcView;
+    pictureResource.codedExtent = { settings_.width, settings_.height };
+    pictureResource.codedOffset = { 0, 0 };
+    pictureResource.baseArrayLayer = 0;
 
-            // 配置哪些 DPB 槽位需要被当前编码后的图像刷新 (对于 KeyFrame 通常全刷新)
-            stdPicInfo.refresh_frame_flags = isKeyFrame ? 0xFF : 0x01;
+    // ---------------------------------------------------------
+    // 3. 配置 DPB 槽位元数据 (解决 VUID-10318)
+    // ---------------------------------------------------------
+    // 当前帧作为参考帧时的标准元数据
+    StdVideoEncodeAV1ReferenceInfo stdRefInfo{};
+    stdRefInfo.frame_type = isKeyFrame ? STD_VIDEO_AV1_FRAME_TYPE_KEY : STD_VIDEO_AV1_FRAME_TYPE_INTER;
 
-            // 对于 AV1，即使是 P 帧也需要定义参考索引映射
-            if (!isKeyFrame)
-            {
-                stdPicInfo.primary_ref_frame = 0; // 选 Slot 0 作为主参考
-                for (int i = 0; i < STD_VIDEO_AV1_REFS_PER_FRAME; ++i)
-                {
-                    stdPicInfo.ref_frame_idx[i] = 0; // 简单起见，全部指向最近的一个 Slot
-                }
-            }
+    VkVideoEncodeAV1DpbSlotInfoKHR av1DpbSlotInfo{ VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_DPB_SLOT_INFO_KHR };
+    av1DpbSlotInfo.sType = VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_DPB_SLOT_INFO_KHR;
+    av1DpbSlotInfo.pStdReferenceInfo = &stdRefInfo;
 
-            // ---------------------------------------------------------
-            // 2. 配置 AV1 Vulkan 扩展信息
-            // ---------------------------------------------------------
-            VkVideoEncodeAV1PictureInfoKHR av1PicInfo{VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_PICTURE_INFO_KHR};
-            av1PicInfo.pStdPictureInfo = &stdPicInfo;
+    // 定义 Setup Slot: 告诉硬件当前帧编码后的重建像素存入 Slot 0
+    VkVideoReferenceSlotInfoKHR setupSlot{ VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR };
+    setupSlot.pNext = &av1DpbSlotInfo;
+    setupSlot.slotIndex = 0;
+    setupSlot.pPictureResource = &pictureResource; // 修复：必须指向物理资源
 
-            // 预测模式设置
-            av1PicInfo.predictionMode = isKeyFrame
-                                            ? VK_VIDEO_ENCODE_AV1_PREDICTION_MODE_INTRA_ONLY_KHR
-                                            : VK_VIDEO_ENCODE_AV1_PREDICTION_MODE_SINGLE_REFERENCE_KHR;
+    // 定义 Reference Slot: 如果是 P 帧，参考 Slot 0 中的前一帧像素
+    VkVideoReferenceSlotInfoKHR referenceSlot{ VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR };
+    referenceSlot.pNext = &av1DpbSlotInfo;
+    referenceSlot.slotIndex = 0;
+    referenceSlot.pPictureResource = &pictureResource;
 
-            // 关键修复：填入参考帧映射（Validation Error 提到的 7 个 Slot 指向）
-            for (uint32_t i = 0; i < 7; ++i)
-            {
-                av1PicInfo.referenceNameSlotIndices[i] = -1; // 默认无参考
-            }
-            if (!isKeyFrame)
-            {
-                av1PicInfo.referenceNameSlotIndices[STD_VIDEO_AV1_REFERENCE_NAME_LAST_FRAME - 1] = 0; // LAST 指向 Slot 0
-            }
+    // ---------------------------------------------------------
+    // 4. 配置 AV1 图像参数 (解决 VUID-10291)
+    // ---------------------------------------------------------
+    StdVideoEncodeAV1PictureInfo stdPicInfo{};
+    stdPicInfo.frame_type = isKeyFrame ? STD_VIDEO_AV1_FRAME_TYPE_KEY : STD_VIDEO_AV1_FRAME_TYPE_INTER;
+    stdPicInfo.order_hint = (uint8_t)(frameIdx % 128);
+    // KeyFrame 刷新全部 8 个虚拟槽位，P 帧仅刷新 Slot 0
+    stdPicInfo.refresh_frame_flags = isKeyFrame ? 0xFF : 0x01;
 
-            // ---------------------------------------------------------
-            // 3. 配置参考槽位 (Reference Slots) - 解决 pSetupReferenceSlot 为空的问题
-            // ---------------------------------------------------------
-            // 定义当前帧编码后应该存入哪个槽位（Setup Slot）
-            VkVideoReferenceSlotInfoKHR setupSlot{VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR};
-            setupSlot.slotIndex = 0; // 我们使用 Slot 0 作为滚动参考槽
-            setupSlot.pPictureResource = nullptr; // 在编码时通常由驱动内部管理，设为 null
+    VkVideoEncodeAV1PictureInfoKHR av1PicInfo{ VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_PICTURE_INFO_KHR };
+    av1PicInfo.pStdPictureInfo = &stdPicInfo;
+    av1PicInfo.predictionMode = isKeyFrame
+                                    ? VK_VIDEO_ENCODE_AV1_PREDICTION_MODE_INTRA_ONLY_KHR
+                                    : VK_VIDEO_ENCODE_AV1_PREDICTION_MODE_SINGLE_REFERENCE_KHR;
 
-            // 定义当前帧需要参考哪些槽位（Reference Slots）
-            VkVideoReferenceSlotInfoKHR referenceSlot{VK_STRUCTURE_TYPE_VIDEO_REFERENCE_SLOT_INFO_KHR};
-            referenceSlot.slotIndex = 0;
-            referenceSlot.pPictureResource = nullptr;
+    // 核心修复：建立参考名到 Slot 的映射。由于 primary_ref_frame = 0，映射表首项必须合法
+    for (uint32_t i = 0; i < 7; ++i) av1PicInfo.referenceNameSlotIndices[i] = -1;
+    if (!isKeyFrame)
+    {
+        stdPicInfo.primary_ref_frame = 0;
+        av1PicInfo.referenceNameSlotIndices[0] = 0; // 名 0 指向 Slot 0
+    }
 
-            // ---------------------------------------------------------
-            // 4. 填充通用编码指令结构
-            // ---------------------------------------------------------
-            VkVideoEncodeInfoKHR encodeInfo{VK_STRUCTURE_TYPE_VIDEO_ENCODE_INFO_KHR};
-            encodeInfo.pNext = &av1PicInfo;
+    // ---------------------------------------------------------
+    // 5. 组装通用编码指令
+    // ---------------------------------------------------------
+    VkVideoEncodeInfoKHR encodeInfo{ VK_STRUCTURE_TYPE_VIDEO_ENCODE_INFO_KHR };
+    encodeInfo.pNext = &av1PicInfo;
+    encodeInfo.srcPictureResource = pictureResource;
+    encodeInfo.dstBuffer = bitstreamBuffer_.getBuffer();
+    encodeInfo.dstBufferOffset = bitstreamOffset;
+    encodeInfo.dstBufferRange = 32 * 1024 * 1024;
 
-            // 关键修复：补全 srcPictureResource 内部结构
-            encodeInfo.srcPictureResource.sType = VK_STRUCTURE_TYPE_VIDEO_PICTURE_RESOURCE_INFO_KHR;
-            encodeInfo.srcPictureResource.imageViewBinding = srcView;
-            encodeInfo.srcPictureResource.codedExtent = {settings_.width, settings_.height};
-            encodeInfo.srcPictureResource.codedOffset = {0, 0};
+    // 每一帧都必须有 SetupSlot (重建输出)
+    encodeInfo.pSetupReferenceSlot = &setupSlot;
 
-            // 比特流目标缓冲
-            encodeInfo.dstBuffer = bitstreamBuffer_.getBuffer();
-            encodeInfo.dstBufferOffset = bitstreamOffset;
-            encodeInfo.dstBufferRange = 32 * 1024 * 1024;
+    if (!isKeyFrame)
+    {
+        encodeInfo.referenceSlotCount = 1;
+        encodeInfo.pReferenceSlots = &referenceSlot;
+    }
 
-            // 绑定参考帧逻辑
-            encodeInfo.pSetupReferenceSlot = &setupSlot;
-            if (!isKeyFrame)
-            {
-                encodeInfo.referenceSlotCount = 1;
-                encodeInfo.pReferenceSlots = &referenceSlot;
-            }
-            else
-            {
-                encodeInfo.referenceSlotCount = 0;
-                encodeInfo.pReferenceSlots = nullptr;
-            }
+    // ---------------------------------------------------------
+    // 6. 录制到指令缓冲
+    // ---------------------------------------------------------
+    // 关键：Query 重置必须在编码作用域外
+    vkCmdResetQueryPool(cmd, queryPool_, querySlot, 1);
 
-            // ---------------------------------------------------------
-            // 5. 录制指令流
-            // ---------------------------------------------------------
+    VkVideoBeginCodingInfoKHR beginInfo{ VK_STRUCTURE_TYPE_VIDEO_BEGIN_CODING_INFO_KHR };
+    beginInfo.videoSession = videoSession_;
+    beginInfo.videoSessionParameters = videoSessionParameters_;
 
-            // 关键修复：Query 重置必须在 Coding Scope 之外
-            vkCmdResetQueryPool(cmd, queryPool_, querySlot, 1);
+    // BeginCoding 的参考列表必须包含编码过程中涉及的所有槽位 (Setup + Reference)
+    beginInfo.referenceSlotCount = 1;
+    beginInfo.pReferenceSlots = &setupSlot;
 
-            VkVideoBeginCodingInfoKHR beginInfo{VK_STRUCTURE_TYPE_VIDEO_BEGIN_CODING_INFO_KHR};
-            beginInfo.videoSession = videoSession_;
-            // 关键修复：必须传入 SessionParameters，否则驱动无法获取 Sequence Header
-            beginInfo.videoSessionParameters = videoSessionParameters_;
+    pfnVkCmdBeginVideoCodingKHR(cmd, &beginInfo);
 
-            // 如果有参考帧，BeginCoding 需要知道涉及哪些槽位（本示例为 Slot 0）
-            beginInfo.referenceSlotCount = encodeInfo.referenceSlotCount + 1;
-            beginInfo.pReferenceSlots = &setupSlot;
+    vkCmdBeginQuery(cmd, queryPool_, querySlot, 0);
 
-            pfnVkCmdBeginVideoCodingKHR(cmd, &beginInfo);
+    pfnVkCmdEncodeVideoKHR(cmd, &encodeInfo);
 
-            // 开启长度反馈查询
-            vkCmdBeginQuery(cmd, queryPool_, querySlot, 0);
+    vkCmdEndQuery(cmd, queryPool_, querySlot);
 
-            // 发射真正的硬件编码任务
-            pfnVkCmdEncodeVideoKHR(cmd, &encodeInfo);
-
-            vkCmdEndQuery(cmd, queryPool_, querySlot);
-
-            // 结束作用域
-            pfnVkCmdEndVideoCodingKHR(cmd, nullptr);
-        }
+    // 关键修复：正式版严禁传 nullptr
+    VkVideoEndCodingInfoKHR endInfo{ VK_STRUCTURE_TYPE_VIDEO_END_CODING_INFO_KHR };
+    pfnVkCmdEndVideoCodingKHR(cmd, &endInfo);
+}
 
         uint64_t GetEncodedSize()
         {
@@ -359,6 +353,7 @@ namespace StuCanvas::Vulkan
         PFN_vkCmdEndVideoCodingKHR pfnVkCmdEndVideoCodingKHR = nullptr;
         PFN_vkCmdEncodeVideoKHR pfnVkCmdEncodeVideoKHR = nullptr;
         PFN_vkGetPhysicalDeviceVideoCapabilitiesKHR pfnVkGetPhysicalDeviceVideoCapabilitiesKHR = nullptr;
+        PFN_vkCmdControlVideoCodingKHR pfnVkCmdControlVideoCodingKHR = nullptr;
         // --- 【实现 loadVideoFunctions】 ---
 
         void loadVideoFunctions(VkInstance instance, VkDevice device)
@@ -382,6 +377,7 @@ namespace StuCanvas::Vulkan
             pfnVkCmdBeginVideoCodingKHR = (PFN_vkCmdBeginVideoCodingKHR)load("vkCmdBeginVideoCodingKHR");
             pfnVkCmdEndVideoCodingKHR = (PFN_vkCmdEndVideoCodingKHR)load("vkCmdEndVideoCodingKHR");
             pfnVkCmdEncodeVideoKHR = (PFN_vkCmdEncodeVideoKHR)load("vkCmdEncodeVideoKHR");
+            pfnVkCmdControlVideoCodingKHR = (PFN_vkCmdControlVideoCodingKHR)load("vkCmdControlVideoCodingKHR");
 
 
 
@@ -392,16 +388,19 @@ namespace StuCanvas::Vulkan
             VkVideoProfileListInfoKHR profileList;
         } profileChain_;
         void initProfileChain() {
+            // 1. AV1 核心标志 (叶子)
             profileChain_.av1Profile = { VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_PROFILE_INFO_KHR };
             profileChain_.av1Profile.stdProfile = STD_VIDEO_AV1_PROFILE_MAIN;
 
+            // 2. 视频 Profile (中间) - 必须指向 AV1Info
             profileChain_.videoProfile = { VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR };
-            profileChain_.videoProfile.pNext = &profileChain_.av1Profile;
+            profileChain_.videoProfile.pNext = &profileChain_.av1Profile; // 指向叶子
             profileChain_.videoProfile.videoCodecOperation = VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR;
             profileChain_.videoProfile.chromaSubsampling = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR;
             profileChain_.videoProfile.lumaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
             profileChain_.videoProfile.chromaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
 
+            // 3. Profile List (根) - 用于 Buffer/Image 创建
             profileChain_.profileList = { VK_STRUCTURE_TYPE_VIDEO_PROFILE_LIST_INFO_KHR };
             profileChain_.profileList.profileCount = 1;
             profileChain_.profileList.pProfiles = &profileChain_.videoProfile;
@@ -537,37 +536,22 @@ void setupSessionMemory(VkPhysicalDevice physDev)
     std::cout << "[VideoEncoder] Successfully allocated and bound " << memReqCount << " memory regions for AV1 Session." << std::endl;
 }
 
-        void createQueryPool()
-        {
-            // 1. 必须配置与 Session 一致的 Profile 链
-            VkVideoEncodeAV1ProfileInfoKHR av1Profile{VK_STRUCTURE_TYPE_VIDEO_ENCODE_AV1_PROFILE_INFO_KHR};
-            av1Profile.stdProfile = STD_VIDEO_AV1_PROFILE_MAIN;
-
-            VkVideoProfileInfoKHR videoProfile{VK_STRUCTURE_TYPE_VIDEO_PROFILE_INFO_KHR};
-            videoProfile.pNext = &profileChain_.profileList;;
-            videoProfile.videoCodecOperation = VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR;
-            videoProfile.chromaSubsampling = VK_VIDEO_CHROMA_SUBSAMPLING_420_BIT_KHR;
-            videoProfile.lumaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
-            videoProfile.chromaBitDepth = VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR;
-
-            // 2. 配置反馈类型 (Feedback Flags)
+        void createQueryPool() {
             VkQueryPoolVideoEncodeFeedbackCreateInfoKHR feedbackInfo{
                 VK_STRUCTURE_TYPE_QUERY_POOL_VIDEO_ENCODE_FEEDBACK_CREATE_INFO_KHR
             };
-            // 关键：获取写入比特流的准确长度
             feedbackInfo.encodeFeedbackFlags = VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BYTES_WRITTEN_BIT_KHR;
 
-            // 3. 创建 Query Pool
-            VkQueryPoolCreateInfo queryPoolInfo{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
-            // 核心：pNext 必须挂载 Profile 信息和 Feedback 信息
-            queryPoolInfo.pNext = &videoProfile;
-            videoProfile.pNext = &feedbackInfo; // 嵌套链
+            VkQueryPoolCreateInfo queryPoolInfo{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+            // 关键：pNext 必须是 Profile -> Feedback 的链条
+            queryPoolInfo.pNext = &profileChain_.videoProfile;
+            feedbackInfo.pNext = queryPoolInfo.pNext;
+            queryPoolInfo.pNext = &feedbackInfo;
 
             queryPoolInfo.queryType = VK_QUERY_TYPE_VIDEO_ENCODE_FEEDBACK_KHR;
             queryPoolInfo.queryCount = MAX_ENCODE_QUERIES;
 
-            if (vkCreateQueryPool(device_, &queryPoolInfo, nullptr, &queryPool_) != VK_SUCCESS)
-            {
+            if (vkCreateQueryPool(device_, &queryPoolInfo, nullptr, &queryPool_) != VK_SUCCESS) {
                 throw std::runtime_error("Vulkan: Failed to create Video Encode Query Pool.");
             }
         }
