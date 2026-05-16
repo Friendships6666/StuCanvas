@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <iomanip>
 #include <utility>
 
 #include "../types/point.hpp"         // Point3D_GPU
@@ -23,6 +24,9 @@
 #include "../canvas/vulkan/present.hpp"
 #include "../utils/block_deque.hpp"
 #include "../canvas/vulkan/video_encoder_av1.hpp"
+#include "../canvas/vulkan/offscreen_target.hpp"
+#include "../utils/ivf_writer.hpp"
+#include "../canvas/vulkan/compute_pipeline.hpp"
 namespace StuCanvas
 {
 
@@ -490,6 +494,7 @@ namespace StuCanvas
         /// 直接访问所有片段（只读）
         const std::vector<CanvasClip>& GetClips() const { return clips_; }
         void render(uint64_t start_frame = 0);
+        void exportVideo(std::optional<uint64_t> start_frame = std::nullopt, std::optional<uint64_t> end_frame = std::nullopt);
 
     private:
         utils::BlockDeque<CanvasClip, 256> clips_;
@@ -1300,4 +1305,235 @@ namespace StuCanvas
         }
         CleanupVulkanResources(device, descSetLayout, uploadPool, descriptors, pipelines);
     }
+
+
+
+
+template <typename T>
+void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optional<uint64_t> end_frame) {
+    using namespace Vulkan;
+
+    // 1. 确定导出区间与分辨率
+    auto [auto_start, auto_end] = GetGlobalFrameRange();
+    uint64_t start_f = start_frame.value_or(auto_start);
+    uint64_t end_f = end_frame.value_or(auto_end);
+    if (end_f < start_f) return;
+    uint32_t total_frames = static_cast<uint32_t>(end_f - start_f + 1);
+
+    const auto& exportCfg = settings_.exportConfigs;
+    uint32_t exWidth = exportCfg.width;
+    uint32_t exHeight = exportCfg.height;
+
+    // 2. 初始化 Headless Vulkan
+    VulkanInit vkInit("StuCanvas Exporter", exWidth, exHeight, true, true);
+    VkDevice device = vkInit.getDevice();
+    VkInstance instance = vkInit.getInstance();
+    VkPhysicalDevice physDev = vkInit.getPhysicalDevice();
+
+    VkQueue graphicsQueue = vkInit.getGraphicsQueue();
+    VkQueue computeQueue  = vkInit.getComputeQueue(); // 请确保 init.hpp 有此接口，否则用 graphicsQueue
+    VkQueue encodeQueue   = vkInit.getVideoEncodeQueue();
+
+    // 3. 基础资源准备
+    RenderPass offscreenPass(device, VK_FORMAT_R8G8B8A8_UNORM, settings_.msaaSamples, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    auto shaders = LoadAllShaders(device);
+    auto descSetLayout = CreateDescriptorSetLayout(device);
+    auto descriptors = CreateDescriptors(device, descSetLayout);
+    auto pipelines = CreatePipelines(device, offscreenPass.get(), descSetLayout, shaders);
+
+    // 离屏渲染目标 (包含 8K RGB 和 YUV 图像)
+    OffscreenTarget target(device, physDev, exWidth, exHeight, settings_.msaaSamples, offscreenPass.get());
+
+    // 原生 AV1 编码器
+    VideoEncoderAV1 encoder(instance, device, physDev, vkInit.getQueueFamilyIndices().videoEncodeFamily.value(), exportCfg);
+
+    // ==========================================================
+    // 4. Compute Shader 转换通道准备 (RGB -> NV12)
+    // ==========================================================
+
+    // 创建 Compute 采样器 (用于读取 RGB 纹理)
+    VkSamplerCreateInfo samplerInfo{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    VkSampler computeSampler;
+    vkCreateSampler(device, &samplerInfo, nullptr, &computeSampler);
+
+    // 创建布局: Binding 0=SAMPLED_IMAGE(RGB), 1=STORAGE_IMAGE(Y), 2=STORAGE_IMAGE(UV)
+    std::array<VkDescriptorSetLayoutBinding, 3> compBindings{};
+    compBindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    compBindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+    compBindings[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+
+    VkDescriptorSetLayoutCreateInfo compLayoutInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 3, compBindings.data() };
+    VkDescriptorSetLayout computeLayout;
+    vkCreateDescriptorSetLayout(device, &compLayoutInfo, nullptr, &computeLayout);
+
+    auto compShader = ShaderModule::fromSlangFile(device, "/home/friendships666/Projects/StuCanvas/stucanvas/shaders/rgb_to_nv12.slang", "compute", "computeMain");
+    ComputePipeline yuvConverter(device, compShader.getModule(), {computeLayout});
+
+    // 创建 YUV 各平面的 View
+    auto CreateView = [&](VkImage img, VkFormat fmt, VkImageAspectFlags aspect) {
+        VkImageViewCreateInfo vi{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, nullptr, 0, img, VK_IMAGE_VIEW_TYPE_2D, fmt, {}, {aspect, 0, 1, 0, 1} };
+        VkImageView v; vkCreateImageView(device, &vi, nullptr, &v); return v;
+    };
+    VkImageView yView  = CreateView(target.getYuvImage(), VK_FORMAT_R8_UNORM, VK_IMAGE_ASPECT_PLANE_0_BIT);
+    VkImageView uvView = CreateView(target.getYuvImage(), VK_FORMAT_R8G8_UNORM, VK_IMAGE_ASPECT_PLANE_1_BIT);
+
+    // 描述符更新
+    VkDescriptorPoolSize poolSizes[] = { {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2} };
+    VkDescriptorPoolCreateInfo cpInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 2, poolSizes };
+    VkDescriptorPool compPool; vkCreateDescriptorPool(device, &cpInfo, nullptr, &compPool);
+    VkDescriptorSetAllocateInfo cai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, compPool, 1, &computeLayout };
+    VkDescriptorSet computeSet; vkAllocateDescriptorSets(device, &cai, &computeSet);
+
+    VkDescriptorImageInfo infoRGB{ computeSampler, target.getResolveRGBView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkDescriptorImageInfo infoY  { VK_NULL_HANDLE, yView, VK_IMAGE_LAYOUT_GENERAL };
+    VkDescriptorImageInfo infoUV { VK_NULL_HANDLE, uvView, VK_IMAGE_LAYOUT_GENERAL };
+
+    std::array<VkWriteDescriptorSet, 3> compWrites{};
+    compWrites[0] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &infoRGB };
+    compWrites[1] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoY };
+    compWrites[2] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoUV };
+    vkUpdateDescriptorSets(device, 3, compWrites.data(), 0, nullptr);
+
+    // ==========================================================
+    // 5. 并行指令与同步对象
+    // ==========================================================
+    VkCommandPool gfxPool = CreateCommandPool(device, vkInit.getGraphicsFamily(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+    VkCommandPool cmtPool = CreateCommandPool(device, vkInit.getComputeFamily(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+    VkCommandPool encPool = CreateCommandPool(device, vkInit.getQueueFamilyIndices().videoEncodeFamily.value(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+
+    VkCommandBuffer gfxCmd, cmtCmd, encCmd;
+    auto Alloc = [&](VkCommandPool p, VkCommandBuffer* c) {
+        VkCommandBufferAllocateInfo ai{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, p, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1 };
+        vkAllocateCommandBuffers(device, &ai, c);
+    };
+    Alloc(gfxPool, &gfxCmd); Alloc(cmtPool, &cmtCmd); Alloc(encPool, &encCmd);
+    // 定义信号量创建信息
+    VkSemaphoreCreateInfo semInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+    semInfo.pNext = nullptr;
+    semInfo.flags = 0;
+
+    // 定义栅栏创建信息
+    VkFenceCreateInfo fenceInfo{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    fenceInfo.pNext = nullptr;
+    fenceInfo.flags = 0; // 初始状态为“未触发”，GPU 完成指令后会将其置为“已触发”
+    VkSemaphore semRenderDone, semComputeDone;
+    vkCreateSemaphore(device, &semInfo, nullptr, &semRenderDone);
+    vkCreateSemaphore(device, &semInfo, nullptr, &semComputeDone);
+    VkFence frameFence;
+    vkCreateFence(device, &fenceInfo, nullptr, &frameFence);
+
+    // 6. 导出文件初始化
+    std::ofstream videoFile(exportCfg.outputPath, std::ios::binary);
+    IVFWriter::WriteHeader(videoFile, exWidth, exHeight, FPS_, total_frames);
+
+    ProcessedFrameData<double> frameData;
+    Vulkan::CanvasBufferGroup buffers;
+    auto startTime = std::chrono::high_resolution_clock::now();
+
+    // ==========================================================
+    // 7. 主导出循环
+    // ==========================================================
+    for (uint64_t current_f = start_f; current_f <= end_f; ++current_f) {
+
+        frameData = PrepareFrameData(current_f);
+        UploadFrameData(device, physDev, gfxPool, graphicsQueue, frameData, descriptors, buffers);
+
+        // --- Step 1: Graphics Queue ---
+        vkResetCommandBuffer(gfxCmd, 0);
+        VkCommandBufferBeginInfo b{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+        vkBeginCommandBuffer(gfxCmd, &b);
+        auto pc = ComputePushConstants({exWidth, exHeight}, frameData);
+        CmdBeginRenderPass(gfxCmd, offscreenPass.get(), target.getFramebuffer(), {exWidth, exHeight});
+        RecordGraphicsCommands(gfxCmd, frameData, pipelines, descriptors, buffers, pc);
+        vkCmdEndRenderPass(gfxCmd);
+
+        // RGB -> Shader Read 转换
+        VkImageMemoryBarrier2 b1{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getResolveRGBImage(), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
+        VkDependencyInfo d1{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b1 };
+        vkCmdPipelineBarrier2(gfxCmd, &d1);
+        vkEndCommandBuffer(gfxCmd);
+
+        // --- Step 2: Compute Queue ---
+        vkResetCommandBuffer(cmtCmd, 0);
+        vkBeginCommandBuffer(cmtCmd, &b);
+        // YUV -> General 转换
+        VkImageMemoryBarrier2 b2{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
+            VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
+        VkDependencyInfo d2{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b2 };
+        vkCmdPipelineBarrier2(cmtCmd, &d2);
+
+        vkCmdBindPipeline(cmtCmd, VK_PIPELINE_BIND_POINT_COMPUTE, yuvConverter.get());
+        vkCmdBindDescriptorSets(cmtCmd, VK_PIPELINE_BIND_POINT_COMPUTE, yuvConverter.getLayout(), 0, 1, &computeSet, 0, nullptr);
+        vkCmdDispatch(cmtCmd, (exWidth/2 + 15)/16, (exHeight/2 + 15)/16, 1);
+
+        // YUV -> Video Encode Src 转换
+        VkImageMemoryBarrier2 b3{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
+            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR, VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR,
+            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_VIDEO_ENCODE_SRC_KHR,
+            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
+        VkDependencyInfo d3{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b3 };
+        vkCmdPipelineBarrier2(cmtCmd, &d3);
+        vkEndCommandBuffer(cmtCmd);
+
+        // --- Step 3: Video Queue ---
+        vkResetCommandBuffer(encCmd, 0);
+        vkBeginCommandBuffer(encCmd, &b);
+        encoder.EncodeFrame(encCmd, target.getYuvView(), (uint32_t)(current_f - start_f));
+        vkEndCommandBuffer(encCmd);
+
+        // --- 链式提交 ---
+        VkPipelineStageFlags waitGfx = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        VkSubmitInfo s1{ VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1, &gfxCmd, 1, &semRenderDone };
+        vkQueueSubmit(graphicsQueue, 1, &s1, VK_NULL_HANDLE);
+
+        VkPipelineStageFlags waitCmt = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        VkSubmitInfo s2{ VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 1, &semRenderDone, &waitCmt, 1, &cmtCmd, 1, &semComputeDone };
+        vkQueueSubmit(computeQueue, 1, &s2, VK_NULL_HANDLE);
+
+        VkPipelineStageFlags waitEnc = 0x08000000; // VIDEO_ENCODE_BIT_KHR
+        VkSubmitInfo s3{ VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 1, &semComputeDone, &waitEnc, 1, &encCmd, 0, nullptr };
+        vkQueueSubmit(encodeQueue, 1, &s3, frameFence);
+
+        // 等待并落盘
+        vkWaitForFences(device, 1, &frameFence, VK_TRUE, UINT64_MAX);
+        vkResetFences(device, 1, &frameFence);
+
+        uint64_t fSize = encoder.GetEncodedSize();
+        void* p; vkMapMemory(device, encoder.GetBitstreamMemory(), 0, fSize, 0, &p);
+        IVFWriter::WriteFrame(videoFile, p, fSize, current_f - start_f);
+        vkUnmapMemory(device, encoder.GetBitstreamMemory());
+
+        if ((current_f - start_f) % 5 == 0) {
+            std::cout << "\rExporting: " << std::fixed << std::setprecision(1) << (float)(current_f-start_f+1)/total_frames*100 << "%" << std::flush;
+        }
+    }
+
+    vkDeviceWaitIdle(device);
+    // 销毁局部资源
+    vkDestroySampler(device, computeSampler, nullptr);
+    vkDestroyImageView(device, yView, nullptr);
+    vkDestroyImageView(device, uvView, nullptr);
+    vkDestroyDescriptorPool(device, compPool, nullptr);
+    vkDestroyDescriptorSetLayout(device, computeLayout, nullptr);
+    vkDestroyCommandPool(device, gfxPool, nullptr);
+    vkDestroyCommandPool(device, cmtPool, nullptr);
+    vkDestroyCommandPool(device, encPool, nullptr);
+    vkDestroySemaphore(device, semRenderDone, nullptr);
+    vkDestroySemaphore(device, semComputeDone, nullptr);
+    vkDestroyFence(device, frameFence, nullptr);
+    videoFile.close();
+
+    CleanupVulkanResources(device, descSetLayout, VK_NULL_HANDLE, descriptors, pipelines);
+}
 } // namespace StuCanvas

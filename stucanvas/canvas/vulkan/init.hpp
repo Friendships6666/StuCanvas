@@ -20,14 +20,14 @@ public:
     struct QueueFamilyIndices {
         std::optional<uint32_t> graphicsFamily;
         std::optional<uint32_t> presentFamily;
-        std::optional<uint32_t> videoEncodeFamily; // 新增：视频编码队列
+        std::optional<uint32_t> computeFamily;    // 异步计算
+        std::optional<uint32_t> videoEncodeFamily; // 视频编码
 
         bool isComplete(bool headless) const {
             if (headless) {
-                // Headless 模式下只需要图形和编码队列
-                return graphicsFamily.has_value() && videoEncodeFamily.has_value();
+                return graphicsFamily.has_value() && computeFamily.has_value() && videoEncodeFamily.has_value();
             }
-            return graphicsFamily.has_value() && presentFamily.has_value();
+            return graphicsFamily.has_value() && presentFamily.has_value() && computeFamily.has_value() && videoEncodeFamily.has_value();
         }
     };
 
@@ -99,10 +99,12 @@ public:
 
     VkQueue getGraphicsQueue()    const { return graphicsQueue_; }
     VkQueue getPresentQueue()     const { return presentQueue_; }
+    VkQueue getComputeQueue()     const { return computeQueue_; }
     VkQueue getVideoEncodeQueue() const { return videoEncodeQueue_; }
 
     uint32_t getGraphicsFamily()    const { return queueIndices_.graphicsFamily.value(); }
     uint32_t getPresentFamily()     const { return queueIndices_.presentFamily.value_or(0); }
+    uint32_t getComputeFamily()     const { return queueIndices_.computeFamily.value_or(0); }
     uint32_t getVideoEncodeFamily() const { return queueIndices_.videoEncodeFamily.value_or(0); }
 
     const QueueFamilyIndices& getQueueFamilyIndices() const { return queueIndices_; }
@@ -119,6 +121,7 @@ private:
     VkQueue graphicsQueue_    = VK_NULL_HANDLE;
     VkQueue presentQueue_     = VK_NULL_HANDLE;
     VkQueue videoEncodeQueue_ = VK_NULL_HANDLE;
+    VkQueue computeQueue_ = VK_NULL_HANDLE;
 
     QueueFamilyIndices queueIndices_;
     bool validationEnabled_;
@@ -165,62 +168,144 @@ private:
             throw std::runtime_error("Failed to create surface: " + std::string(SDL_GetError()));
     }
 
-    // ── 物理设备选择 ──────────────────────
+    // ── 物理设备选择全部实现 ──────────────────────
     void pickPhysicalDevice() {
         uint32_t count = 0;
         vkEnumeratePhysicalDevices(instance_, &count, nullptr);
-        if (count == 0) throw std::runtime_error("No Vulkan GPU found");
+        if (count == 0) throw std::runtime_error("No Vulkan-capable GPU found");
 
         std::vector<VkPhysicalDevice> devices(count);
         vkEnumeratePhysicalDevices(instance_, &count, devices.data());
 
+        std::cout << "[Vulkan] Found " << count << " physical device(s)." << std::endl;
+
+        // 1. 第一轮筛选：优先寻找“离散显卡” (RTX 5070 Ti) 且满足功能要求
         for (const auto& dev : devices) {
-            if (isDeviceSuitable(dev)) {
-                physicalDevice_ = dev;
+            VkPhysicalDeviceProperties props;
+            vkGetPhysicalDeviceProperties(dev, &props);
+
+            if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+                if (isDeviceSuitable(dev)) {
+                    physicalDevice_ = dev;
+                    std::cout << "[Vulkan] Selected Discrete GPU: " << props.deviceName << std::endl;
+                    break;
+                }
+            }
+        }
+
+        // 2. 第二轮筛选：如果没找到独显，寻找任何满足要求的设备（如高性能集成显卡）
+        if (physicalDevice_ == VK_NULL_HANDLE) {
+            for (const auto& dev : devices) {
+                if (isDeviceSuitable(dev)) {
+                    VkPhysicalDeviceProperties props;
+                    vkGetPhysicalDeviceProperties(dev, &props);
+                    physicalDevice_ = dev;
+                    std::cout << "[Vulkan] Fallback to GPU: " << props.deviceName << std::endl;
+                    break;
+                }
+            }
+        }
+
+        if (physicalDevice_ == VK_NULL_HANDLE) {
+            throw std::runtime_error("No suitable GPU found (Missing 8K AV1 Encode support or Graphics Queues)");
+        }
+    }
+
+
+    bool isDeviceSuitable(VkPhysicalDevice device) {
+        // A. 检查队列族支持情况
+        QueueFamilyIndices indices = findQueueFamilies(device);
+
+        // B. 检查扩展支持情况 (重点：AV1 编码扩展名探测)
+        bool extensionsSupported = checkDeviceExtensionSupport(device);
+
+        // C. 检查 8K 渲染能力（可选：检查 maxImageDimension2D 是否 >= 7680）
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(device, &props);
+        bool canHandle8K = props.limits.maxImageDimension2D >= 7680;
+
+        return indices.isComplete(headless_) && extensionsSupported && canHandle8K;
+    }
+
+QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+    QueueFamilyIndices indices;
+
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+    // ---------------------------------------------------------
+    // 第一步：寻找视频编码家族 (Video Encode)
+    // ---------------------------------------------------------
+    for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+        if (queueFamilies[i].queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR) {
+            indices.videoEncodeFamily = i;
+            // 优先选择，找到就先占住
+            break;
+        }
+    }
+
+    // ---------------------------------------------------------
+    // 第二步：寻找渲染与呈现家族 (Graphics & Present)
+    // ---------------------------------------------------------
+    for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+        bool hasGraphics = (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT);
+        bool hasPresent = true;
+
+        if (!headless_) {
+            VkBool32 presentSupport = false;
+            vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface_, &presentSupport);
+            hasPresent = presentSupport;
+        }
+
+        if (hasGraphics && hasPresent) {
+            indices.graphicsFamily = i;
+            if (!headless_) indices.presentFamily = i;
+            break;
+        }
+    }
+
+    // ---------------------------------------------------------
+    // 第三步：寻找计算家族 (Compute) - 智能化优先级逻辑
+    // ---------------------------------------------------------
+
+    // 优先级 A：纯计算家族 (Dedicated Compute)，这是 Async Compute 的最佳选择
+    // 这种家族支持 Compute，但【不支持】Graphics
+    for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+        if ((queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) &&
+           !(queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+            indices.computeFamily = i;
+            break;
+        }
+    }
+
+    // 优先级 B：如果没找到纯计算家族，找一个和渲染家族【不同】的家族
+    if (!indices.computeFamily.has_value()) {
+        for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+            if ((queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) &&
+                i != indices.graphicsFamily.value_or(9999)) {
+                indices.computeFamily = i;
                 break;
             }
         }
-        if (physicalDevice_ == VK_NULL_HANDLE) throw std::runtime_error("No suitable GPU for 8K Export found");
     }
 
-    bool isDeviceSuitable(VkPhysicalDevice device) {
-        QueueFamilyIndices indices = findQueueFamilies(device);
-        bool extensionsOk = checkDeviceExtensionSupport(device);
-
-        // 如果是导出模式，我们需要检查编码功能是否支持
-        return indices.isComplete(headless_) && extensionsOk;
+    // 优先级 C：最后的回退方案，使用跟渲染同一个家族
+    if (!indices.computeFamily.has_value()) {
+        indices.computeFamily = indices.graphicsFamily;
     }
 
-    QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
-        QueueFamilyIndices indices;
-        uint32_t queueFamilyCount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+    // 打印探测结果，方便调试
+    std::cout << "[Vulkan] Queue Families Picked: " << std::endl;
+    std::cout << " - Graphics: " << indices.graphicsFamily.value_or(-1) << std::endl;
+    if (!headless_) std::cout << " - Present:  " << indices.presentFamily.value_or(-1) << std::endl;
+    std::cout << " - Compute:  " << indices.computeFamily.value_or(-1) << " (Async Capability)" << std::endl;
+    std::cout << " - VideoEnc: " << indices.videoEncodeFamily.value_or(-1) << std::endl;
 
-        for (uint32_t i = 0; i < queueFamilyCount; ++i) {
-            // 图形队列
-            if (queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-                indices.graphicsFamily = i;
-
-            // 呈现队列 (非 Headless 模式必需)
-            if (!headless_) {
-                VkBool32 presentSupport = false;
-                vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface_, &presentSupport);
-                if (presentSupport) indices.presentFamily = i;
-            }
-
-            // 视频编码队列 (所有模式建议拥有，导出模式必需)
-            // 需要包含 VIDEO_ENCODE_BIT_KHR (0x00000040)
-            if (queueFamilies[i].queueFlags & 0x00000040) {
-                indices.videoEncodeFamily = i;
-            }
-
-            if (indices.isComplete(headless_)) break;
-        }
-        queueIndices_ = indices;
-        return indices;
-    }
+    queueIndices_ = indices;
+    return indices;
+}
 
     bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
         uint32_t extCount;
@@ -228,50 +313,77 @@ private:
         std::vector<VkExtensionProperties> available(extCount);
         vkEnumerateDeviceExtensionProperties(device, nullptr, &extCount, available.data());
 
-        std::vector<const char*> requiredExtensions;
+        std::vector<const char*> required;
         if (!headless_) {
-            requiredExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+            required.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
         } else {
-            // Headless 导出所需的关键视频扩展
-            requiredExtensions.push_back("VK_KHR_video_queue");
-            requiredExtensions.push_back("VK_KHR_video_encode_queue");
-            requiredExtensions.push_back("VK_EXT_video_encode_av1");
+            required.push_back("VK_KHR_video_queue");
+            required.push_back("VK_KHR_video_encode_queue");
+            required.push_back("VK_KHR_video_encode_av1"); // 必须是 KHR
+            // 同时兼容 KHR 和 EXT 版本的 AV1 编码名
+            bool hasAV1 = false;
+            for (const auto& ext : available) {
+                if (strcmp(ext.extensionName, "VK_KHR_video_encode_av1") == 0 ||
+                    strcmp(ext.extensionName, "VK_EXT_video_encode_av1") == 0) {
+                    hasAV1 = true;
+                    break;
+                    }
+            }
+            if (!hasAV1) return false;
         }
 
-        std::set<std::string> required(requiredExtensions.begin(), requiredExtensions.end());
-        for (const auto& ext : available)
-            required.erase(ext.extensionName);
+        std::set<std::string> requiredSet(required.begin(), required.end());
+        for (const auto& ext : available) {
+            requiredSet.erase(ext.extensionName);
+        }
 
-        return required.empty();
+        if (!requiredSet.empty()) {
+            std::cout << "Missing extensions on this GPU:" << std::endl;
+            for (auto& s : requiredSet) std::cout << " - " << s << std::endl;
+        }
+
+        return requiredSet.empty();
     }
 
     // ── 逻辑设备创建 ──────────────────────
     void createLogicalDevice() {
-        std::set<uint32_t> uniqueFamilies = { queueIndices_.graphicsFamily.value() };
-        if (queueIndices_.presentFamily.has_value()) uniqueFamilies.insert(queueIndices_.presentFamily.value());
-        if (queueIndices_.videoEncodeFamily.has_value()) uniqueFamilies.insert(queueIndices_.videoEncodeFamily.value());
+        QueueFamilyIndices indices = findQueueFamilies(physicalDevice_);
 
-        std::vector<VkDeviceQueueCreateInfo> queueInfos;
-        float priority = 1.0f;
-        for (uint32_t family : uniqueFamilies) {
-            VkDeviceQueueCreateInfo qInfo{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
-            qInfo.queueFamilyIndex = family;
-            qInfo.queueCount = 1;
-            qInfo.pQueuePriorities = &priority;
-            queueInfos.push_back(qInfo);
+        // 使用 set 去重，防止同一个家族被创建多次
+        std::set<uint32_t> uniqueFamilies;
+        if (indices.graphicsFamily.has_value())    uniqueFamilies.insert(indices.graphicsFamily.value());
+        if (indices.presentFamily.has_value())     uniqueFamilies.insert(indices.presentFamily.value());
+        if (indices.computeFamily.has_value())     uniqueFamilies.insert(indices.computeFamily.value());
+        if (indices.videoEncodeFamily.has_value()) uniqueFamilies.insert(indices.videoEncodeFamily.value());
+
+        std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+        float queuePriority = 1.0f;
+        for (uint32_t familyIndex : uniqueFamilies) {
+            VkDeviceQueueCreateInfo queueCreateInfo{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
+            queueCreateInfo.queueFamilyIndex = familyIndex;
+            queueCreateInfo.queueCount = 1; // 统一取 0 号队列
+            queueCreateInfo.pQueuePriorities = &queuePriority;
+            queueCreateInfos.push_back(queueCreateInfo);
         }
+
+
+        VkPhysicalDeviceSynchronization2Features sync2Features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES };
+        sync2Features.synchronization2 = VK_TRUE;
+
+        VkPhysicalDeviceVideoEncodeAV1FeaturesKHR av1Features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VIDEO_ENCODE_AV1_FEATURES_KHR };
+        av1Features.videoEncodeAV1 = VK_TRUE;
+        av1Features.pNext = &sync2Features;
         VkPhysicalDeviceShaderDrawParametersFeatures drawParamsFeatures{};
         drawParamsFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
         drawParamsFeatures.shaderDrawParameters = VK_TRUE;
+        drawParamsFeatures.pNext = &av1Features;
 
-        // 启用功能
         VkPhysicalDeviceFeatures features{};
         features.sampleRateShading = VK_TRUE;
 
-        // 视频编码需要额外的链式结构
         VkDeviceCreateInfo createInfo{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
-        createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueInfos.size());
-        createInfo.pQueueCreateInfos    = queueInfos.data();
+        createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+        createInfo.pQueueCreateInfos    = queueCreateInfos.data();
         createInfo.pEnabledFeatures     = &features;
         createInfo.pNext = &drawParamsFeatures;
         std::vector<const char*> extensions;
@@ -280,7 +392,7 @@ private:
         } else {
             extensions.push_back("VK_KHR_video_queue");
             extensions.push_back("VK_KHR_video_encode_queue");
-            extensions.push_back("VK_EXT_video_encode_av1");
+            extensions.push_back("VK_KHR_video_encode_av1"); // 确保这里也是 KHR
         }
         createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
         createInfo.ppEnabledExtensionNames = extensions.data();
@@ -296,6 +408,8 @@ private:
             vkGetDeviceQueue(device_, queueIndices_.presentFamily.value(), 0, &presentQueue_);
         if (queueIndices_.videoEncodeFamily.has_value())
             vkGetDeviceQueue(device_, queueIndices_.videoEncodeFamily.value(), 0, &videoEncodeQueue_);
+        if (queueIndices_.computeFamily.has_value())
+            vkGetDeviceQueue(device_, queueIndices_.computeFamily.value(), 0, &computeQueue_);
     }
 
     std::vector<const char*> getRequiredInstanceExtensions() const {
@@ -304,10 +418,10 @@ private:
             uint32_t sdlExtCount = 0;
             const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
             for(uint32_t i=0; i<sdlExtCount; ++i) extensions.push_back(sdlExts[i]);
-        } else {
-            // Headless 模式的基础实例扩展
-            // 如果后续需要使用 VkVideoSession，可能需要一些特定的外部内存扩展
         }
+
+        // 关键：视频编码必需的实例扩展
+        extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 
         if (validationEnabled_)
             extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);

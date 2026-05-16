@@ -98,7 +98,7 @@ private:
     VkQueue          graphicsQueue_, presentQueue_;
     VkRenderPass     renderPass_;
     SDL_Window*      window_;
-    VkSampleCountFlagBits msaaSamples_;
+    VkSampleCountFlagBits msaaSamples_{};
 
     std::unique_ptr<SwapChain> swapChain_;
 

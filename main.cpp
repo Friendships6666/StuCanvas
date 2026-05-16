@@ -120,7 +120,7 @@ int main() {
     std::cout << "Controls: SPACE to Pause, LEFT/RIGHT to step frames." << std::endl;
 
     // 运行渲染
-    canvas.render();
+    canvas.exportVideo();
 
     return 0;
 }

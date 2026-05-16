@@ -20,10 +20,11 @@ public:
      * @param device        Vulkan 逻辑设备句柄。
      * @param colorFormat   颜色附件的格式（通常与交换链图像格式一致）。
      */
-    RenderPass(VkDevice device, VkFormat colorFormat,VkSampleCountFlagBits msaaSamples)
-        : device_(device), renderPass_(VK_NULL_HANDLE),msaaSamples_(msaaSamples)
+    RenderPass(VkDevice device, VkFormat colorFormat, VkSampleCountFlagBits msaaSamples,
+               VkImageLayout finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) // 默认值保持预览兼容
+        : device_(device),msaaSamples_(msaaSamples)
     {
-        createRenderPass(colorFormat);
+        createRenderPass(colorFormat, finalLayout);
     }
 
     ~RenderPass() {
@@ -57,11 +58,11 @@ public:
 
 private:
     VkDevice device_;
-    VkRenderPass renderPass_;
-    VkSampleCountFlagBits msaaSamples_;
+    VkRenderPass renderPass_{};
+    VkSampleCountFlagBits msaaSamples_{};
 
 
-    void createRenderPass(VkFormat colorFormat) {
+    void createRenderPass(VkFormat colorFormat, VkImageLayout finalLayout) {
         // 1. 颜色附件描述
 
 
@@ -76,8 +77,8 @@ private:
         colorAttachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         colorAttachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
-        colorAttachment.finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // 用于交换链呈现
-
+        // colorAttachment.finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // 用于交换链呈现
+        colorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         // 2. 深度附件描述
         VkAttachmentDescription depthAttachment{};
         depthAttachment.format         = VK_FORMAT_D32_SFLOAT;          // 标准深度格式
@@ -94,7 +95,7 @@ private:
         colorAttachmentResolve.samples = VK_SAMPLE_COUNT_1_BIT; // 必须是 1
         colorAttachmentResolve.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         colorAttachmentResolve.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        colorAttachmentResolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        colorAttachmentResolve.finalLayout = finalLayout;
 
 
 

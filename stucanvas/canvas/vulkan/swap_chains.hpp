@@ -136,10 +136,10 @@ private:
     VkDevice         device_;
     VkSurfaceKHR     surface_;
     VkRenderPass     renderPass_;
-    uint32_t         graphicsFamily_;
-    uint32_t         presentFamily_;
+    uint32_t         graphicsFamily_{};
+    uint32_t         presentFamily_{};
     SDL_Window*      window_;
-    VkSampleCountFlagBits msaaSamples_;
+    VkSampleCountFlagBits msaaSamples_{};
 
 
     VkImage        depthImage_       = VK_NULL_HANDLE;
