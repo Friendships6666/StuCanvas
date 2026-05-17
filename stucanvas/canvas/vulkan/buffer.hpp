@@ -12,6 +12,7 @@ namespace StuCanvas::Vulkan {
 /**
  * @brief 查找合适的内存类型索引。
  *
+ * @param physicalDevice 物理设备
  * @param memoryTypeBits 需求的内存类型位掩码（从 VkMemoryRequirements 获取）
  * @param properties     期望的内存属性（如 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT）
  * @return uint32_t 内存类型索引
@@ -22,11 +23,17 @@ inline uint32_t findMemoryType(VkPhysicalDevice physicalDevice,
     VkPhysicalDeviceMemoryProperties memProperties;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
 
+    // 第一轮：严格匹配属性
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
         if ((memoryTypeBits & (1 << i)) &&
             (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
             return i;
         }
+    }
+
+    // 第二轮：回退逻辑 (视频编码等特殊场景可能必须使用特定的内存索引)
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        if (memoryTypeBits & (1 << i)) return i;
     }
 
     throw std::runtime_error("Failed to find suitable memory type");
@@ -50,19 +57,22 @@ public:
      * @param size           缓冲区大小（字节）
      * @param usage          缓冲区使用标志
      * @param properties     期望的内存属性
+     * @param pNext          扩展结构体指针 (如 VkVideoProfileListInfoKHR)，默认为 nullptr
      * @return Buffer 对象
      */
     static Buffer Create(VkDevice device,
                          VkPhysicalDevice physicalDevice,
                          VkDeviceSize size,
                          VkBufferUsageFlags usage,
-                         VkMemoryPropertyFlags properties) {
+                         VkMemoryPropertyFlags properties,
+                         const void* pNext = nullptr) { // <--- 关键修改 1：增加 pNext 参数
         Buffer buffer;
         buffer.device_ = device;
 
         // 创建缓冲区
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.pNext = pNext; // <--- 关键修改 2：将传入的扩展链挂载到此处
         bufferInfo.size = size;
         bufferInfo.usage = usage;
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -206,17 +216,6 @@ public:
 
     /**
      * @brief 一键创建设备本地缓冲区并上传数据。
-     *
-     * 内部创建 staging 缓冲区，拷贝数据后销毁 staging。
-     *
-     * @param device         逻辑设备
-     * @param physicalDevice 物理设备
-     * @param commandPool    命令池
-     * @param queue          图形/计算队列
-     * @param data           源数据指针
-     * @param size           数据大小
-     * @param usage          缓冲区用途（自动添加 VK_BUFFER_USAGE_TRANSFER_DST_BIT）
-     * @return Buffer 设备本地缓冲区对象
      */
     static Buffer CreateAndUpload(VkDevice device,
                                   VkPhysicalDevice physicalDevice,
@@ -241,7 +240,6 @@ public:
         // 拷贝 staging -> device local
         staging.copyTo(deviceBuffer.buffer_, size, commandPool, queue);
 
-        // staging 自动销毁，返回设备缓冲区
         return deviceBuffer;
     }
 

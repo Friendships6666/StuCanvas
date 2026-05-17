@@ -126,18 +126,16 @@ float4 fragmentMain(V2F input) : SV_Target {
         if (currValid && lastValid) {
             float2 currPx = (currClip.xy / currClip.w * 0.5 + 0.5) * pc.viewportSize;
 
-            float h; // h 是投影在线段上的相对比例 [0, 1]
+            float h;
             float d = sdSegment(q, lastPx, currPx, h);
 
             if (d < minDist) {
                 minDist = d;
-                // 计算精确的 t (当前段起始 t 加上线段内部的偏移 h)
                 bestT = (float(i - 1) + h) / float(STEPS);
             }
             lastPx = currPx;
         }
         else if (currValid) {
-            // 如果上一个点在背后，当前点跑到前面来了，重新记录起点
             lastPx = (currClip.xy / currClip.w * 0.5 + 0.5) * pc.viewportSize;
         }
         lastValid = currValid;

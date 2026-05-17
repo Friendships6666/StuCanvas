@@ -1331,8 +1331,11 @@ void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optiona
     VkPhysicalDevice physDev = vkInit.getPhysicalDevice();
 
     VkQueue graphicsQueue = vkInit.getGraphicsQueue();
-    VkQueue computeQueue  = vkInit.getComputeQueue(); // 请确保 init.hpp 有此接口，否则用 graphicsQueue
+    VkQueue computeQueue  = vkInit.getComputeQueue();
     VkQueue encodeQueue   = vkInit.getVideoEncodeQueue();
+
+    // 加载同步 2.0 函数指针 (2026 正式版核心)
+    auto pfnQueueSubmit2 = (PFN_vkQueueSubmit2)vkGetDeviceProcAddr(device, "vkQueueSubmit2");
 
     // 3. 基础资源准备
     RenderPass offscreenPass(device, VK_FORMAT_R8G8B8A8_UNORM, settings_.msaaSamples, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -1341,26 +1344,22 @@ void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optiona
     auto descriptors = CreateDescriptors(device, descSetLayout);
     auto pipelines = CreatePipelines(device, offscreenPass.get(), descSetLayout, shaders);
 
-    // 离屏渲染目标 (包含 8K RGB 和 YUV 图像)
+    // 离屏渲染目标 (内部已实现双缓冲 YUV 图像和分平面视图)
     OffscreenTarget target(device, physDev, exWidth, exHeight, settings_.msaaSamples, offscreenPass.get());
 
-    // 原生 AV1 编码器
+    // 原生 AV1 编码器 (内部已实现持久化 Profile 链)
     VideoEncoderAV1 encoder(instance, device, physDev, vkInit.getQueueFamilyIndices().videoEncodeFamily.value(), exportCfg);
 
     // ==========================================================
-    // 4. Compute Shader 转换通道准备 (RGB -> NV12)
+    // 4. Compute Shader 准备
     // ==========================================================
-
-    // 创建 Compute 采样器 (用于读取 RGB 纹理)
     VkSamplerCreateInfo samplerInfo{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
     samplerInfo.magFilter = VK_FILTER_LINEAR;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     VkSampler computeSampler;
     vkCreateSampler(device, &samplerInfo, nullptr, &computeSampler);
 
-    // 创建布局: Binding 0=SAMPLED_IMAGE(RGB), 1=STORAGE_IMAGE(Y), 2=STORAGE_IMAGE(UV)
+    // 布局定义: 0=SAMPLED(RGB), 1=STORAGE(Y), 2=STORAGE(UV)
     std::array<VkDescriptorSetLayoutBinding, 3> compBindings{};
     compBindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
     compBindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
@@ -1373,34 +1372,26 @@ void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optiona
     auto compShader = ShaderModule::fromSlangFile(device, "/home/friendships666/Projects/StuCanvas/stucanvas/shaders/rgb_to_nv12.slang", "compute", "computeMain");
     ComputePipeline yuvConverter(device, compShader.getModule(), {computeLayout});
 
-    // 创建 YUV 各平面的 View
-    auto CreateView = [&](VkImage img, VkFormat fmt, VkImageAspectFlags aspect) {
-        VkImageViewCreateInfo vi{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, nullptr, 0, img, VK_IMAGE_VIEW_TYPE_2D, fmt, {}, {aspect, 0, 1, 0, 1} };
-        VkImageView v; vkCreateImageView(device, &vi, nullptr, &v); return v;
-    };
-    VkImageView yView  = CreateView(target.getYuvImage(), VK_FORMAT_R8_UNORM, VK_IMAGE_ASPECT_PLANE_0_BIT);
-    VkImageView uvView = CreateView(target.getYuvImage(), VK_FORMAT_R8G8_UNORM, VK_IMAGE_ASPECT_PLANE_1_BIT);
 
-    // 描述符更新
-    VkDescriptorPoolSize poolSizes[] = { {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2} };
-    VkDescriptorPoolCreateInfo cpInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 2, poolSizes };
-    VkDescriptorPool compPool; vkCreateDescriptorPool(device, &cpInfo, nullptr, &compPool);
+        std::array<VkDescriptorPoolSize, 2> poolSizes{};
+        poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        poolSizes[0].descriptorCount = 1;
+        poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        poolSizes[1].descriptorCount = 2;
+
+        VkDescriptorPoolCreateInfo cpInfo{};
+        cpInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        cpInfo.maxSets = 1; // 你只分配一个 computeSet
+        cpInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+        cpInfo.pPoolSizes = poolSizes.data();
+        VkDescriptorPool compPool;
+        if (vkCreateDescriptorPool(device, &cpInfo, nullptr, &compPool) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create Compute Descriptor Pool");
+        }
     VkDescriptorSetAllocateInfo cai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, compPool, 1, &computeLayout };
     VkDescriptorSet computeSet; vkAllocateDescriptorSets(device, &cai, &computeSet);
 
-    VkDescriptorImageInfo infoRGB{ computeSampler, target.getResolveRGBView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkDescriptorImageInfo infoY  { VK_NULL_HANDLE, yView, VK_IMAGE_LAYOUT_GENERAL };
-    VkDescriptorImageInfo infoUV { VK_NULL_HANDLE, uvView, VK_IMAGE_LAYOUT_GENERAL };
-
-    std::array<VkWriteDescriptorSet, 3> compWrites{};
-    compWrites[0] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &infoRGB };
-    compWrites[1] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoY };
-    compWrites[2] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoUV };
-    vkUpdateDescriptorSets(device, 3, compWrites.data(), 0, nullptr);
-
-    // ==========================================================
     // 5. 并行指令与同步对象
-    // ==========================================================
     VkCommandPool gfxPool = CreateCommandPool(device, vkInit.getGraphicsFamily(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
     VkCommandPool cmtPool = CreateCommandPool(device, vkInit.getComputeFamily(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
     VkCommandPool encPool = CreateCommandPool(device, vkInit.getQueueFamilyIndices().videoEncodeFamily.value(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
@@ -1411,15 +1402,9 @@ void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optiona
         vkAllocateCommandBuffers(device, &ai, c);
     };
     Alloc(gfxPool, &gfxCmd); Alloc(cmtPool, &cmtCmd); Alloc(encPool, &encCmd);
-    // 定义信号量创建信息
-    VkSemaphoreCreateInfo semInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-    semInfo.pNext = nullptr;
-    semInfo.flags = 0;
 
-    // 定义栅栏创建信息
+    VkSemaphoreCreateInfo semInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
     VkFenceCreateInfo fenceInfo{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-    fenceInfo.pNext = nullptr;
-    fenceInfo.flags = 0; // 初始状态为“未触发”，GPU 完成指令后会将其置为“已触发”
     VkSemaphore semRenderDone, semComputeDone;
     vkCreateSemaphore(device, &semInfo, nullptr, &semRenderDone);
     vkCreateSemaphore(device, &semInfo, nullptr, &semComputeDone);
@@ -1429,20 +1414,39 @@ void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optiona
     // 6. 导出文件初始化
     std::ofstream videoFile(exportCfg.outputPath, std::ios::binary);
     IVFWriter::WriteHeader(videoFile, exWidth, exHeight, FPS_, total_frames);
-
+        auto codecHeader = encoder.getCodecHeader();
+        if (!codecHeader.empty()) {
+            // 序列头在 IVF 中通常被当作一个“长度为0”或“时间戳为0”的特殊数据块
+            // 或者直接合并到第一帧的最前面
+            videoFile.write(reinterpret_cast<const char*>(codecHeader.data()), codecHeader.size());
+        }
     ProcessedFrameData<double> frameData;
     Vulkan::CanvasBufferGroup buffers;
-    auto startTime = std::chrono::high_resolution_clock::now();
 
     // ==========================================================
     // 7. 主导出循环
     // ==========================================================
     for (uint64_t current_f = start_f; current_f <= end_f; ++current_f) {
+        uint32_t frameIdx = (uint32_t)(current_f - start_f);
+        uint32_t querySlot = frameIdx % 4; // 这里的 4 必须对应 MAX_ENCODE_QUERIES
+        uint32_t currPingPong = frameIdx % 2;
+        uint32_t prevPingPong = (frameIdx + 1) % 2;
 
         frameData = PrepareFrameData(current_f);
         UploadFrameData(device, physDev, gfxPool, graphicsQueue, frameData, descriptors, buffers);
 
-        // --- Step 1: Graphics Queue ---
+        // --- 核心修正：动态更新描述符集指向当前物理缓冲 ---
+        VkDescriptorImageInfo infoRGB{ computeSampler, target.getResolveRGBView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        VkDescriptorImageInfo infoY  { VK_NULL_HANDLE, target.getYPlaneView(currPingPong), VK_IMAGE_LAYOUT_GENERAL };
+        VkDescriptorImageInfo infoUV { VK_NULL_HANDLE, target.getUVPlaneView(currPingPong), VK_IMAGE_LAYOUT_GENERAL };
+
+        std::array<VkWriteDescriptorSet, 3> compWrites{};
+        compWrites[0] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &infoRGB };
+        compWrites[1] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoY };
+        compWrites[2] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoUV };
+        vkUpdateDescriptorSets(device, 3, compWrites.data(), 0, nullptr);
+
+        // --- Step 1: Graphics Queue (Render -> Resolve) ---
         vkResetCommandBuffer(gfxCmd, 0);
         VkCommandBufferBeginInfo b{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         vkBeginCommandBuffer(gfxCmd, &b);
@@ -1451,7 +1455,7 @@ void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optiona
         RecordGraphicsCommands(gfxCmd, frameData, pipelines, descriptors, buffers, pc);
         vkCmdEndRenderPass(gfxCmd);
 
-        // RGB -> Shader Read 转换
+        // RGB 解析结果转为 Shader Read 布局
         VkImageMemoryBarrier2 b1{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
@@ -1461,14 +1465,14 @@ void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optiona
         vkCmdPipelineBarrier2(gfxCmd, &d1);
         vkEndCommandBuffer(gfxCmd);
 
-        // --- Step 2: Compute Queue ---
+        // --- Step 2: Compute Queue (RGB -> NV12) ---
         vkResetCommandBuffer(cmtCmd, 0);
         vkBeginCommandBuffer(cmtCmd, &b);
-        // YUV -> General 转换
+        // 准备当前 YUV 图像布局
         VkImageMemoryBarrier2 b2{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
             VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
             VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
+            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(currPingPong), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
         VkDependencyInfo d2{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b2 };
         vkCmdPipelineBarrier2(cmtCmd, &d2);
 
@@ -1476,54 +1480,62 @@ void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optiona
         vkCmdBindDescriptorSets(cmtCmd, VK_PIPELINE_BIND_POINT_COMPUTE, yuvConverter.getLayout(), 0, 1, &computeSet, 0, nullptr);
         vkCmdDispatch(cmtCmd, (exWidth/2 + 15)/16, (exHeight/2 + 15)/16, 1);
 
-        // YUV -> Video Encode Src 转换
+        // 核心修复：Compute 队列不认识 VIDEO_ENCODE 阶段，只转为 BOTTOM 即可
         VkImageMemoryBarrier2 b3{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR, VK_ACCESS_2_VIDEO_ENCODE_READ_BIT_KHR,
+            VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0,
             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_VIDEO_ENCODE_SRC_KHR,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
+            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(currPingPong), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
         VkDependencyInfo d3{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b3 };
         vkCmdPipelineBarrier2(cmtCmd, &d3);
         vkEndCommandBuffer(cmtCmd);
 
-        // --- Step 3: Video Queue ---
+        // --- Step 3: Video Queue (NV12 -> AV1) ---
         vkResetCommandBuffer(encCmd, 0);
         vkBeginCommandBuffer(encCmd, &b);
-        encoder.EncodeFrame(encCmd, target.getYuvView(), (uint32_t)(current_f - start_f));
+        // 传入当前物理视图和参考物理视图
+        encoder.EncodeFrame(encCmd, target.getYuvView(currPingPong), target.getYuvView(prevPingPong), frameIdx);
         vkEndCommandBuffer(encCmd);
 
-        // --- 链式提交 ---
-        VkPipelineStageFlags waitGfx = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        VkSubmitInfo s1{ VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1, &gfxCmd, 1, &semRenderDone };
-        vkQueueSubmit(graphicsQueue, 1, &s1, VK_NULL_HANDLE);
+        // --- Sync2 链式提交 ---
+        VkSemaphoreSubmitInfo sigGfx{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semRenderDone, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT };
+        VkCommandBufferSubmitInfo subGfx{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, gfxCmd, 0 };
+        VkSubmitInfo2 s1{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 0, nullptr, 1, &subGfx, 1, &sigGfx };
+        pfnQueueSubmit2(graphicsQueue, 1, &s1, VK_NULL_HANDLE);
 
-        VkPipelineStageFlags waitCmt = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-        VkSubmitInfo s2{ VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 1, &semRenderDone, &waitCmt, 1, &cmtCmd, 1, &semComputeDone };
-        vkQueueSubmit(computeQueue, 1, &s2, VK_NULL_HANDLE);
+        VkSemaphoreSubmitInfo waitGfx{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semRenderDone, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
+        VkSemaphoreSubmitInfo sigCmt{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semComputeDone, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
+        VkCommandBufferSubmitInfo subCmt{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, cmtCmd, 0 };
+        VkSubmitInfo2 s2{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 1, &waitGfx, 1, &subCmt, 1, &sigCmt };
+        pfnQueueSubmit2(computeQueue, 1, &s2, VK_NULL_HANDLE);
 
-        VkPipelineStageFlags waitEnc = 0x08000000; // VIDEO_ENCODE_BIT_KHR
-        VkSubmitInfo s3{ VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 1, &semComputeDone, &waitEnc, 1, &encCmd, 0, nullptr };
-        vkQueueSubmit(encodeQueue, 1, &s3, frameFence);
+        VkSemaphoreSubmitInfo waitCmt{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semComputeDone, 0, VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR };
+        VkCommandBufferSubmitInfo subEnc{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, encCmd, 0 };
+        VkSubmitInfo2 s3{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 1, &waitCmt, 1, &subEnc, 0, nullptr };
+        pfnQueueSubmit2(encodeQueue, 1, &s3, frameFence);
 
-        // 等待并落盘
+        // 等待并回读
         vkWaitForFences(device, 1, &frameFence, VK_TRUE, UINT64_MAX);
         vkResetFences(device, 1, &frameFence);
 
-        uint64_t fSize = encoder.GetEncodedSize();
-        void* p; vkMapMemory(device, encoder.GetBitstreamMemory(), 0, fSize, 0, &p);
-        IVFWriter::WriteFrame(videoFile, p, fSize, current_f - start_f);
-        vkUnmapMemory(device, encoder.GetBitstreamMemory());
+        uint64_t fSize = encoder.GetEncodedSize(querySlot);
+        if (fSize > 0) {
+            void* p;
+            // 注意：bitstreamBufferOffset 必须与 EncodeFrame 内部保持一致
+            VkDeviceSize mapOffset = (VkDeviceSize)querySlot * (32 * 1024 * 1024);
+            vkMapMemory(device, encoder.GetBitstreamMemory(), mapOffset, fSize, 0, &p);
+            IVFWriter::WriteFrame(videoFile, p, fSize, frameIdx);
+            vkUnmapMemory(device, encoder.GetBitstreamMemory());
+        }
 
-        if ((current_f - start_f) % 5 == 0) {
-            std::cout << "\rExporting: " << std::fixed << std::setprecision(1) << (float)(current_f-start_f+1)/total_frames*100 << "%" << std::flush;
+        if (frameIdx % 5 == 0) {
+            std::cout << "\rExporting: " << std::fixed << std::setprecision(1) << (float)(frameIdx+1)/total_frames*100 << "%" << std::flush;
         }
     }
 
     vkDeviceWaitIdle(device);
-    // 销毁局部资源
+    // 销毁局部资源 (注意：target 拥有的视图无需手动销毁)
     vkDestroySampler(device, computeSampler, nullptr);
-    vkDestroyImageView(device, yView, nullptr);
-    vkDestroyImageView(device, uvView, nullptr);
     vkDestroyDescriptorPool(device, compPool, nullptr);
     vkDestroyDescriptorSetLayout(device, computeLayout, nullptr);
     vkDestroyCommandPool(device, gfxPool, nullptr);
