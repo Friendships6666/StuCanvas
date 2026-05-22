@@ -60,6 +60,67 @@ public:
      * @param pNext          扩展结构体指针 (如 VkVideoProfileListInfoKHR)，默认为 nullptr
      * @return Buffer 对象
      */
+
+    Buffer(VkDevice device,
+          VkPhysicalDevice physicalDevice,
+          VkDeviceSize size,
+          VkBufferUsageFlags usage,
+          VkMemoryPropertyFlags properties,
+          const void* pNext = nullptr) : device_(device) { // <--- 关键修改：增加构造函数
+
+        // 1. 创建缓冲区
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.pNext = pNext;
+        bufferInfo.size = size;
+        bufferInfo.usage = usage;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer_) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create buffer");
+        }
+
+        // 2. 获取内存需求
+        VkMemoryRequirements memReq;
+        vkGetBufferMemoryRequirements(device, buffer_, &memReq);
+
+        // 3. 分配内存
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memReq.size;
+        allocInfo.memoryTypeIndex = findMemoryType(physicalDevice, memReq.memoryTypeBits, properties);
+
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &memory_) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to allocate buffer memory");
+        }
+
+        // 4. 绑定内存
+        vkBindBufferMemory(device, buffer_, memory_, 0);
+    }
+
+    /**
+ * @brief 映射内存并返回指针。
+ * 满足你代码中 void* mappedData = stagingBuffer.map(); 的调用。
+ */
+    void* map() {
+        void* data;
+        if (vkMapMemory(device_, memory_, 0, VK_WHOLE_SIZE, 0, &data) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to map buffer memory");
+        }
+        return data;
+    }
+
+    /**
+     * @brief 解除映射。
+     * 满足你代码中 stagingBuffer.unmap(); 的调用。
+     */
+    void unmap() {
+        vkUnmapMemory(device_, memory_);
+    }
+
+    VkBuffer get() const { return buffer_; }
+
+
     static Buffer Create(VkDevice device,
                          VkPhysicalDevice physicalDevice,
                          VkDeviceSize size,

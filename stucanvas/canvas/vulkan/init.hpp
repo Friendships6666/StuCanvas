@@ -332,6 +332,17 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
             if (!hasAV1) return false;
         }
 
+        // 添加 Vulkan-CUDA 互操作所需的共享内存与信号量同步设备扩展
+        required.push_back("VK_KHR_external_memory");
+        required.push_back("VK_KHR_external_semaphore");
+#ifdef _WIN32
+        required.push_back("VK_KHR_external_memory_win32");
+        required.push_back("VK_KHR_external_semaphore_win32");
+#else
+        required.push_back("VK_KHR_external_memory_fd");
+        required.push_back("VK_KHR_external_semaphore_fd");
+#endif
+
         std::set<std::string> requiredSet(required.begin(), required.end());
         for (const auto& ext : available) {
             requiredSet.erase(ext.extensionName);
@@ -345,8 +356,7 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
         return requiredSet.empty();
     }
 
-    // ── 逻辑设备创建 ──────────────────────
-    void createLogicalDevice() {
+void createLogicalDevice() {
         QueueFamilyIndices indices = findQueueFamilies(physicalDevice_);
 
         // 使用 set 去重，防止同一个家族被创建多次
@@ -365,7 +375,6 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
             queueCreateInfo.pQueuePriorities = &queuePriority;
             queueCreateInfos.push_back(queueCreateInfo);
         }
-
 
         VkPhysicalDeviceSynchronization2Features sync2Features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES };
         sync2Features.synchronization2 = VK_TRUE;
@@ -386,6 +395,7 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
         createInfo.pQueueCreateInfos    = queueCreateInfos.data();
         createInfo.pEnabledFeatures     = &features;
         createInfo.pNext = &drawParamsFeatures;
+
         std::vector<const char*> extensions;
         if (!headless_) {
             extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -394,9 +404,20 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
             extensions.push_back("VK_KHR_video_encode_queue");
             extensions.push_back("VK_KHR_video_encode_av1"); // 确保这里也是 KHR
         }
+
+        // 请求 Vulkan-CUDA 显存与信号量同步设备扩展
+        extensions.push_back("VK_KHR_external_memory");
+        extensions.push_back("VK_KHR_external_semaphore");
+#ifdef _WIN32
+        extensions.push_back("VK_KHR_external_memory_win32");
+        extensions.push_back("VK_KHR_external_semaphore_win32");
+#else
+        extensions.push_back("VK_KHR_external_memory_fd");
+        extensions.push_back("VK_KHR_external_semaphore_fd");
+#endif
+
         createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
         createInfo.ppEnabledExtensionNames = extensions.data();
-
 
         if (vkCreateDevice(physicalDevice_, &createInfo, nullptr, &device_) != VK_SUCCESS)
             throw std::runtime_error("Failed to create logical device");
@@ -420,8 +441,12 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
             for(uint32_t i=0; i<sdlExtCount; ++i) extensions.push_back(sdlExts[i]);
         }
 
-        // 关键：视频编码必需的实例扩展
+        // 关键：视频编码与外部能力查询必需的实例扩展
         extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+
+        // 使能外部内存与信号量能力查询扩展
+        extensions.push_back("VK_KHR_external_memory_capabilities");
+        extensions.push_back("VK_KHR_external_semaphore_capabilities");
 
         if (validationEnabled_)
             extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);

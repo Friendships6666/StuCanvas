@@ -22,14 +22,14 @@ namespace StuCanvas::Vulkan
     {
         // --- 基础配置 ---
         VideoCodec codec = VideoCodec::AV1;
-        uint32_t width = 7680; // 默认 8K
-        uint32_t height = 4320;
+        uint32_t width = 2560; // 默认 8K
+        uint32_t height = 1600;
         std::string outputPath = "output.ivf"; // 原生编码通常输出 IVF 容器
 
         // --- 编码质量配置 ---
         uint32_t bitRateKbps = 50000; // 50 Mbps，对于 8K AV1 较合适
         uint32_t maxBitRateKbps = 80000;
-        uint32_t gopSize = 60; // 关键帧间隔（通常设为与 FPS 一致）
+        uint32_t gopSize = 1; // 关键帧间隔（通常设为与 FPS 一致）
 
         // 编码速度/质量平衡 (1-7): 1 最快, 7 质量最好 (对应 NVENC 预设)
         uint32_t tuningPreset = 7;
@@ -78,14 +78,8 @@ namespace StuCanvas::Vulkan
     setupSessionMemory(physicalDevice);
     createSessionParameters();
 
-    // 第四步：根据查询到的 encodeCaps 动态设置反馈标志
-    VkVideoEncodeFeedbackFlagsKHR supported = encodeCaps.supportedEncodeFeedbackFlags;
-    // 只有硬件支持时才开启，否则设为 0
-    if (supported & VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BYTES_WRITTEN_BIT_KHR) {
-        profileChain_.feedbackInfo.encodeFeedbackFlags = VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BYTES_WRITTEN_BIT_KHR;
-    } else {
-        profileChain_.feedbackInfo.encodeFeedbackFlags = 0;
-    }
+
+    profileChain_.feedbackInfo.encodeFeedbackFlags = VK_VIDEO_ENCODE_FEEDBACK_BITSTREAM_BYTES_WRITTEN_BIT_KHR;
 
     // 第五步：创建 QueryPool
     createQueryPool();
