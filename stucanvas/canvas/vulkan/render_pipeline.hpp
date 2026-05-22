@@ -10,7 +10,6 @@ namespace StuCanvas::Vulkan {
 
 /**
  * @brief 图形管线配置结构体
- *
  * 封装创建 VkGraphicsPipeline 所需的所有状态。
  * 默认配置：动态视口+裁剪、填充三角形、背面剔除、无深度测试、无混合。
  */
@@ -35,7 +34,8 @@ struct PipelineConfig {
     // 是否开启硬件级样本着色 (提升内边抗锯齿)
     VkBool32 sampleShadingEnable = VK_FALSE;
     float minSampleShading = 0.2f;
-    // ── 视口与裁剪（如果设为动态，则忽略下面静态值）──
+
+    // ── 视口与裁剪 ──
     bool dynamicViewport = true;
     bool dynamicScissor  = true;
     // 静态视口（当 dynamicViewport == false 时使用）
@@ -53,10 +53,7 @@ struct PipelineConfig {
     VkBool32 depthClampEnable = VK_FALSE;
     VkBool32 rasterizerDiscardEnable = VK_FALSE;
 
-    // ── 多重采样 ──
-
-
-    // ── 深度与模板（如需深度，可设置 depthTestEnable = VK_TRUE 并提供深度附件格式）──
+    // ── 深度与模板 ──
     VkBool32 depthTestEnable = VK_FALSE;
     VkBool32 depthWriteEnable = VK_FALSE;
     VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS;
@@ -64,7 +61,7 @@ struct PipelineConfig {
     VkStencilOpState front = {};
     VkStencilOpState back = {};
 
-    // ── 颜色混合（单个附件）──
+    // ── 颜色混合 ──
     VkBool32 blendEnable = VK_FALSE;
     VkBlendFactor srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
     VkBlendFactor dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
@@ -81,16 +78,13 @@ struct PipelineConfig {
         VK_DYNAMIC_STATE_SCISSOR
     };
 
-    // ── 管线布局资源（暂时空）──
+    // ── 管线布局资源 ──
     std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
     std::vector<VkPushConstantRange> pushConstantRanges;
 };
 
 /**
- * @brief 图形管线封装
- *
- * 根据 PipelineConfig 创建 VkPipeline 和 VkPipelineLayout。
- * 构造后可通过 get() 和 getLayout() 获取句柄。
+ * @brief 图形管线封装 (RAII)
  */
 class Pipeline {
 public:
@@ -102,37 +96,37 @@ public:
     }
 
     ~Pipeline() {
-        if (pipeline_ != VK_NULL_HANDLE)
-            vkDestroyPipeline(device_, pipeline_, nullptr);
-        if (layout_ != VK_NULL_HANDLE)
-            vkDestroyPipelineLayout(device_, layout_, nullptr);
+        cleanup();
     }
 
+    // 禁止拷贝
     Pipeline(const Pipeline&) = delete;
     Pipeline& operator=(const Pipeline&) = delete;
 
+    // 允许移动
     Pipeline(Pipeline&& other) noexcept
         : device_(other.device_), pipeline_(other.pipeline_), layout_(other.layout_)
     {
         other.pipeline_ = VK_NULL_HANDLE;
         other.layout_   = VK_NULL_HANDLE;
+        other.device_   = VK_NULL_HANDLE;
     }
 
     Pipeline& operator=(Pipeline&& other) noexcept {
         if (this != &other) {
-            if (pipeline_ != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline_, nullptr);
-            if (layout_   != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, layout_, nullptr);
+            cleanup();
             device_   = other.device_;
             pipeline_ = other.pipeline_;
             layout_   = other.layout_;
             other.pipeline_ = VK_NULL_HANDLE;
             other.layout_   = VK_NULL_HANDLE;
+            other.device_   = VK_NULL_HANDLE;
         }
         return *this;
     }
 
-    VkPipeline get()       const { return pipeline_; }
-    VkPipelineLayout getLayout() const { return layout_; }
+    [[nodiscard]] VkPipeline get()       const { return pipeline_; }
+    [[nodiscard]] VkPipelineLayout getLayout() const { return layout_; }
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
@@ -148,7 +142,7 @@ private:
         layoutInfo.pPushConstantRanges = config.pushConstantRanges.data();
 
         if (vkCreatePipelineLayout(device_, &layoutInfo, nullptr, &layout_) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create pipeline layout");
+            throw std::runtime_error("Pipeline: Failed to create pipeline layout.");
         }
     }
 
@@ -182,13 +176,15 @@ private:
         inputAssembly.topology = config.topology;
         inputAssembly.primitiveRestartEnable = config.primitiveRestart;
 
-        // ── 视口与裁剪（动态时忽略静态值）──
+        // ── 视口与裁剪 ──
         VkPipelineViewportStateCreateInfo viewportState{};
         viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-        viewportState.viewportCount = 1;                             // 即使动态，通道需要至少1
+        viewportState.viewportCount = 1;
         viewportState.scissorCount  = 1;
-        // 如果动态，这两个指针可以为 nullptr，但规范允许链接静态值，我们提供 nullptr 表示动态
+
         VkViewport staticViewport{};
+        VkRect2D staticScissor{};
+
         if (!config.dynamicViewport) {
             staticViewport.x = config.viewportX;
             staticViewport.y = config.viewportY;
@@ -198,25 +194,14 @@ private:
             staticViewport.maxDepth = config.viewportMaxDepth;
             viewportState.pViewports = &staticViewport;
         } else {
-            viewportState.pViewports = nullptr;
+            viewportState.pViewports = nullptr; // 规范允许动态状态下此处为 nullptr
         }
-        VkRect2D staticScissor{};
+
         if (!config.dynamicScissor) {
             staticScissor = config.scissor;
             viewportState.pScissors = &staticScissor;
         } else {
             viewportState.pScissors = nullptr;
-        }
-        // 注意：对于动态视口/裁剪，Vulkan 的 viewportCount 和 scissorCount 仍然需要为非零，
-        // 但 pViewports/pScissors 可以为 nullptr，具体驱动可能要求非空？规范说若对应状态是动态的，这些指针被忽略。
-        // 为安全，我们可以设置一个假数组。
-        if (config.dynamicViewport) {
-            staticViewport = {}; // dummy
-            viewportState.pViewports = &staticViewport;
-        }
-        if (config.dynamicScissor) {
-            staticScissor = {};
-            viewportState.pScissors = &staticScissor;
         }
 
         // ── 光栅化 ──
@@ -233,27 +218,18 @@ private:
         // ── 多重采样 ──
         VkPipelineMultisampleStateCreateInfo multisampling{};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-
-        // 【关键点 1】：必须与 RenderPass 的 samples 严格一致
-        // 如果 RenderPass 是 4x，这里必须是 VK_SAMPLE_COUNT_4_BIT
         multisampling.rasterizationSamples = config.rasterizationSamples;
 
-        // 【关键点 2】：样本着色 (Sample Shading)
-        // 开启它可以显著提升 Shader 内部逻辑（如你的贝塞尔曲线 SDF）的抗锯齿质量
-        // 它会让片元着色器在像素内部运行多次。
         if (config.sampleShadingEnable) {
             multisampling.sampleShadingEnable = VK_TRUE;
-            // minSampleShading 决定了采样的频率。1.0f 表示每个样本都运行一次片元着色器（最清晰但也最累）
-            // 0.2f 是一个折中值，可以有效减少线条的闪烁。
             multisampling.minSampleShading = config.minSampleShading;
         } else {
             multisampling.sampleShadingEnable = VK_FALSE;
             multisampling.minSampleShading = 1.0f;
         }
-
-        multisampling.pSampleMask = nullptr; // 可选
-        multisampling.alphaToCoverageEnable = VK_FALSE; // 如果做植被等半透明裁剪可开启
-        multisampling.alphaToOneEnable = VK_FALSE;      // 可选
+        multisampling.pSampleMask = nullptr;
+        multisampling.alphaToCoverageEnable = VK_FALSE;
+        multisampling.alphaToOneEnable = VK_FALSE;
 
         // ── 深度模板 ──
         VkPipelineDepthStencilStateCreateInfo depthStencil{};
@@ -303,11 +279,25 @@ private:
         pipelineInfo.pDynamicState = &dynamicState;
         pipelineInfo.layout = layout_;
         pipelineInfo.renderPass = renderPass;
-        pipelineInfo.subpass = 0; // 默认子通道0
+        pipelineInfo.subpass = 0;
         pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
 
         if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline_) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create graphics pipeline");
+            throw std::runtime_error("Pipeline: Failed to create graphics pipeline.");
+        }
+    }
+
+    void cleanup() {
+        if (device_ != VK_NULL_HANDLE) {
+            if (pipeline_ != VK_NULL_HANDLE) {
+                vkDestroyPipeline(device_, pipeline_, nullptr);
+                pipeline_ = VK_NULL_HANDLE;
+            }
+            if (layout_ != VK_NULL_HANDLE) {
+                vkDestroyPipelineLayout(device_, layout_, nullptr);
+                layout_ = VK_NULL_HANDLE;
+            }
+            device_ = VK_NULL_HANDLE;
         }
     }
 };

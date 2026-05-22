@@ -1,9 +1,8 @@
 // stucanvas/canvas/vulkan/swap_chains.hpp
-
 #pragma once
 
 #include <vulkan/vulkan.h>
-#include <SDL3/SDL.h>          // 用于 SDL_GetWindowSize
+#include <SDL3/SDL.h>
 #include <vector>
 #include <algorithm>
 #include <stdexcept>
@@ -13,25 +12,13 @@
 namespace StuCanvas::Vulkan {
 
 /**
- * @brief 封装整个 Vulkan 交换链（SwapChain），包括图像视图、帧缓冲。
- *
- * 特点：
- * - 自适应窗口大小（通过 SDL_Window 查询当前帧缓冲区尺寸）
- * - 正确处理图形/呈现队列族索引，自动选择独占或并发模式
- * - 提供 recreate() 方法以响应窗口大小改变
+ * @brief 封装 Vulkan 交换链（SwapChain）及关联的屏幕呈现资源。
+ * 负责管理 MSAA 颜色附件、深度附件、交换链图像视图以及最终的帧缓冲（Framebuffer）。
  */
 class SwapChain {
 public:
     /**
-     * @brief 构造并创建交换链及相关资源。
-     * @param physicalDevice 物理设备句柄
-     * @param device         逻辑设备句柄
-     * @param surface        窗口表面
-     * @param renderPass     渲染通道（用于帧缓冲）
-     * @param graphicsFamily 图形队列族索引
-     * @param presentFamily  呈现队列族索引
-     * @param window         SDL 窗口，用于获取当前尺寸（自适应 extent）
-     * @param oldSwapChain   可选，旧的交换链（重建时传入）
+     * @brief 构造并创建交换链。
      */
     SwapChain(VkPhysicalDevice physicalDevice,
               VkDevice device,
@@ -44,12 +31,12 @@ public:
               VkSwapchainKHR oldSwapChain = VK_NULL_HANDLE)
         : physicalDevice_(physicalDevice), device_(device),
           surface_(surface), renderPass_(renderPass),
-          graphicsFamily_(graphicsFamily), presentFamily_(presentFamily),msaaSamples_(msaaSamples),
+          graphicsFamily_(graphicsFamily), presentFamily_(presentFamily), msaaSamples_(msaaSamples),
           window_(window)
     {
         createSwapChain(oldSwapChain);
         createImageViews();
-        createColorResources(); // 生成 colorImageView_ (Attachment 0)
+        createColorResources();
         createDepthResources();
         if (renderPass_ != VK_NULL_HANDLE) {
             createFramebuffers();
@@ -60,11 +47,11 @@ public:
         cleanup();
     }
 
-    // 禁止拷贝
+    // 禁止拷贝，保证句柄生命周期安全
     SwapChain(const SwapChain&) = delete;
     SwapChain& operator=(const SwapChain&) = delete;
 
-    // 支持移动
+    // 支持移动语义
     SwapChain(SwapChain&& other) noexcept
         : physicalDevice_(other.physicalDevice_), device_(other.device_),
           surface_(other.surface_), renderPass_(other.renderPass_),
@@ -76,9 +63,21 @@ public:
           extent_(other.extent_),
           imageViews_(std::move(other.imageViews_)),
           framebuffers_(std::move(other.framebuffers_)),
-    msaaSamples_(other.msaaSamples_)
+          msaaSamples_(other.msaaSamples_),
+          depthImage_(other.depthImage_),
+          depthImageMemory_(other.depthImageMemory_),
+          depthImageView_(other.depthImageView_),
+          colorImage_(other.colorImage_),
+          colorImageMemory_(other.colorImageMemory_),
+          colorImageView_(other.colorImageView_)
     {
         other.swapChain_ = VK_NULL_HANDLE;
+        other.depthImage_ = VK_NULL_HANDLE;
+        other.depthImageMemory_ = VK_NULL_HANDLE;
+        other.depthImageView_ = VK_NULL_HANDLE;
+        other.colorImage_ = VK_NULL_HANDLE;
+        other.colorImageMemory_ = VK_NULL_HANDLE;
+        other.colorImageView_ = VK_NULL_HANDLE;
     }
 
     SwapChain& operator=(SwapChain&& other) noexcept {
@@ -97,27 +96,37 @@ public:
             extent_ = other.extent_;
             imageViews_ = std::move(other.imageViews_);
             framebuffers_ = std::move(other.framebuffers_);
+            msaaSamples_ = other.msaaSamples_;
+            depthImage_ = other.depthImage_;
+            depthImageMemory_ = other.depthImageMemory_;
+            depthImageView_ = other.depthImageView_;
+            colorImage_ = other.colorImage_;
+            colorImageMemory_ = other.colorImageMemory_;
+            colorImageView_ = other.colorImageView_;
+
             other.swapChain_ = VK_NULL_HANDLE;
+            other.depthImage_ = VK_NULL_HANDLE;
+            other.depthImageMemory_ = VK_NULL_HANDLE;
+            other.depthImageView_ = VK_NULL_HANDLE;
+            other.colorImage_ = VK_NULL_HANDLE;
+            other.colorImageMemory_ = VK_NULL_HANDLE;
+            other.colorImageView_ = VK_NULL_HANDLE;
         }
         return *this;
     }
 
     // 访问器
-    VkSwapchainKHR getSwapChain()   const { return swapChain_; }
-    VkFormat       getImageFormat() const { return imageFormat_; }
-    VkExtent2D     getExtent()      const { return extent_; }
-    size_t         getImageCount()  const { return imageViews_.size(); }
-    VkImageView    getImageView(size_t i)  const { return imageViews_[i]; }
-    VkFramebuffer  getFramebuffer(size_t i) const { return framebuffers_[i]; }
+    [[nodiscard]] VkSwapchainKHR getSwapChain()   const { return swapChain_; }
+    [[nodiscard]] VkFormat       getImageFormat() const { return imageFormat_; }
+    [[nodiscard]] VkExtent2D     getExtent()      const { return extent_; }
+    [[nodiscard]] size_t         getImageCount()  const { return imageViews_.size(); }
+    [[nodiscard]] VkImageView    getImageView(size_t i)  const { return imageViews_[i]; }
+    [[nodiscard]] VkFramebuffer  getFramebuffer(size_t i) const { return framebuffers_[i]; }
 
     /**
-     * @brief 重建交换链（例如窗口大小改变后调用）。
-     *        自动查询当前窗口尺寸，销毁旧资源并构建新链。
+     * @brief 响应窗口尺寸变化，重建交换链及相关呈现资源
      */
     void recreate() {
-
-
-
         vkDeviceWaitIdle(device_);
 
         cleanup();
@@ -136,33 +145,28 @@ private:
     VkDevice         device_;
     VkSurfaceKHR     surface_;
     VkRenderPass     renderPass_;
-    uint32_t         graphicsFamily_{};
-    uint32_t         presentFamily_{};
+    uint32_t         graphicsFamily_ = 0xFFFFFFFF;
+    uint32_t         presentFamily_ = 0xFFFFFFFF;
     SDL_Window*      window_;
-    VkSampleCountFlagBits msaaSamples_{};
+    VkSampleCountFlagBits msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
 
-
+    // MSAA 深度资源
     VkImage        depthImage_       = VK_NULL_HANDLE;
     VkDeviceMemory depthImageMemory_ = VK_NULL_HANDLE;
     VkImageView    depthImageView_   = VK_NULL_HANDLE;
 
-
-    // MSAA 颜色缓冲区资源（新增）
+    // MSAA 颜色资源
     VkImage        colorImage_       = VK_NULL_HANDLE;
     VkDeviceMemory colorImageMemory_ = VK_NULL_HANDLE;
     VkImageView    colorImageView_   = VK_NULL_HANDLE;
 
-
-
-    VkSwapchainKHR   swapChain_ = VK_NULL_HANDLE;
-    std::vector<VkImage> images_;
-    VkFormat         imageFormat_{};
-    VkExtent2D       extent_{};
-
+    // 交换链核心对象
+    VkSwapchainKHR             swapChain_ = VK_NULL_HANDLE;
+    std::vector<VkImage>       images_;
+    VkFormat                   imageFormat_{};
+    VkExtent2D                 extent_{};
     std::vector<VkImageView>   imageViews_;
     std::vector<VkFramebuffer> framebuffers_;
-
-    // ---------- 内部辅助函数 ----------
 
     struct SwapChainSupportDetails {
         VkSurfaceCapabilitiesKHR capabilities;
@@ -174,14 +178,14 @@ private:
         SwapChainSupportDetails details;
         vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice_, surface_, &details.capabilities);
 
-        uint32_t formatCount;
+        uint32_t formatCount = 0;
         vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice_, surface_, &formatCount, nullptr);
         if (formatCount != 0) {
             details.formats.resize(formatCount);
             vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice_, surface_, &formatCount, details.formats.data());
         }
 
-        uint32_t presentModeCount;
+        uint32_t presentModeCount = 0;
         vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice_, surface_, &presentModeCount, nullptr);
         if (presentModeCount != 0) {
             details.presentModes.resize(presentModeCount);
@@ -189,7 +193,6 @@ private:
         }
         return details;
     }
-
 
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
         VkPhysicalDeviceMemoryProperties memProperties;
@@ -199,11 +202,12 @@ private:
                 return i;
             }
         }
-        throw std::runtime_error("failed to find suitable memory type!");
+        throw std::runtime_error("SwapChain: Failed to find suitable memory type.");
     }
+
     void createImage(uint32_t width, uint32_t height, VkSampleCountFlagBits numSamples,
-                 VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
-                 VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
+                     VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
+                     VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory) {
         VkImageCreateInfo imageInfo{};
         imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -216,11 +220,11 @@ private:
         imageInfo.tiling = tiling;
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         imageInfo.usage = usage;
-        imageInfo.samples = numSamples; // 关键参数
+        imageInfo.samples = numSamples;
         imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
         if (vkCreateImage(device_, &imageInfo, nullptr, &image) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create image!");
+            throw std::runtime_error("SwapChain: Failed to create VkImage.");
         }
 
         VkMemoryRequirements memRequirements;
@@ -232,22 +236,21 @@ private:
         allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
 
         if (vkAllocateMemory(device_, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate image memory!");
+            throw std::runtime_error("SwapChain: Failed to allocate image memory.");
         }
 
         vkBindImageMemory(device_, image, imageMemory, 0);
     }
 
     void createColorResources() {
-        VkFormat colorFormat = imageFormat_; // 与交换链格式一致
+        VkFormat colorFormat = imageFormat_;
 
+        // 颜色多重采样附件仅作为 subpass 的过渡目标，使用 TRANSIENT 可获得显存带宽优化
         createImage(extent_.width, extent_.height, msaaSamples_, colorFormat,
                     VK_IMAGE_TILING_OPTIMAL,
-                    // 注意：由于这张图只在 subpass 内部使用，标记为 TRANSIENT 可在移动端等设备大幅省电
                     VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, colorImage_, colorImageMemory_);
 
-        // 创建 View
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewInfo.image = colorImage_;
@@ -257,74 +260,32 @@ private:
         viewInfo.subresourceRange.levelCount = 1;
         viewInfo.subresourceRange.layerCount = 1;
 
-        vkCreateImageView(device_, &viewInfo, nullptr, &colorImageView_);
+        if (vkCreateImageView(device_, &viewInfo, nullptr, &colorImageView_) != VK_SUCCESS) {
+            throw std::runtime_error("SwapChain: Failed to create color MSAA image view.");
+        }
     }
 
-void createDepthResources() {
-        // 深度格式通常使用 D32_SFLOAT，确保 RenderPass 中也是这个格式
+    void createDepthResources() {
         VkFormat depthFormat = VK_FORMAT_D32_SFLOAT;
 
-        // 1. 创建支持 MSAA 的深度 Image
-        VkImageCreateInfo imageInfo{};
-        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        imageInfo.imageType = VK_IMAGE_TYPE_2D;
-        imageInfo.extent.width = extent_.width;
-        imageInfo.extent.height = extent_.height;
-        imageInfo.extent.depth = 1;
-        imageInfo.mipLevels = 1;
-        imageInfo.arrayLayers = 1;
-        imageInfo.format = depthFormat;
-        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-        imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        imageInfo.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        createImage(extent_.width, extent_.height, msaaSamples_, depthFormat,
+                    VK_IMAGE_TILING_OPTIMAL,
+                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage_, depthImageMemory_);
 
-
-        imageInfo.samples = msaaSamples_;
-
-        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        if (vkCreateImage(device_, &imageInfo, nullptr, &depthImage_) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create depth image!");
-        }
-
-        // 2. 为深度图分配并绑定显存
-        VkMemoryRequirements memRequirements;
-        vkGetImageMemoryRequirements(device_, depthImage_, &memRequirements);
-
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;
-
-        // 深度图通常存储在 DEVICE_LOCAL（显存）中以获得最高读写性能
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-        if (vkAllocateMemory(device_, &allocInfo, nullptr, &depthImageMemory_) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate depth image memory!");
-        }
-
-        vkBindImageMemory(device_, depthImage_, depthImageMemory_, 0);
-
-        // 3. 创建深度图像视图 (ImageView)
         VkImageViewCreateInfo viewInfo{};
         viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         viewInfo.image = depthImage_;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = depthFormat;
-
-        // 设置 AspectMask 为 DEPTH 位
         viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-        viewInfo.subresourceRange.baseMipLevel = 0;
         viewInfo.subresourceRange.levelCount = 1;
-        viewInfo.subresourceRange.baseArrayLayer = 0;
         viewInfo.subresourceRange.layerCount = 1;
 
         if (vkCreateImageView(device_, &viewInfo, nullptr, &depthImageView_) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create depth image view!");
+            throw std::runtime_error("SwapChain: Failed to create depth MSAA image view.");
         }
     }
-
-
-
 
     VkSurfaceFormatKHR chooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& available) const {
         for (const auto& fmt : available) {
@@ -348,11 +309,9 @@ void createDepthResources() {
         if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
             return capabilities.currentExtent;
         } else {
-            // 从 SDL 窗口获取当前帧缓冲区大小
             int width = 0, height = 0;
             if (window_) {
-                SDL_GetWindowSize(window_, &width, &height);  // 实际应使用 SDL_GetWindowSizeInPixels 以获得像素尺寸
-                // SDL3 API：SDL_GetWindowSizeInPixels(window, &width, &height);
+                SDL_GetWindowSize(window_, &width, &height);
             }
             if (width <= 0) width = 800;
             if (height <= 0) height = 600;
@@ -393,7 +352,6 @@ void createDepthResources() {
         createInfo.imageArrayLayers = 1;
         createInfo.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-        // 队列族配置
         uint32_t queueFamilyIndices[] = { graphicsFamily_, presentFamily_ };
         if (graphicsFamily_ != presentFamily_) {
             createInfo.imageSharingMode      = VK_SHARING_MODE_CONCURRENT;
@@ -412,10 +370,9 @@ void createDepthResources() {
         createInfo.oldSwapchain   = oldSwapChain;
 
         if (vkCreateSwapchainKHR(device_, &createInfo, nullptr, &swapChain_) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create swap chain");
+            throw std::runtime_error("SwapChain: Failed to create VkSwapchainKHR.");
         }
 
-        // 获取交换链图像
         vkGetSwapchainImagesKHR(device_, swapChain_, &imageCount, nullptr);
         images_.resize(imageCount);
         vkGetSwapchainImagesKHR(device_, swapChain_, &imageCount, images_.data());
@@ -432,10 +389,6 @@ void createDepthResources() {
             createInfo.image                           = images_[i];
             createInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
             createInfo.format                          = imageFormat_;
-            createInfo.components.r                    = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.g                    = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.b                    = VK_COMPONENT_SWIZZLE_IDENTITY;
-            createInfo.components.a                    = VK_COMPONENT_SWIZZLE_IDENTITY;
             createInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
             createInfo.subresourceRange.baseMipLevel   = 0;
             createInfo.subresourceRange.levelCount     = 1;
@@ -443,7 +396,7 @@ void createDepthResources() {
             createInfo.subresourceRange.layerCount     = 1;
 
             if (vkCreateImageView(device_, &createInfo, nullptr, &imageViews_[i]) != VK_SUCCESS) {
-                throw std::runtime_error("Failed to create image view");
+                throw std::runtime_error("SwapChain: Failed to create Swapchain image view.");
             }
         }
     }
@@ -451,10 +404,6 @@ void createDepthResources() {
     void createFramebuffers() {
         framebuffers_.resize(imageViews_.size());
         for (size_t i = 0; i < imageViews_.size(); ++i) {
-            // 顺序必须与 RenderPass 的 Attachment 对应：
-            // 0: MSAA Color (目标)
-            // 1: MSAA Depth (测试)
-            // 2: Swapchain Image (Resolve 目标)
             std::array<VkImageView, 3> attachments = {
                 colorImageView_,
                 depthImageView_,
@@ -464,14 +413,14 @@ void createDepthResources() {
             VkFramebufferCreateInfo framebufferInfo{};
             framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
             framebufferInfo.renderPass = renderPass_;
-            framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size()); // 3
+            framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
             framebufferInfo.pAttachments = attachments.data();
             framebufferInfo.width = extent_.width;
             framebufferInfo.height = extent_.height;
             framebufferInfo.layers = 1;
 
             if (vkCreateFramebuffer(device_, &framebufferInfo, nullptr, &framebuffers_[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create framebuffer!");
+                throw std::runtime_error("SwapChain: Failed to create Framebuffer.");
             }
         }
     }
@@ -479,13 +428,11 @@ void createDepthResources() {
     void cleanup() {
         if (device_ == VK_NULL_HANDLE) return;
 
-        // 1. 销毁帧缓冲
         for (auto fb : framebuffers_) {
             vkDestroyFramebuffer(device_, fb, nullptr);
         }
         framebuffers_.clear();
 
-        // 2. 销毁 MSAA 颜色资源
         if (colorImageView_ != VK_NULL_HANDLE) {
             vkDestroyImageView(device_, colorImageView_, nullptr);
             colorImageView_ = VK_NULL_HANDLE;
@@ -499,7 +446,6 @@ void createDepthResources() {
             colorImageMemory_ = VK_NULL_HANDLE;
         }
 
-        // 3. 销毁 MSAA 深度资源
         if (depthImageView_ != VK_NULL_HANDLE) {
             vkDestroyImageView(device_, depthImageView_, nullptr);
             depthImageView_ = VK_NULL_HANDLE;
@@ -513,13 +459,11 @@ void createDepthResources() {
             depthImageMemory_ = VK_NULL_HANDLE;
         }
 
-        // 4. 销毁交换链图像视图
         for (auto iv : imageViews_) {
             vkDestroyImageView(device_, iv, nullptr);
         }
         imageViews_.clear();
 
-        // 5. 销毁交换链本身
         if (swapChain_ != VK_NULL_HANDLE) {
             vkDestroySwapchainKHR(device_, swapChain_, nullptr);
             swapChain_ = VK_NULL_HANDLE;

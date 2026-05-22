@@ -18,7 +18,7 @@
 #include "../canvas/vulkan/init.hpp"
 #include "../canvas/vulkan/swap_chains.hpp"
 #include "../canvas/vulkan/renderpass.hpp"
-#include "../canvas/vulkan/pipeline.hpp"
+#include "../canvas/vulkan/render_pipeline.hpp"
 #include "../canvas/vulkan/shader_module.hpp"
 #include "../canvas/vulkan/buffer.hpp"
 #include "../canvas/vulkan/present.hpp"
@@ -500,7 +500,6 @@ namespace StuCanvas
         /// 直接访问所有片段（只读）
         const std::vector<CanvasClip>& GetClips() const { return clips_; }
         void render(uint64_t start_frame = 0);
-        void exportVideo(std::optional<uint64_t> start_frame = std::nullopt, std::optional<uint64_t> end_frame = std::nullopt);
         void exportYuv(std::optional<uint64_t> start_frame = std::nullopt, std::optional<uint64_t> end_frame = std::nullopt);
 
     private:
@@ -1178,41 +1177,101 @@ namespace StuCanvas
         }
     };
 
-    template <typename T>
-    void NLECanvas<T>::render(uint64_t start_frame)
+template <typename T>
+void NLECanvas<T>::render(uint64_t start_frame)
+{
+    using namespace Vulkan;
+
+    // 1. 初始化 SDL 环境
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        throw std::runtime_error("SDL: Failed to initialize SDL video subsystem: " + std::string(SDL_GetError()));
+    }
+
+    SDL_Window* window = SDL_CreateWindow("StuCanvas Render", 800, 600, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+    if (!window) {
+        SDL_Quit();
+        throw std::runtime_error("SDL: Failed to create Window: " + std::string(SDL_GetError()));
+    }
+
+    // ========================================================================
+    // 【核心修复】：使用嵌套作用域隔离所有 Vulkan 局部变量的生命周期
+    // ========================================================================
     {
-        using namespace Vulkan;
+        VulkanContext vkCtx;
 
-        // 1. Vulkan 初始化
-        VulkanInit vkInit("StuCanvas Render", 800, 600, true);
-        VkDevice device = vkInit.getDevice();
+        VulkanContextConfig config{};
+        config.appName = "StuCanvas Render";
+        config.enableValidation = true;
 
+        // 动态获取当前平台下 SDL3 正常呈现所需的 Instance 扩展列表
+        uint32_t sdlExtCount = 0;
+        const char* const* sdlExts = SDL_Vulkan_GetInstanceExtensions(&sdlExtCount);
+        if (sdlExts) {
+            for (uint32_t i = 0; i < sdlExtCount; ++i) {
+                config.requiredInstanceExtensions.push_back(sdlExts[i]);
+            }
+        }
+
+        // 显式添加设备属性及校验扩展
+        config.requiredInstanceExtensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+
+        // 配置呈现显示必需的逻辑设备交换链扩展
+        config.requiredDeviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
+        // 初始化 Vulkan 实例与表面（Surface）
+        vkCtx.initInstance(config);
+        vkCtx.initSurface(window);
+
+        // 自定义刷选物理显卡并创建逻辑设备 (支持核显与独显多卡环境)
+        vkCtx.filterPhysicalDevices([&](VkPhysicalDevice dev) -> bool {
+            uint32_t extCount = 0;
+            vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, nullptr);
+            std::vector<VkExtensionProperties> available(extCount);
+            vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, available.data());
+
+            bool supportsSwapchain = false;
+            for (const auto& ext : available) {
+                if (std::strcmp(ext.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) {
+                    supportsSwapchain = true;
+                    break;
+                }
+            }
+            return supportsSwapchain;
+        });
+
+        vkCtx.createLogicalDevice(0, config.requiredDeviceExtensions);
+
+        const auto& primaryDev = vkCtx.getPrimaryDevice();
+        VkDevice device = primaryDev.get();
+
+        // 构建临时交换链以查询最兼容的颜色附件格式
         VkFormat swapchainFormat;
         {
-            SwapChain tempSC(vkInit.getPhysicalDevice(), device,
-                             vkInit.getSurface(), VK_NULL_HANDLE,
-                             vkInit.getGraphicsFamily(), vkInit.getPresentFamily(),
-                             vkInit.getWindow(), settings_.msaaSamples);
+            SwapChain tempSC(primaryDev.getPhysicalDevice(), device,
+                             vkCtx.getSurface(), VK_NULL_HANDLE,
+                             primaryDev.getGraphicsQueue().familyIndex,
+                             primaryDev.getPresentQueue().familyIndex,
+                             window, settings_.msaaSamples);
             swapchainFormat = tempSC.getImageFormat();
         }
 
+        // 初始化着色器、管线以及描述符集
         RenderPass renderPass(device, swapchainFormat, settings_.msaaSamples);
-
         auto shaders = LoadAllShaders(device);
-
 
         auto descSetLayout = CreateDescriptorSetLayout(device);
         auto pipelines = CreatePipelines(device, renderPass.get(), descSetLayout, shaders);
-
-
         auto descriptors = CreateDescriptors(device, descSetLayout);
 
-
+        // 初始化呈现同步控制器
         Presenter presenter(
-            vkInit.getPhysicalDevice(), vkInit.getDevice(),
-            vkInit.getSurface(), vkInit.getGraphicsFamily(),
-            vkInit.getPresentFamily(), vkInit.getGraphicsQueue(),
-            vkInit.getPresentQueue(), renderPass.get(), vkInit.getWindow(), settings_.msaaSamples);
+            primaryDev.getPhysicalDevice(), device,
+            vkCtx.getSurface(),
+            primaryDev.getGraphicsQueue().familyIndex,
+            primaryDev.getPresentQueue().familyIndex,
+            primaryDev.getGraphicsQueue().handle,
+            primaryDev.getPresentQueue().handle,
+            renderPass.get(), window, settings_.msaaSamples);
 
         uint64_t current_frame = start_frame;
         bool is_paused = false;
@@ -1223,15 +1282,12 @@ namespace StuCanvas
         bool running = true;
         SDL_Event event;
 
-
-        // --- C. 当帧发生改变时，重新收集数据并构建缓冲 ---
         ProcessedFrameData<double> frameData;
         Vulkan::CanvasBufferGroup buffers;
-        VkCommandPool uploadPool = CreateCommandPool(device, vkInit.getGraphicsFamily(),
+        VkCommandPool uploadPool = CreateCommandPool(device, primaryDev.getGraphicsQueue().familyIndex,
                                                      VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
 
-        // 6. 主渲染循环
-       // 6. 主渲染循环
+        // 主渲染展示循环
         while (running)
         {
             // --- A. 事件处理 ---
@@ -1240,7 +1296,6 @@ namespace StuCanvas
                 if (event.type == SDL_EVENT_QUIT) running = false;
                 if (event.type == SDL_EVENT_WINDOW_RESIZED) {
                     presenter.markResized();
-                    // 窗口缩放后，即使暂停也需要强制重新录制指令
                 }
                 if (event.type == SDL_EVENT_KEY_DOWN)
                 {
@@ -1275,315 +1330,43 @@ namespace StuCanvas
             {
                 std::string title = "StuCanvas Render - Frame: " + std::to_string(current_frame) +
                     (is_paused ? " (Paused)" : " (Playing)");
-                SDL_SetWindowTitle(vkInit.getWindow(), title.c_str());
+                SDL_SetWindowTitle(window, title.c_str());
 
-                // 准备数据包
                 frameData = PrepareFrameData(current_frame);
 
-                // 上传到 GPU 缓冲区
-                UploadFrameData(device, vkInit.getPhysicalDevice(), uploadPool,
-                                vkInit.getGraphicsQueue(), frameData, descriptors, buffers);
+                UploadFrameData(device, primaryDev.getPhysicalDevice(), uploadPool,
+                                primaryDev.getGraphicsQueue().handle, frameData, descriptors, buffers);
 
                 frame_dirty = false;
             }
 
-            // --- D. 画面呈现逻辑：每一帧都运行，确保窗口缩放、遮挡恢复能正常响应 ---
+            // --- D. 画面呈现逻辑：每一帧安全循环，保障窗口缩放与重绘 ---
             uint32_t imageIndex;
             VkCommandBuffer cmd = presenter.beginFrame(imageIndex);
 
-            // 如果窗口被最小化或交换链正在重建，beginFrame 会返回 NULL，此时跳过绘制
             if (cmd == VK_NULL_HANDLE) continue;
 
             auto extent = presenter.getExtent();
-
-            // 重新计算常量（因为 extent 可能随缩放改变了，即便 frameData 没变）
             auto pc = ComputePushConstants(extent, frameData);
 
-            // 开始录制
             CmdBeginRenderPass(cmd, renderPass.get(), presenter.getFramebuffer(imageIndex), extent);
-
-            // 无论是否暂停，都根据当前已有的 buffers 录制绘制指令
             RecordGraphicsCommands(cmd, frameData, pipelines, descriptors, buffers, pc);
-
             vkCmdEndRenderPass(cmd);
 
-            // 提交显示
             presenter.endFrame(cmd, imageIndex);
         }
+
+        // 确保 GPU 闲置并手动清理普通资源
+        vkDeviceWaitIdle(device);
         CleanupVulkanResources(device, descSetLayout, uploadPool, descriptors, pipelines);
-    }
 
+    } // <--- 所有 Vulkan RAII 资源（包括 vkCtx, presenter 等）在此处均已安全、完美析构！
 
-
-
-template <typename T>
-void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optional<uint64_t> end_frame) {
-    using namespace Vulkan;
-
-    // 1. 确定导出区间与分辨率
-    auto [auto_start, auto_end] = GetGlobalFrameRange();
-    uint64_t start_f = start_frame.value_or(auto_start);
-    uint64_t end_f = end_frame.value_or(auto_end);
-    if (end_f < start_f) return;
-    uint32_t total_frames = static_cast<uint32_t>(end_f - start_f + 1);
-
-    const auto& exportCfg = settings_.exportConfigs;
-    uint32_t exWidth = exportCfg.width;
-    uint32_t exHeight = exportCfg.height;
-
-    // 2. 初始化 Headless Vulkan
-    VulkanInit vkInit("StuCanvas Exporter", exWidth, exHeight, true, true);
-    VkDevice device = vkInit.getDevice();
-    VkInstance instance = vkInit.getInstance();
-    VkPhysicalDevice physDev = vkInit.getPhysicalDevice();
-
-    VkQueue graphicsQueue = vkInit.getGraphicsQueue();
-    VkQueue computeQueue  = vkInit.getComputeQueue();
-    VkQueue encodeQueue   = vkInit.getVideoEncodeQueue();
-
-    // 加载同步 2.0 函数指针 (2026 正式版核心)
-    auto pfnQueueSubmit2 = (PFN_vkQueueSubmit2)vkGetDeviceProcAddr(device, "vkQueueSubmit2");
-
-    // 3. 基础资源准备
-    RenderPass offscreenPass(device, VK_FORMAT_R8G8B8A8_UNORM, settings_.msaaSamples, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    auto shaders = LoadAllShaders(device);
-    auto descSetLayout = CreateDescriptorSetLayout(device);
-    auto descriptors = CreateDescriptors(device, descSetLayout);
-    auto pipelines = CreatePipelines(device, offscreenPass.get(), descSetLayout, shaders);
-
-    // 离屏渲染目标 (内部已实现双缓冲 YUV 图像和分平面视图)
-    OffscreenTarget target(device, physDev, exWidth, exHeight, settings_.msaaSamples, offscreenPass.get());
-
-    // 原生 AV1 编码器 (内部已实现持久化 Profile 链)
-        VideoEncoderH265 encoder(instance, device, physDev,
-                                 vkInit.getQueueFamilyIndices().videoEncodeFamily.value(),
-                                 exportCfg);
-
-    // ==========================================================
-    // 4. Compute Shader 准备
-    // ==========================================================
-    VkSamplerCreateInfo samplerInfo{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    VkSampler computeSampler;
-    vkCreateSampler(device, &samplerInfo, nullptr, &computeSampler);
-
-    // 布局定义: 0=SAMPLED(RGB), 1=STORAGE(Y), 2=STORAGE(UV)
-    std::array<VkDescriptorSetLayoutBinding, 3> compBindings{};
-    compBindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-    compBindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-    compBindings[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-
-    VkDescriptorSetLayoutCreateInfo compLayoutInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 3, compBindings.data() };
-    VkDescriptorSetLayout computeLayout;
-    vkCreateDescriptorSetLayout(device, &compLayoutInfo, nullptr, &computeLayout);
-
-    auto compShader = ShaderModule::fromSlangFile(device, "/home/friendships666/Projects/StuCanvas/stucanvas/shaders/rgb_to_nv12.slang", "compute", "computeMain");
-    ComputePipeline yuvConverter(device, compShader.getModule(), {computeLayout});
-
-
-        std::array<VkDescriptorPoolSize, 2> poolSizes{};
-        poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        poolSizes[0].descriptorCount = 1;
-        poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        poolSizes[1].descriptorCount = 2;
-
-        VkDescriptorPoolCreateInfo cpInfo{};
-        cpInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        cpInfo.maxSets = 1; // 你只分配一个 computeSet
-        cpInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-        cpInfo.pPoolSizes = poolSizes.data();
-        VkDescriptorPool compPool;
-        if (vkCreateDescriptorPool(device, &cpInfo, nullptr, &compPool) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create Compute Descriptor Pool");
-        }
-    VkDescriptorSetAllocateInfo cai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, compPool, 1, &computeLayout };
-    VkDescriptorSet computeSet; vkAllocateDescriptorSets(device, &cai, &computeSet);
-
-    // 5. 并行指令与同步对象
-    VkCommandPool gfxPool = CreateCommandPool(device, vkInit.getGraphicsFamily(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-    VkCommandPool cmtPool = CreateCommandPool(device, vkInit.getComputeFamily(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-    VkCommandPool encPool = CreateCommandPool(device, vkInit.getQueueFamilyIndices().videoEncodeFamily.value(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-
-    VkCommandBuffer gfxCmd, cmtCmd, encCmd;
-    auto Alloc = [&](VkCommandPool p, VkCommandBuffer* c) {
-        VkCommandBufferAllocateInfo ai{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, p, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1 };
-        vkAllocateCommandBuffers(device, &ai, c);
-    };
-    Alloc(gfxPool, &gfxCmd); Alloc(cmtPool, &cmtCmd); Alloc(encPool, &encCmd);
-
-    VkSemaphoreCreateInfo semInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-    VkFenceCreateInfo fenceInfo{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
-    VkSemaphore semRenderDone, semComputeDone;
-    vkCreateSemaphore(device, &semInfo, nullptr, &semRenderDone);
-    vkCreateSemaphore(device, &semInfo, nullptr, &semComputeDone);
-    VkFence frameFence;
-    vkCreateFence(device, &fenceInfo, nullptr, &frameFence);
-
-    // 6. 导出文件初始化
-    std::ofstream videoFile(exportCfg.outputPath, std::ios::binary);
-    if (!videoFile.is_open()) {
-        throw std::runtime_error("Failed to open output file: " + exportCfg.outputPath);
-    }
-    IVFWriter::WriteHeader(videoFile, exWidth, exHeight, FPS_, total_frames);
-        std::vector<uint8_t> seqHeader = encoder.getCodecHeader();
-    ProcessedFrameData<double> frameData;
-    Vulkan::CanvasBufferGroup buffers;
-
-    // ==========================================================
-    // 7. 主导出循环
-    // ==========================================================
-    for (uint64_t current_f = start_f; current_f <= end_f; ++current_f) {
-        uint32_t frameIdx = (uint32_t)(current_f - start_f);
-        uint32_t querySlot = frameIdx % 4; // 这里的 4 必须对应 MAX_ENCODE_QUERIES
-        uint32_t currPingPong = frameIdx % 2;
-        uint32_t prevPingPong = (frameIdx + 1) % 2;
-
-        frameData = PrepareFrameData(current_f);
-        UploadFrameData(device, physDev, gfxPool, graphicsQueue, frameData, descriptors, buffers);
-
-        // --- 核心修正：动态更新描述符集指向当前物理缓冲 ---
-        VkDescriptorImageInfo infoRGB{ computeSampler, target.getResolveRGBView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-        VkDescriptorImageInfo infoY  { VK_NULL_HANDLE, target.getYPlaneView(currPingPong), VK_IMAGE_LAYOUT_GENERAL };
-        VkDescriptorImageInfo infoUV { VK_NULL_HANDLE, target.getUVPlaneView(currPingPong), VK_IMAGE_LAYOUT_GENERAL };
-
-        std::array<VkWriteDescriptorSet, 3> compWrites{};
-        compWrites[0] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &infoRGB };
-        compWrites[1] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoY };
-        compWrites[2] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoUV };
-        vkUpdateDescriptorSets(device, 3, compWrites.data(), 0, nullptr);
-
-        // --- Step 1: Graphics Queue (Render -> Resolve) ---
-        vkResetCommandBuffer(gfxCmd, 0);
-        VkCommandBufferBeginInfo b{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-        vkBeginCommandBuffer(gfxCmd, &b);
-        auto pc = ComputePushConstants({exWidth, exHeight}, frameData);
-        CmdBeginRenderPass(gfxCmd, offscreenPass.get(), target.getFramebuffer(), {exWidth, exHeight});
-        RecordGraphicsCommands(gfxCmd, frameData, pipelines, descriptors, buffers, pc);
-        vkCmdEndRenderPass(gfxCmd);
-
-        // RGB 解析结果转为 Shader Read 布局
-        VkImageMemoryBarrier2 b1{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
-            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getResolveRGBImage(), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
-        VkDependencyInfo d1{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b1 };
-        vkCmdPipelineBarrier2(gfxCmd, &d1);
-        vkEndCommandBuffer(gfxCmd);
-
-        // --- Step 2: Compute Queue (RGB -> NV12) ---
-        vkResetCommandBuffer(cmtCmd, 0);
-        vkBeginCommandBuffer(cmtCmd, &b);
-        // 准备当前 YUV 图像布局
-        VkImageMemoryBarrier2 b2{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
-            VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(currPingPong), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
-        VkDependencyInfo d2{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b2 };
-        vkCmdPipelineBarrier2(cmtCmd, &d2);
-
-        vkCmdBindPipeline(cmtCmd, VK_PIPELINE_BIND_POINT_COMPUTE, yuvConverter.get());
-        vkCmdBindDescriptorSets(cmtCmd, VK_PIPELINE_BIND_POINT_COMPUTE, yuvConverter.getLayout(), 0, 1, &computeSet, 0, nullptr);
-        vkCmdDispatch(cmtCmd, (exWidth/2 + 15)/16, (exHeight/2 + 15)/16, 1);
-
-        // 核心修复：Compute 队列不认识 VIDEO_ENCODE 阶段，只转为 BOTTOM 即可
-        VkImageMemoryBarrier2 b3{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, 0,
-            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_VIDEO_ENCODE_SRC_KHR,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(currPingPong), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
-        VkDependencyInfo d3{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b3 };
-        vkCmdPipelineBarrier2(cmtCmd, &d3);
-        vkEndCommandBuffer(cmtCmd);
-
-        // --- Step 3: Video Queue (NV12 -> AV1) ---
-        vkResetCommandBuffer(encCmd, 0);
-        vkBeginCommandBuffer(encCmd, &b);
-        // 传入当前物理视图和参考物理视图
-        encoder.EncodeFrame(encCmd, target.getYuvView(currPingPong), target.getYuvView(prevPingPong), frameIdx);
-        VkResult endRes = vkEndCommandBuffer(encCmd);
-        if (endRes != VK_SUCCESS) {
-            // 如果这里报错，说明 EncodeFrame 内部录制的指令有误（如图片格式不匹配、槽位不对等）
-            // 导致 Command Buffer 在录制中途就挂了
-            std::cerr << "CRITICAL: vkEndCommandBuffer(encCmd) failed with error: " << endRes << std::endl;
-            throw std::runtime_error("Command buffer recording failed!");
-        }
-
-        // --- Sync2 链式提交 ---
-        VkSemaphoreSubmitInfo sigGfx{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semRenderDone, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT };
-        VkCommandBufferSubmitInfo subGfx{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, gfxCmd, 0 };
-        VkSubmitInfo2 s1{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 0, nullptr, 1, &subGfx, 1, &sigGfx };
-        pfnQueueSubmit2(graphicsQueue, 1, &s1, VK_NULL_HANDLE);
-
-        VkSemaphoreSubmitInfo waitGfx{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semRenderDone, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
-        VkSemaphoreSubmitInfo sigCmt{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semComputeDone, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
-        VkCommandBufferSubmitInfo subCmt{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, cmtCmd, 0 };
-        VkSubmitInfo2 s2{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 1, &waitGfx, 1, &subCmt, 1, &sigCmt };
-        pfnQueueSubmit2(computeQueue, 1, &s2, VK_NULL_HANDLE);
-
-        VkSemaphoreSubmitInfo waitCmt{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semComputeDone, 0, VK_PIPELINE_STAGE_2_VIDEO_ENCODE_BIT_KHR };
-        VkCommandBufferSubmitInfo subEnc{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, encCmd, 0 };
-        VkSubmitInfo2 s3{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 1, &waitCmt, 1, &subEnc, 0, nullptr };
-        pfnQueueSubmit2(encodeQueue, 1, &s3, frameFence);
-
-        // 等待并回读
-        vkWaitForFences(device, 1, &frameFence, VK_TRUE, UINT64_MAX);
-        vkResetFences(device, 1, &frameFence);
-
-        uint64_t fSize = encoder.GetEncodedSize(querySlot);
-
-        if (fSize > 0) {
-            void* pBitstreamData = nullptr;
-            // 注意：32MB 是你在 VideoEncoderAV1 中 hardcode 的单帧最大尺寸
-            VkDeviceSize mapOffset = (VkDeviceSize)querySlot * (32 * 1024 * 1024);
-
-            if (vkMapMemory(device, encoder.GetBitstreamMemory(), mapOffset, fSize, 0, &pBitstreamData) == VK_SUCCESS) {
-
-                if (frameIdx == 0 && !seqHeader.empty()) {
-                    // 【修复核心】如果是第 0 帧，将序列头和帧数据合并
-                    // 这样它们会共用一个 12 字节的 IVF 帧头，保证 PTS 对齐
-                    std::vector<uint8_t> combinedBuffer;
-                    combinedBuffer.reserve(seqHeader.size() + fSize);
-                    combinedBuffer.insert(combinedBuffer.end(), seqHeader.begin(), seqHeader.end());
-                    combinedBuffer.insert(combinedBuffer.end(), (uint8_t*)pBitstreamData, (uint8_t*)pBitstreamData + fSize);
-
-                    IVFWriter::WriteFrame(videoFile, combinedBuffer.data(), combinedBuffer.size(), frameIdx);
-
-                    std::cout << "\n[Exporter] Frame 0 + Sequence Header written ("
-                              << combinedBuffer.size() << " bytes)." << std::endl;
-                } else {
-                    // 后续帧直接写入
-                    IVFWriter::WriteFrame(videoFile, pBitstreamData, fSize, frameIdx);
-                }
-
-                vkUnmapMemory(device, encoder.GetBitstreamMemory());
-            }
-        } else {
-            // 如果 fSize 为 0，通常是因为反馈标志位没设对，或者显卡还没压出数据
-            std::cerr << "\n[Warning] Frame " << frameIdx << " encoded size is 0!" << std::endl;
-        }
-
-        if (frameIdx % 5 == 0) {
-            std::cout << "\rExporting: " << std::fixed << std::setprecision(1)
-                      << (float)(frameIdx + 1) / total_frames * 100 << "%" << std::flush;
-        }
-    }
-
-    vkDeviceWaitIdle(device);
-    // 销毁局部资源 (注意：target 拥有的视图无需手动销毁)
-    vkDestroySampler(device, computeSampler, nullptr);
-    vkDestroyDescriptorPool(device, compPool, nullptr);
-    vkDestroyDescriptorSetLayout(device, computeLayout, nullptr);
-    vkDestroyCommandPool(device, gfxPool, nullptr);
-    vkDestroyCommandPool(device, cmtPool, nullptr);
-    vkDestroyCommandPool(device, encPool, nullptr);
-    vkDestroySemaphore(device, semRenderDone, nullptr);
-    vkDestroySemaphore(device, semComputeDone, nullptr);
-    vkDestroyFence(device, frameFence, nullptr);
-    videoFile.close();
-
-    CleanupVulkanResources(device, descSetLayout, VK_NULL_HANDLE, descriptors, pipelines);
+    // ========================================================================
+    // 此时 Vulkan 的所有操作已彻底结束，可以安全销毁窗口并关闭 SDL 系统
+    // ========================================================================
+    SDL_DestroyWindow(window);
+    SDL_Quit();
 }
 
 
@@ -1624,329 +1407,392 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
     nvConfig.gop_size = exportCfg.gopSize;
     nvConfig.quality_preset = exportCfg.tuningPreset;
 
-    // 3. 初始化 Headless Vulkan 环境
-    VulkanInit vkInit("StuCanvas NVENC Exporter", exWidth, exHeight, true, false);
-    VkDevice device = vkInit.getDevice();
-    VkPhysicalDevice physDev = vkInit.getPhysicalDevice();
-    VkQueue graphicsQueue = vkInit.getGraphicsQueue();
-    VkQueue computeQueue  = vkInit.getComputeQueue();
+    // 3. 声明并建立无头模式（Headless）下的统一 Vulkan 运行上下文
+    VulkanContext vkCtx;
 
-    auto pfnQueueSubmit2 = (PFN_vkQueueSubmit2)vkGetDeviceProcAddr(device, "vkQueueSubmit2");
-    if (!pfnQueueSubmit2) throw std::runtime_error("Vulkan: Failed to load vkQueueSubmit2");
+    VulkanContextConfig config{};
+    config.appName = "StuCanvas Headless Exporter";
+    config.enableValidation = true;
 
-    // 4. 创建基础渲染通路与离屏目标容器
-    RenderPass offscreenPass(device, VK_FORMAT_R8G8B8A8_UNORM, settings_.msaaSamples, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    auto shaders = LoadAllShaders(device);
-    auto descSetLayout = CreateDescriptorSetLayout(device);
-    auto descriptors = CreateDescriptors(device, descSetLayout);
-    auto pipelines = CreatePipelines(device, offscreenPass.get(), descSetLayout, shaders);
+    // 实例级扩展：共享物理属性与外部同步能力查询
+    config.requiredInstanceExtensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    config.requiredInstanceExtensions.push_back("VK_KHR_external_memory_capabilities");
+    config.requiredInstanceExtensions.push_back("VK_KHR_external_semaphore_capabilities");
 
-    // OffscreenTarget 用于渲染、MSAA、解析 RGB 以及 GPU 级的格式转换
-    OffscreenTarget target(device, physDev, exWidth, exHeight, settings_.msaaSamples, offscreenPass.get(), false);
-
-    // 5. 初始化 CUDA 物理编码包装器
-    NvencCudaEncoder encoder(nvConfig);
-
-    // 6. 配置跨平台导出共享内存属性
+    // 设备级扩展：跨平台共享内存与信号量同步设备扩展
+    config.requiredDeviceExtensions.push_back("VK_KHR_external_memory");
+    config.requiredDeviceExtensions.push_back("VK_KHR_external_semaphore");
 #ifdef _WIN32
-    VkExternalMemoryHandleTypeFlags memHandleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-    VkExternalSemaphoreHandleTypeFlags semHandleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+    config.requiredDeviceExtensions.push_back("VK_KHR_external_memory_win32");
+    config.requiredDeviceExtensions.push_back("VK_KHR_external_semaphore_win32");
 #else
-    VkExternalMemoryHandleTypeFlags memHandleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
-    VkExternalSemaphoreHandleTypeFlags semHandleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+    config.requiredDeviceExtensions.push_back("VK_KHR_external_memory_fd");
+    config.requiredDeviceExtensions.push_back("VK_KHR_external_semaphore_fd");
 #endif
 
-    // 7. 构建两个支持共享至 CUDA 物理寻址的线性双缓冲 VkBuffer 资源（代替原先 tiled 的 VkImage）
-    struct ExportableBuffer {
-        VkBuffer buffer = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
-        VkDeviceSize size = 0;
-    };
-    std::array<ExportableBuffer, 2> exportStagingBuffers;
+    // 初始化 Vulkan 实例 (自动追加所需的调试扩展等)
+    vkCtx.initInstance(config);
 
-    for (int i = 0; i < 2; ++i) {
-        VkExternalMemoryBufferCreateInfo extBufferInfo{ VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO };
-        extBufferInfo.handleTypes = memHandleType;
+    // 4. 自定义过滤并筛选物理设备（必须支持所要求的外部内存/信号量扩展）
+    vkCtx.filterPhysicalDevices([&](VkPhysicalDevice dev) -> bool {
+        uint32_t extCount = 0;
+        vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, nullptr);
+        std::vector<VkExtensionProperties> available(extCount);
+        vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, available.data());
 
-        VkBufferCreateInfo bufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-        bufferInfo.pNext = &extBufferInfo;
-        bufferInfo.size = yuvSize;
-        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        if (vkCreateBuffer(device, &bufferInfo, nullptr, &exportStagingBuffers[i].buffer) != VK_SUCCESS) {
-            throw std::runtime_error("Vulkan: Failed to create exportable buffer.");
-        }
-
-        VkMemoryRequirements memReq;
-        vkGetBufferMemoryRequirements(device, exportStagingBuffers[i].buffer, &memReq);
-        exportStagingBuffers[i].size = memReq.size;
-
-        VkExportMemoryAllocateInfo exportAllocInfo{ VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO };
-        exportAllocInfo.handleTypes = memHandleType;
-
-        VkMemoryAllocateInfo allocInfo{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
-        allocInfo.pNext = &exportAllocInfo;
-        allocInfo.allocationSize = memReq.size;
-
-        VkPhysicalDeviceMemoryProperties memProps;
-        vkGetPhysicalDeviceMemoryProperties(physDev, &memProps);
-        uint32_t memoryTypeIndex = 0xFFFFFFFF;
-
-        // 查找支持主机可见（Host Visible）以及主机相干（Coherent）的共享内存索引
-        for (uint32_t k = 0; k < memProps.memoryTypeCount; ++k) {
-            if ((memReq.memoryTypeBits & (1 << k)) &&
-                (memProps.memoryTypes[k].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
-                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
-                memoryTypeIndex = k;
-                break;
+        for (const auto& reqExt : config.requiredDeviceExtensions) {
+            bool found = false;
+            for (const auto& ext : available) {
+                if (std::strcmp(ext.extensionName, reqExt) == 0) {
+                    found = true;
+                    break;
+                }
             }
+            if (!found) return false;
         }
-        if (memoryTypeIndex == 0xFFFFFFFF) {
+        return true;
+    });
+
+    // 5. 自动算力加权：选出性能最强的独立显卡（Discrete GPU 权重最高，平局则由 maxImageDimension2D 决策）
+    uint32_t bestDeviceIndex = 0;
+    int bestScore = -1;
+    const auto& physDevices = vkCtx.getPhysicalDevices();
+    for (uint32_t i = 0; i < physDevices.size(); ++i) {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(physDevices[i], &props);
+
+        int score = 0;
+        if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+            score = 1000;
+        } else if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
+            score = 500;
+        }
+        score += static_cast<int>(props.limits.maxImageDimension2D / 100);
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestDeviceIndex = i;
+        }
+    }
+
+    // 在选定的最强物理卡上创建逻辑设备（内部默认已托管强制开启 shaderDrawParameters，无需外部传递特征链）
+    vkCtx.createLogicalDevice(bestDeviceIndex, config.requiredDeviceExtensions);
+
+    // ========================================================================
+    // 【核心同步机制】：使用局部嵌套大括号包含所有依赖该 Device 的具体 Vulkan 资源
+    // 确保这些资源在大括号结束、vkCtx 自动析构前，全部完美、有序地回收完毕。
+    // ========================================================================
+    {
+        const auto& primaryDev = vkCtx.getPrimaryDevice();
+        VkDevice device = primaryDev.get();
+        VkPhysicalDevice physDev = primaryDev.getPhysicalDevice();
+        VkQueue graphicsQueue = primaryDev.getGraphicsQueue().handle;
+        VkQueue computeQueue  = primaryDev.getComputeQueue().handle;
+
+        // 获取队列提交 2.0 函数指针
+        auto pfnQueueSubmit2 = (PFN_vkQueueSubmit2)vkGetDeviceProcAddr(device, "vkQueueSubmit2");
+        if (!pfnQueueSubmit2) throw std::runtime_error("Vulkan: Failed to load vkQueueSubmit2");
+
+        // 创建离屏渲染环境
+        RenderPass offscreenPass(device, VK_FORMAT_R8G8B8A8_UNORM, settings_.msaaSamples, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        auto shaders = LoadAllShaders(device);
+        auto descSetLayout = CreateDescriptorSetLayout(device);
+        auto descriptors = CreateDescriptors(device, descSetLayout);
+        auto pipelines = CreatePipelines(device, offscreenPass.get(), descSetLayout, shaders);
+
+        OffscreenTarget target(device, physDev, exWidth, exHeight, settings_.msaaSamples, offscreenPass.get());
+
+        // 初始化异步 CUDA 硬件视频编码器
+        NvencCudaEncoder encoder(nvConfig);
+#ifdef _WIN32
+        VkExternalMemoryHandleTypeFlags memHandleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+        VkExternalSemaphoreHandleTypeFlags semHandleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#else
+        VkExternalMemoryHandleTypeFlags memHandleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+        VkExternalSemaphoreHandleTypeFlags semHandleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
+        // 构建两个具有外部导入（Export）共享显存属性的线性双缓冲 VkBuffer 资源
+        struct ExportableBuffer {
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VkDeviceMemory memory = VK_NULL_HANDLE;
+            VkDeviceSize size = 0;
+        };
+        std::array<ExportableBuffer, 2> exportStagingBuffers;
+
+        for (int i = 0; i < 2; ++i) {
+            VkExternalMemoryBufferCreateInfo extBufferInfo{ VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO };
+            extBufferInfo.handleTypes = memHandleType;
+
+            VkBufferCreateInfo bufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+            bufferInfo.pNext = &extBufferInfo;
+            bufferInfo.size = yuvSize;
+            bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+            if (vkCreateBuffer(device, &bufferInfo, nullptr, &exportStagingBuffers[i].buffer) != VK_SUCCESS) {
+                throw std::runtime_error("Vulkan: Failed to create exportable buffer.");
+            }
+
+            VkMemoryRequirements memReq;
+            vkGetBufferMemoryRequirements(device, exportStagingBuffers[i].buffer, &memReq);
+            exportStagingBuffers[i].size = memReq.size;
+
+            VkExportMemoryAllocateInfo exportAllocInfo{ VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO };
+            exportAllocInfo.handleTypes = memHandleType;
+
+            VkMemoryAllocateInfo allocInfo{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+            allocInfo.pNext = &exportAllocInfo;
+            allocInfo.allocationSize = memReq.size;
+
+            VkPhysicalDeviceMemoryProperties memProps;
+            vkGetPhysicalDeviceMemoryProperties(physDev, &memProps);
+            uint32_t memoryTypeIndex = 0xFFFFFFFF;
+
             for (uint32_t k = 0; k < memProps.memoryTypeCount; ++k) {
-                if (memReq.memoryTypeBits & (1 << k)) {
+                if ((memReq.memoryTypeBits & (1 << k)) &&
+                    (memProps.memoryTypes[k].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                    (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
                     memoryTypeIndex = k;
                     break;
                 }
             }
+            if (memoryTypeIndex == 0xFFFFFFFF) {
+                for (uint32_t k = 0; k < memProps.memoryTypeCount; ++k) {
+                    if (memReq.memoryTypeBits & (1 << k)) {
+                        memoryTypeIndex = k;
+                        break;
+                    }
+                }
+            }
+            allocInfo.memoryTypeIndex = memoryTypeIndex;
+
+            if (vkAllocateMemory(device, &allocInfo, nullptr, &exportStagingBuffers[i].memory) != VK_SUCCESS) {
+                throw std::runtime_error("Vulkan: Failed to allocate exportable buffer memory.");
+            }
+
+            vkBindBufferMemory(device, exportStagingBuffers[i].buffer, exportStagingBuffers[i].memory, 0);
         }
-        allocInfo.memoryTypeIndex = memoryTypeIndex;
 
-        if (vkAllocateMemory(device, &allocInfo, nullptr, &exportStagingBuffers[i].memory) != VK_SUCCESS) {
-            throw std::runtime_error("Vulkan: Failed to allocate exportable buffer memory.");
+        // Compute Shader (RGBA -> NV12) 转换环境准备
+        VkSamplerCreateInfo samplerInfo{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        VkSampler computeSampler;
+        vkCreateSampler(device, &samplerInfo, nullptr, &computeSampler);
+
+        std::array<VkDescriptorSetLayoutBinding, 3> compBindings{};
+        compBindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+        compBindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+        compBindings[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+
+        VkDescriptorSetLayout computeLayout;
+        VkDescriptorSetLayoutCreateInfo compLayoutInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 3, compBindings.data() };
+        vkCreateDescriptorSetLayout(device, &compLayoutInfo, nullptr, &computeLayout);
+
+        auto compShader = ShaderModule::fromSlangFile(device, "/home/friendships666/Projects/StuCanvas/stucanvas/shaders/rgb_to_nv12.slang", "compute", "computeMain");
+        ComputePipeline yuvConverter(device, compShader.getModule(), {computeLayout});
+
+        std::array<VkDescriptorPoolSize, 2> poolSizes = {{
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1},
+            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}
+        }};
+        VkDescriptorPoolCreateInfo cpInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 2, poolSizes.data() };
+        VkDescriptorPool compPool;
+        vkCreateDescriptorPool(device, &cpInfo, nullptr, &compPool);
+
+        VkDescriptorSet computeSet;
+        VkDescriptorSetAllocateInfo cai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, compPool, 1, &computeLayout };
+        vkAllocateDescriptorSets(device, &cai, &computeSet);
+
+        VkCommandPool gfxPool = CreateCommandPool(device, primaryDev.getGraphicsQueue().familyIndex, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+        VkCommandPool cmtPool = CreateCommandPool(device, primaryDev.getComputeQueue().familyIndex, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+
+        VkCommandBuffer gfxCmd, cmtCmd;
+        auto Alloc = [&](VkCommandPool p, VkCommandBuffer* c) {
+            VkCommandBufferAllocateInfo ai{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, p, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1 };
+            vkAllocateCommandBuffers(device, &ai, c);
+        };
+        Alloc(gfxPool, &gfxCmd); Alloc(cmtPool, &cmtCmd);
+
+        // 创建支持导出到 CUDA 的共享同步信号量
+        VkExportSemaphoreCreateInfo exportSemInfo{ VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO };
+        exportSemInfo.handleTypes = semHandleType;
+
+        VkSemaphoreCreateInfo semCi{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+        semCi.pNext = &exportSemInfo;
+
+        VkSemaphore semRenderDone, semComputeDone;
+        if (vkCreateSemaphore(device, &semCi, nullptr, &semRenderDone) != VK_SUCCESS ||
+            vkCreateSemaphore(device, &semCi, nullptr, &semComputeDone) != VK_SUCCESS) {
+            throw std::runtime_error("Vulkan: Failed to create exportable semaphores.");
         }
 
-        vkBindBufferMemory(device, exportStagingBuffers[i].buffer, exportStagingBuffers[i].memory, 0);
-    }
+        // 将 Vulkan 信号量句柄安全导入至 CUDA 流中进行链式同步
+        CUexternalSemaphore cudaWaitSem = nullptr;
+    #ifdef _WIN32
+        auto fpGetSemaphoreWin32HandleKHR = (PFN_vkGetSemaphoreWin32HandleKHR)vkGetDeviceProcAddr(device, "vkGetSemaphoreWin32HandleKHR");
+        if (!fpGetSemaphoreWin32HandleKHR) throw std::runtime_error("Vulkan: Failed to load vkGetSemaphoreWin32HandleKHR");
+        VkSemaphoreGetWin32HandleInfoKHR getSemWin32Info{ VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR, nullptr, semComputeDone, static_cast<VkExternalSemaphoreHandleTypeFlagBits>(semHandleType) };
+        HANDLE semHandle = nullptr;
+        fpGetSemaphoreWin32HandleKHR(device, &getSemWin32Info, &semHandle);
+        cudaWaitSem = encoder.ImportSemaphore(semHandle, false);
+    #else
+        auto fpGetSemaphoreFdKHR = (PFN_vkGetSemaphoreFdKHR)vkGetDeviceProcAddr(device, "vkGetSemaphoreFdKHR");
+        if (!fpGetSemaphoreFdKHR) throw std::runtime_error("Vulkan: Failed to load vkGetSemaphoreFdKHR");
+        VkSemaphoreGetFdInfoKHR getSemFdInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR, nullptr, semComputeDone, static_cast<VkExternalSemaphoreHandleTypeFlagBits>(semHandleType) };
+        int semFd = -1;
+        fpGetSemaphoreFdKHR(device, &getSemFdInfo, &semFd);
+        cudaWaitSem = encoder.ImportSemaphore(semFd, false);
+    #endif
 
-    // 8. Compute Shader (RGBA -> NV12) 转换环境准备
-    VkSamplerCreateInfo samplerInfo{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-    samplerInfo.magFilter = VK_FILTER_LINEAR;
-    samplerInfo.minFilter = VK_FILTER_LINEAR;
-    VkSampler computeSampler;
-    vkCreateSampler(device, &samplerInfo, nullptr, &computeSampler);
+        std::ofstream videoFile(exportCfg.outputPath, std::ios::binary);
+        if (!videoFile.is_open()) throw std::runtime_error("Failed to open output path: " + exportCfg.outputPath);
 
-    std::array<VkDescriptorSetLayoutBinding, 3> compBindings{};
-    compBindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-    compBindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-    compBindings[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+        const bool isAV1 = (exportCfg.codec == VideoCodec::AV1);
+        if (isAV1) {
+            IVFWriter::WriteHeader(videoFile, exWidth, exHeight, FPS_, total_frames);
+        }
 
-    VkDescriptorSetLayout computeLayout;
-    VkDescriptorSetLayoutCreateInfo compLayoutInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 3, compBindings.data() };
-    vkCreateDescriptorSetLayout(device, &compLayoutInfo, nullptr, &computeLayout);
+        Vulkan::CanvasBufferGroup buffers;
 
-    auto compShader = ShaderModule::fromSlangFile(device, "/home/friendships666/Projects/StuCanvas/stucanvas/shaders/rgb_to_nv12.slang", "compute", "computeMain");
-    ComputePipeline yuvConverter(device, compShader.getModule(), {computeLayout});
+        // ==========================================================
+        // 13. GPU 零拷贝主硬件转码循环
+        // ==========================================================
+        for (uint64_t current_f = start_f; current_f <= end_f; ++current_f) {
+            uint32_t frameIdx = (uint32_t)(current_f - start_f);
+            uint32_t currPingPong = frameIdx % 2;
 
-    std::array<VkDescriptorPoolSize, 2> poolSizes = {{
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}
-    }};
-    VkDescriptorPoolCreateInfo cpInfo{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, 1, 2, poolSizes.data() };
-    VkDescriptorPool compPool;
-    vkCreateDescriptorPool(device, &cpInfo, nullptr, &compPool);
+            auto frameData = PrepareFrameData(current_f);
+            UploadFrameData(device, physDev, gfxPool, graphicsQueue, frameData, descriptors, buffers);
 
-    VkDescriptorSet computeSet;
-    VkDescriptorSetAllocateInfo cai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, compPool, 1, &computeLayout };
-    vkAllocateDescriptorSets(device, &cai, &computeSet);
+            VkDescriptorImageInfo infoRGB{ computeSampler, target.getResolveRGBView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            VkDescriptorImageInfo infoY  { VK_NULL_HANDLE, target.getYPlaneView(currPingPong), VK_IMAGE_LAYOUT_GENERAL };
+            VkDescriptorImageInfo infoUV { VK_NULL_HANDLE, target.getUVPlaneView(currPingPong), VK_IMAGE_LAYOUT_GENERAL };
+            std::array<VkWriteDescriptorSet, 3> compWrites{};
+            compWrites[0] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &infoRGB };
+            compWrites[1] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoY };
+            compWrites[2] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoUV };
+            vkUpdateDescriptorSets(device, 3, compWrites.data(), 0, nullptr);
 
-    // 9. 命令池分配
-    VkCommandPool gfxPool = CreateCommandPool(device, vkInit.getGraphicsFamily(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
-    VkCommandPool cmtPool = CreateCommandPool(device, vkInit.getComputeFamily(), VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
+            // --- Step 1: Graphics (Render & Resolve) ---
+            vkResetCommandBuffer(gfxCmd, 0);
+            VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            vkBeginCommandBuffer(gfxCmd, &bi);
+            auto pc = ComputePushConstants({exWidth, exHeight}, frameData);
+            CmdBeginRenderPass(gfxCmd, offscreenPass.get(), target.getFramebuffer(), {exWidth, exHeight});
+            RecordGraphicsCommands(gfxCmd, frameData, pipelines, descriptors, buffers, pc);
+            vkCmdEndRenderPass(gfxCmd);
 
-    VkCommandBuffer gfxCmd, cmtCmd;
-    auto Alloc = [&](VkCommandPool p, VkCommandBuffer* c) {
-        VkCommandBufferAllocateInfo ai{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, p, VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1 };
-        vkAllocateCommandBuffers(device, &ai, c);
-    };
-    Alloc(gfxPool, &gfxCmd); Alloc(cmtPool, &cmtCmd);
+            VkImageMemoryBarrier2 b1{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getResolveRGBImage(), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
+            VkDependencyInfo d1{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b1 };
+            vkCmdPipelineBarrier2(gfxCmd, &d1);
+            vkEndCommandBuffer(gfxCmd);
 
-    // 10. 创建支持导出到 CUDA 的 Vulkan 共享同步信号量
-    VkExportSemaphoreCreateInfo exportSemInfo{ VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO };
-    exportSemInfo.handleTypes = semHandleType;
+            // --- Step 2: Compute (RGBA to NV12) ---
+            vkResetCommandBuffer(cmtCmd, 0);
+            vkBeginCommandBuffer(cmtCmd, &bi);
 
-    VkSemaphoreCreateInfo semCi{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
-    semCi.pNext = &exportSemInfo;
+            VkImageMemoryBarrier2 b2{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
+                VK_PIPELINE_STAGE_2_NONE, 0,
+                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(currPingPong),
+                {VK_IMAGE_ASPECT_PLANE_0_BIT | VK_IMAGE_ASPECT_PLANE_1_BIT, 0, 1, 0, 1} };
+            VkDependencyInfo d2{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b2 };
+            vkCmdPipelineBarrier2(cmtCmd, &d2);
 
-    VkSemaphore semRenderDone, semComputeDone;
-    if (vkCreateSemaphore(device, &semCi, nullptr, &semRenderDone) != VK_SUCCESS ||
-        vkCreateSemaphore(device, &semCi, nullptr, &semComputeDone) != VK_SUCCESS) {
-        throw std::runtime_error("Vulkan: Failed to create exportable semaphores.");
-    }
+            vkCmdBindPipeline(cmtCmd, VK_PIPELINE_BIND_POINT_COMPUTE, yuvConverter.get());
+            vkCmdBindDescriptorSets(cmtCmd, VK_PIPELINE_BIND_POINT_COMPUTE, yuvConverter.getLayout(), 0, 1, &computeSet, 0, nullptr);
+            vkCmdDispatch(cmtCmd, (exWidth + 15) / 16, (exHeight + 15) / 16, 1);
 
-    // 导出信号量并导入至 CUDA 中进行流级等待
-    CUexternalSemaphore cudaWaitSem = nullptr;
-#ifdef _WIN32
-    auto fpGetSemaphoreWin32HandleKHR = (PFN_vkGetSemaphoreWin32HandleKHR)vkGetDeviceProcAddr(device, "vkGetSemaphoreWin32HandleKHR");
-    if (!fpGetSemaphoreWin32HandleKHR) throw std::runtime_error("Vulkan: Failed to load vkGetSemaphoreWin32HandleKHR");
-    VkSemaphoreGetWin32HandleInfoKHR getSemWin32Info{ VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR, nullptr, semComputeDone, static_cast<VkExternalSemaphoreHandleTypeFlagBits>(semHandleType) };
-    HANDLE semHandle = nullptr;
-    fpGetSemaphoreWin32HandleKHR(device, &getSemWin32Info, &semHandle);
-    cudaWaitSem = encoder.ImportSemaphore(semHandle, false);
-#else
-    auto fpGetSemaphoreFdKHR = (PFN_vkGetSemaphoreFdKHR)vkGetDeviceProcAddr(device, "vkGetSemaphoreFdKHR");
-    if (!fpGetSemaphoreFdKHR) throw std::runtime_error("Vulkan: Failed to load vkGetSemaphoreFdKHR");
-    VkSemaphoreGetFdInfoKHR getSemFdInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR, nullptr, semComputeDone, static_cast<VkExternalSemaphoreHandleTypeFlagBits>(semHandleType) };
-    int semFd = -1;
-    fpGetSemaphoreFdKHR(device, &getSemFdInfo, &semFd);
-    cudaWaitSem = encoder.ImportSemaphore(semFd, false);
-#endif
+            // Barrier: 转换后的 NV12 图像 -> 传输源格式
+            VkImageMemoryBarrier2 b3{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
+                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(currPingPong),
+                {VK_IMAGE_ASPECT_PLANE_0_BIT | VK_IMAGE_ASPECT_PLANE_1_BIT, 0, 1, 0, 1} };
+            VkDependencyInfo d3{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b3 };
+            vkCmdPipelineBarrier2(cmtCmd, &d3);
 
-    // 11. 磁盘目标文件开启
-    std::ofstream videoFile(exportCfg.outputPath, std::ios::binary);
-    if (!videoFile.is_open()) throw std::runtime_error("Failed to open output path: " + exportCfg.outputPath);
+            // --- Step 3: GPU Copy (Tiled Image to Linear VkBuffer) ---
+            std::array<VkBufferImageCopy, 2> copyRegions{};
+            copyRegions[0].bufferOffset = 0;
+            copyRegions[0].imageSubresource = { VK_IMAGE_ASPECT_PLANE_0_BIT, 0, 0, 1 };
+            copyRegions[0].imageExtent = { exWidth, exHeight, 1 };
+            copyRegions[1].bufferOffset = exWidth * exHeight;
+            copyRegions[1].imageSubresource = { VK_IMAGE_ASPECT_PLANE_1_BIT, 0, 0, 1 };
+            copyRegions[1].imageExtent = { exWidth / 2, exHeight / 2, 1 };
 
-    const bool isAV1 = (exportCfg.codec == VideoCodec::AV1);
-    if (isAV1) {
-        IVFWriter::WriteHeader(videoFile, exWidth, exHeight, FPS_, total_frames);
-    }
+            vkCmdCopyImageToBuffer(cmtCmd, target.getYuvImage(currPingPong), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                   exportStagingBuffers[currPingPong].buffer, 2, copyRegions.data());
 
-    Vulkan::CanvasBufferGroup buffers;
+            vkEndCommandBuffer(cmtCmd);
 
-    // ==========================================================
-    // 12. 零拷贝主硬件转码循环
-    // ==========================================================
-    for (uint64_t current_f = start_f; current_f <= end_f; ++current_f) {
-        uint32_t frameIdx = (uint32_t)(current_f - start_f);
-        uint32_t currPingPong = frameIdx % 2;
+            // --- Step 4: Vulkan 队列提交 ---
+            VkSemaphoreSubmitInfo sigGfx{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semRenderDone, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT };
+            VkCommandBufferSubmitInfo subGfx{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, gfxCmd, 0 };
+            VkSubmitInfo2 s1{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 0, nullptr, 1, &subGfx, 1, &sigGfx };
+            pfnQueueSubmit2(graphicsQueue, 1, &s1, VK_NULL_HANDLE);
 
-        auto frameData = PrepareFrameData(current_f);
-        UploadFrameData(device, physDev, gfxPool, graphicsQueue, frameData, descriptors, buffers);
+            VkSemaphoreSubmitInfo waitGfx{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semRenderDone, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
+            VkSemaphoreSubmitInfo sigCmt{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semComputeDone, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
+            VkCommandBufferSubmitInfo subCmt{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, cmtCmd, 0 };
+            VkSubmitInfo2 s2{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 1, &waitGfx, 1, &subCmt, 1, &sigCmt };
+            pfnQueueSubmit2(computeQueue, 1, &s2, VK_NULL_HANDLE);
 
-        // 重定向 Compute 描述符到当前 YUV 离屏图像平面
-        VkDescriptorImageInfo infoRGB{ computeSampler, target.getResolveRGBView(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-        VkDescriptorImageInfo infoY  { VK_NULL_HANDLE, target.getYPlaneView(currPingPong), VK_IMAGE_LAYOUT_GENERAL };
-        VkDescriptorImageInfo infoUV { VK_NULL_HANDLE, target.getUVPlaneView(currPingPong), VK_IMAGE_LAYOUT_GENERAL };
-        std::array<VkWriteDescriptorSet, 3> compWrites{};
-        compWrites[0] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &infoRGB };
-        compWrites[1] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoY };
-        compWrites[2] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, computeSet, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &infoUV };
-        vkUpdateDescriptorSets(device, 3, compWrites.data(), 0, nullptr);
+            // --- Step 5: CUDA & NVENC 异步流编码同步 ---
+            encoder.WaitSemaphore(cudaWaitSem, 0);
 
-        // --- Step 1: Graphics (Render & Resolve) ---
-        vkResetCommandBuffer(gfxCmd, 0);
-        VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
-        vkBeginCommandBuffer(gfxCmd, &bi);
-        auto pc = ComputePushConstants({exWidth, exHeight}, frameData);
-        CmdBeginRenderPass(gfxCmd, offscreenPass.get(), target.getFramebuffer(), {exWidth, exHeight});
-        RecordGraphicsCommands(gfxCmd, frameData, pipelines, descriptors, buffers, pc);
-        vkCmdEndRenderPass(gfxCmd);
+            std::vector<uint8_t> out_bitstream;
+            encoder.EncodeVulkanFrame(
+                device,
+                VK_NULL_HANDLE,
+                exportStagingBuffers[currPingPong].memory,
+                exportStagingBuffers[currPingPong].size,
+                exWidth,
+                frameIdx,
+                out_bitstream,
+                false
+            );
 
-        VkImageMemoryBarrier2 b1{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
-            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT,
-            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getResolveRGBImage(), {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
-        VkDependencyInfo d1{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b1 };
-        vkCmdPipelineBarrier2(gfxCmd, &d1);
-        vkEndCommandBuffer(gfxCmd);
+            if (!out_bitstream.empty()) {
+                if (isAV1) {
+                    IVFWriter::WriteFrame(videoFile, out_bitstream.data(), out_bitstream.size(), frameIdx);
+                } else {
+                    videoFile.write(reinterpret_cast<const char*>(out_bitstream.data()), out_bitstream.size());
+                }
+            }
 
-        // --- Step 2: Compute (RGBA to NV12) ---
-        vkResetCommandBuffer(cmtCmd, 0);
-        vkBeginCommandBuffer(cmtCmd, &bi);
-
-        VkImageMemoryBarrier2 b2{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
-            VK_PIPELINE_STAGE_2_NONE, 0,
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(currPingPong),
-            {VK_IMAGE_ASPECT_PLANE_0_BIT | VK_IMAGE_ASPECT_PLANE_1_BIT, 0, 1, 0, 1} };
-        VkDependencyInfo d2{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b2 };
-        vkCmdPipelineBarrier2(cmtCmd, &d2);
-
-        vkCmdBindPipeline(cmtCmd, VK_PIPELINE_BIND_POINT_COMPUTE, yuvConverter.get());
-        vkCmdBindDescriptorSets(cmtCmd, VK_PIPELINE_BIND_POINT_COMPUTE, yuvConverter.getLayout(), 0, 1, &computeSet, 0, nullptr);
-        vkCmdDispatch(cmtCmd, (exWidth + 15) / 16, (exHeight + 15) / 16, 1);
-
-        // Barrier: 转换后的 NV12 图像 -> 传输源格式
-        VkImageMemoryBarrier2 b3{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, nullptr,
-            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-            VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, target.getYuvImage(currPingPong),
-            {VK_IMAGE_ASPECT_PLANE_0_BIT | VK_IMAGE_ASPECT_PLANE_1_BIT, 0, 1, 0, 1} };
-        VkDependencyInfo d3{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO, nullptr, 0, 0, nullptr, 0, nullptr, 1, &b3 };
-        vkCmdPipelineBarrier2(cmtCmd, &d3);
-
-        // --- Step 3: GPU Copy (Tiled Image to Linear VkBuffer) ---
-        // 将重排格式的 NV12 转换为 CUDA 和 NVENC 要求的纯线性物理显存
-        std::array<VkBufferImageCopy, 2> copyRegions{};
-        // Plane 0 (Y)
-        copyRegions[0].bufferOffset = 0;
-        copyRegions[0].imageSubresource = { VK_IMAGE_ASPECT_PLANE_0_BIT, 0, 0, 1 };
-        copyRegions[0].imageExtent = { exWidth, exHeight, 1 };
-        // Plane 1 (UV)
-        copyRegions[1].bufferOffset = exWidth * exHeight; // 严格排布在 Y 数据之后
-        copyRegions[1].imageSubresource = { VK_IMAGE_ASPECT_PLANE_1_BIT, 0, 0, 1 };
-        copyRegions[1].imageExtent = { exWidth / 2, exHeight / 2, 1 };
-
-        vkCmdCopyImageToBuffer(cmtCmd, target.getYuvImage(currPingPong), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               exportStagingBuffers[currPingPong].buffer, 2, copyRegions.data());
-
-        vkEndCommandBuffer(cmtCmd);
-
-        // --- Step 4: Vulkan 队列提交 ---
-        VkSemaphoreSubmitInfo sigGfx{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semRenderDone, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT };
-        VkCommandBufferSubmitInfo subGfx{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, gfxCmd, 0 };
-        VkSubmitInfo2 s1{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 0, nullptr, 1, &subGfx, 1, &sigGfx };
-        pfnQueueSubmit2(graphicsQueue, 1, &s1, VK_NULL_HANDLE);
-
-        VkSemaphoreSubmitInfo waitGfx{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semRenderDone, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
-        VkSemaphoreSubmitInfo sigCmt{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, semComputeDone, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT };
-        VkCommandBufferSubmitInfo subCmt{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, cmtCmd, 0 };
-        VkSubmitInfo2 s2{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2, nullptr, 0, 1, &waitGfx, 1, &subCmt, 1, &sigCmt };
-        pfnQueueSubmit2(computeQueue, 1, &s2, VK_NULL_HANDLE);
-
-        // --- Step 5: CUDA & NVENC 异步流编码同步 ---
-        // 阻塞等待 Vulkan 线性 YUV 转换并拷贝完成
-        encoder.WaitSemaphore(cudaWaitSem, 0);
-
-        // 此时直接编码线性的 VkBuffer，第二个参数传入 VK_NULL_HANDLE 即可
-        std::vector<uint8_t> out_bitstream;
-        encoder.EncodeVulkanFrame(
-            device,
-            VK_NULL_HANDLE, // 不再使用 tiled 的 VkImage
-            exportStagingBuffers[currPingPong].memory,
-            exportStagingBuffers[currPingPong].size,
-            exWidth,        // 线性的 Pitch 步长完全等于图像宽度
-            frameIdx,
-            out_bitstream,
-            false
-        );
-
-        // 直接写入磁盘
-        if (!out_bitstream.empty()) {
-            if (isAV1) {
-                IVFWriter::WriteFrame(videoFile, out_bitstream.data(), out_bitstream.size(), frameIdx);
-            } else {
-                videoFile.write(reinterpret_cast<const char*>(out_bitstream.data()), out_bitstream.size());
+            if (frameIdx % 10 == 0) {
+                std::cout << "\rTranscoding Frame: " << (frameIdx + 1) << "/" << total_frames << std::flush;
             }
         }
 
-        if (frameIdx % 10 == 0) {
-            std::cout << "\rTranscoding Frame: " << (frameIdx + 1) << "/" << total_frames << std::flush;
+        // 14. 清理局部显卡与编码资源
+        vkDeviceWaitIdle(device);
+        videoFile.close();
+
+        for (int i = 0; i < 2; ++i) {
+            vkDestroyBuffer(device, exportStagingBuffers[i].buffer, nullptr);
+            vkFreeMemory(device, exportStagingBuffers[i].memory, nullptr);
         }
-    }
 
-    // 13. 严格按顺序清理显卡互操作资源
-    vkDeviceWaitIdle(device);
-    videoFile.close();
+        encoder.DestroySemaphore(cudaWaitSem);
+        vkDestroySampler(device, computeSampler, nullptr);
+        vkDestroyDescriptorPool(device, compPool, nullptr);
+        vkDestroyDescriptorSetLayout(device, computeLayout, nullptr);
+        vkDestroyCommandPool(device, gfxPool, nullptr);
+        vkDestroyCommandPool(device, cmtPool, nullptr);
+        vkDestroySemaphore(device, semRenderDone, nullptr);
+        vkDestroySemaphore(device, semComputeDone, nullptr);
 
-    for (int i = 0; i < 2; ++i) {
-        vkDestroyBuffer(device, exportStagingBuffers[i].buffer, nullptr);
-        vkFreeMemory(device, exportStagingBuffers[i].memory, nullptr);
-    }
-
-    encoder.DestroySemaphore(cudaWaitSem);
-    vkDestroySampler(device, computeSampler, nullptr);
-    vkDestroyDescriptorPool(device, compPool, nullptr);
-    vkDestroyDescriptorSetLayout(device, computeLayout, nullptr);
-    vkDestroyCommandPool(device, gfxPool, nullptr);
-    vkDestroyCommandPool(device, cmtPool, nullptr);
-    vkDestroySemaphore(device, semRenderDone, nullptr);
-    vkDestroySemaphore(device, semComputeDone, nullptr);
-
-    CleanupVulkanResources(device, descSetLayout, VK_NULL_HANDLE, descriptors, pipelines);
+        CleanupVulkanResources(device, descSetLayout, VK_NULL_HANDLE, descriptors, pipelines);
+    } // <--- 作用域结束，vkCtx 自适应析构，保证所有 Vulkan 核心设备完全销毁不产生任何泄露 [1]
 
     std::cout << "\n[Exporter] SUCCESS: Compressed stream saved to " << exportCfg.outputPath << std::endl;
 }

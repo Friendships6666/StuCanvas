@@ -1,5 +1,4 @@
 // stucanvas/canvas/vulkan/buffer.hpp
-
 #pragma once
 
 #include <vulkan/vulkan.h>
@@ -10,12 +9,7 @@
 namespace StuCanvas::Vulkan {
 
 /**
- * @brief 查找合适的内存类型索引。
- *
- * @param physicalDevice 物理设备
- * @param memoryTypeBits 需求的内存类型位掩码（从 VkMemoryRequirements 获取）
- * @param properties     期望的内存属性（如 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT）
- * @return uint32_t 内存类型索引
+ * @brief 查找合适的内存类型索引
  */
 inline uint32_t findMemoryType(VkPhysicalDevice physicalDevice,
                                uint32_t memoryTypeBits,
@@ -23,7 +17,7 @@ inline uint32_t findMemoryType(VkPhysicalDevice physicalDevice,
     VkPhysicalDeviceMemoryProperties memProperties;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
 
-    // 第一轮：严格匹配属性
+    // 第一轮：严格匹配首选属性
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
         if ((memoryTypeBits & (1 << i)) &&
             (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
@@ -31,44 +25,33 @@ inline uint32_t findMemoryType(VkPhysicalDevice physicalDevice,
         }
     }
 
-    // 第二轮：回退逻辑 (视频编码等特殊场景可能必须使用特定的内存索引)
+    // 第二轮：回退至任何支持该缓冲要求的内存类型 (例如硬件硬解/硬编专用显存区)
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
         if (memoryTypeBits & (1 << i)) return i;
     }
 
-    throw std::runtime_error("Failed to find suitable memory type");
+    throw std::runtime_error("Buffer: Failed to find suitable memory type.");
 }
 
 /**
- * @brief RAII 封装的 Vulkan 缓冲区。
- *
- * 支持主机可见（staging）或设备本地缓冲区的创建，
- * 以及数据上传和拷贝。
+ * @brief RAII 封装的 Vulkan Contiguous Buffer（缓冲区与绑定的物理内存）
  */
 class Buffer {
 public:
     Buffer() = default;
 
     /**
-     * @brief 创建缓冲区并分配绑定内存。
-     *
-     * @param device         逻辑设备
-     * @param physicalDevice 物理设备（用于查询内存属性）
-     * @param size           缓冲区大小（字节）
-     * @param usage          缓冲区使用标志
-     * @param properties     期望的内存属性
-     * @param pNext          扩展结构体指针 (如 VkVideoProfileListInfoKHR)，默认为 nullptr
-     * @return Buffer 对象
+     * @brief 构造函数：创建缓冲区并分配绑定内存
+     * @param pNext 扩展结构体指针 (例如用于视频流或特定硬件扩展配置)
      */
-
     Buffer(VkDevice device,
-          VkPhysicalDevice physicalDevice,
-          VkDeviceSize size,
-          VkBufferUsageFlags usage,
-          VkMemoryPropertyFlags properties,
-          const void* pNext = nullptr) : device_(device) { // <--- 关键修改：增加构造函数
-
-        // 1. 创建缓冲区
+           VkPhysicalDevice physicalDevice,
+           VkDeviceSize size,
+           VkBufferUsageFlags usage,
+           VkMemoryPropertyFlags properties,
+           const void* pNext = nullptr) : device_(device)
+    {
+        // 1. 创建缓冲区句柄
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bufferInfo.pNext = pNext;
@@ -77,171 +60,109 @@ public:
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
         if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer_) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create buffer");
+            throw std::runtime_error("Buffer: Failed to create VkBuffer.");
         }
 
-        // 2. 获取内存需求
+        // 2. 检索内存需求
         VkMemoryRequirements memReq;
         vkGetBufferMemoryRequirements(device, buffer_, &memReq);
 
-        // 3. 分配内存
+        // 3. 分配显存/主机可见内存
         VkMemoryAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         allocInfo.allocationSize = memReq.size;
         allocInfo.memoryTypeIndex = findMemoryType(physicalDevice, memReq.memoryTypeBits, properties);
 
         if (vkAllocateMemory(device, &allocInfo, nullptr, &memory_) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to allocate buffer memory");
+            vkDestroyBuffer(device, buffer_, nullptr);
+            buffer_ = VK_NULL_HANDLE;
+            throw std::runtime_error("Buffer: Failed to allocate VkDeviceMemory.");
         }
 
-        // 4. 绑定内存
-        vkBindBufferMemory(device, buffer_, memory_, 0);
-    }
-
-    /**
- * @brief 映射内存并返回指针。
- * 满足你代码中 void* mappedData = stagingBuffer.map(); 的调用。
- */
-    void* map() {
-        void* data;
-        if (vkMapMemory(device_, memory_, 0, VK_WHOLE_SIZE, 0, &data) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to map buffer memory");
+        // 4. 原子绑定
+        if (vkBindBufferMemory(device, buffer_, memory_, 0) != VK_SUCCESS) {
+            cleanup();
+            throw std::runtime_error("Buffer: Failed to bind memory to buffer.");
         }
-        return data;
-    }
-
-    /**
-     * @brief 解除映射。
-     * 满足你代码中 stagingBuffer.unmap(); 的调用。
-     */
-    void unmap() {
-        vkUnmapMemory(device_, memory_);
-    }
-
-    VkBuffer get() const { return buffer_; }
-
-
-    static Buffer Create(VkDevice device,
-                         VkPhysicalDevice physicalDevice,
-                         VkDeviceSize size,
-                         VkBufferUsageFlags usage,
-                         VkMemoryPropertyFlags properties,
-                         const void* pNext = nullptr) { // <--- 关键修改 1：增加 pNext 参数
-        Buffer buffer;
-        buffer.device_ = device;
-
-        // 创建缓冲区
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.pNext = pNext; // <--- 关键修改 2：将传入的扩展链挂载到此处
-        bufferInfo.size = size;
-        bufferInfo.usage = usage;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer.buffer_) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create buffer");
-        }
-
-        // 获取内存需求
-        VkMemoryRequirements memReq;
-        vkGetBufferMemoryRequirements(device, buffer.buffer_, &memReq);
-
-        // 分配内存
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memReq.size;
-        allocInfo.memoryTypeIndex = findMemoryType(physicalDevice, memReq.memoryTypeBits, properties);
-
-        if (vkAllocateMemory(device, &allocInfo, nullptr, &buffer.memory_) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to allocate buffer memory");
-        }
-
-        // 绑定内存
-        vkBindBufferMemory(device, buffer.buffer_, buffer.memory_, 0);
-
-        return buffer;
     }
 
     ~Buffer() {
-        if (memory_ != VK_NULL_HANDLE) {
-            vkFreeMemory(device_, memory_, nullptr);
-        }
-        if (buffer_ != VK_NULL_HANDLE) {
-            vkDestroyBuffer(device_, buffer_, nullptr);
-        }
+        cleanup();
     }
 
-    // 禁止拷贝
+    // 禁止拷贝，保证资源唯一性
     Buffer(const Buffer&) = delete;
     Buffer& operator=(const Buffer&) = delete;
 
-    // 移动构造
+    // 完备的移动语义
     Buffer(Buffer&& other) noexcept
-        : device_(other.device_), buffer_(other.buffer_), memory_(other.memory_) {
+        : device_(other.device_), buffer_(other.buffer_), memory_(other.memory_)
+    {
         other.buffer_ = VK_NULL_HANDLE;
         other.memory_ = VK_NULL_HANDLE;
+        other.device_ = VK_NULL_HANDLE;
     }
 
     Buffer& operator=(Buffer&& other) noexcept {
         if (this != &other) {
-            if (memory_ != VK_NULL_HANDLE) vkFreeMemory(device_, memory_, nullptr);
-            if (buffer_ != VK_NULL_HANDLE) vkDestroyBuffer(device_, buffer_, nullptr);
+            cleanup();
             device_ = other.device_;
             buffer_ = other.buffer_;
             memory_ = other.memory_;
             other.buffer_ = VK_NULL_HANDLE;
             other.memory_ = VK_NULL_HANDLE;
+            other.device_ = VK_NULL_HANDLE;
         }
         return *this;
     }
 
-    // 访问器
-    VkBuffer getBuffer() const { return buffer_; }
-    VkDeviceMemory getMemory() const { return memory_; }
+    // 静态构造方法，直接复用主构造函数
+    static Buffer Create(VkDevice device,
+                         VkPhysicalDevice physicalDevice,
+                         VkDeviceSize size,
+                         VkBufferUsageFlags usage,
+                         VkMemoryPropertyFlags properties,
+                         const void* pNext = nullptr) {
+        return Buffer(device, physicalDevice, size, usage, properties, pNext);
+    }
 
-    /**
-     * @brief 映射缓冲区内存到主机地址空间。
-     *
-     * 仅当缓冲区使用 HOST_VISIBLE 属性创建时有效。
-     * @param ppData 输出指针，指向映射后的内存区域
-     */
+    // ====================================================================
+    // 内存控制
+    // ====================================================================
+
+    void* map() {
+        void* data = nullptr;
+        if (vkMapMemory(device_, memory_, 0, VK_WHOLE_SIZE, 0, &data) != VK_SUCCESS) {
+            throw std::runtime_error("Buffer: Failed to map memory.");
+        }
+        return data;
+    }
+
+    void unmap() {
+        vkUnmapMemory(device_, memory_);
+    }
+
     void mapMemory(void** ppData) {
         if (vkMapMemory(device_, memory_, 0, VK_WHOLE_SIZE, 0, ppData) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to map buffer memory");
+            throw std::runtime_error("Buffer: Failed to map memory.");
         }
     }
 
-    /**
-     * @brief 解除内存映射。
-     */
     void unmapMemory() {
         vkUnmapMemory(device_, memory_);
     }
 
-    /**
-     * @brief 直接上传数据到主机可见缓冲区（内部映射+拷贝+解映射）。
-     *
-     * @param data 源数据指针
-     * @param size 数据大小（字节），不应超过缓冲区大小
-     */
     void uploadData(const void* data, VkDeviceSize size) {
-        void* mapped;
+        void* mapped = nullptr;
         mapMemory(&mapped);
         std::memcpy(mapped, data, static_cast<size_t>(size));
         unmapMemory();
     }
 
     /**
-     * @brief 将当前缓冲区的内容拷贝到另一个缓冲区。
-     *
-     * 要求当前缓冲区有 transfer src 使用标志，目标有 transfer dst 使用标志。
-     * @param dstBuffer  目标缓冲区
-     * @param size       拷贝大小（字节）
-     * @param commandPool 命令池（用于分配临时命令缓冲区）
-     * @param queue      提交拷贝命令的队列
+     * @brief 利用物理同步栅栏（Fence）将本缓冲区数据精准、异步地拷贝至另一缓冲区
      */
     void copyTo(VkBuffer dstBuffer, VkDeviceSize size, VkCommandPool commandPool, VkQueue queue) const {
-        // 分配临时命令缓冲区
         VkCommandBufferAllocateInfo allocInfo{};
         allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -251,7 +172,6 @@ public:
         VkCommandBuffer cmd;
         vkAllocateCommandBuffers(device_, &allocInfo, &cmd);
 
-        // 开始录制
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -263,20 +183,29 @@ public:
 
         vkEndCommandBuffer(cmd);
 
-        // 提交
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &cmd;
-        vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
-        vkQueueWaitIdle(queue);
 
-        // 清理临时命令缓冲区
+        // 使用 Fence 同步，防止 vkQueueWaitIdle 粗暴卡死队列中的其他线程任务
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence;
+        if (vkCreateFence(device_, &fenceInfo, nullptr, &fence) != VK_SUCCESS) {
+            vkFreeCommandBuffers(device_, commandPool, 1, &cmd);
+            throw std::runtime_error("Buffer: Failed to create sync fence.");
+        }
+
+        vkQueueSubmit(queue, 1, &submitInfo, fence);
+        vkWaitForFences(device_, 1, &fence, VK_TRUE, UINT64_MAX);
+
+        vkDestroyFence(device_, fence, nullptr);
         vkFreeCommandBuffers(device_, commandPool, 1, &cmd);
     }
 
     /**
-     * @brief 一键创建设备本地缓冲区并上传数据。
+     * @brief 一键在设备（GPU）本地创建缓冲区并安全上传数据
      */
     static Buffer CreateAndUpload(VkDevice device,
                                   VkPhysicalDevice physicalDevice,
@@ -285,29 +214,50 @@ public:
                                   const void* data,
                                   VkDeviceSize size,
                                   VkBufferUsageFlags usage) {
-        // 创建 staging buffer
+        // 1. 创建 Staging Buffer (Host Visible) 并载入数据
         Buffer staging = Buffer::Create(
             device, physicalDevice, size,
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         staging.uploadData(data, size);
 
-        // 创建设备本地缓冲区
+        // 2. 创建 Device Local 缓冲区
         Buffer deviceBuffer = Buffer::Create(
             device, physicalDevice, size,
             usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-        // 拷贝 staging -> device local
+        // 3. GPU 侧拷贝
         staging.copyTo(deviceBuffer.buffer_, size, commandPool, queue);
 
         return deviceBuffer;
     }
 
+    // ====================================================================
+    // 句柄访问器
+    // ====================================================================
+    [[nodiscard]] VkBuffer get() const { return buffer_; }
+    [[nodiscard]] VkBuffer getBuffer() const { return buffer_; }
+    [[nodiscard]] VkDeviceMemory getMemory() const { return memory_; }
+
 private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkBuffer buffer_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
+
+    void cleanup() {
+        if (device_ != VK_NULL_HANDLE) {
+            if (memory_ != VK_NULL_HANDLE) {
+                vkFreeMemory(device_, memory_, nullptr);
+                memory_ = VK_NULL_HANDLE;
+            }
+            if (buffer_ != VK_NULL_HANDLE) {
+                vkDestroyBuffer(device_, buffer_, nullptr);
+                buffer_ = VK_NULL_HANDLE;
+            }
+            device_ = VK_NULL_HANDLE;
+        }
+    }
 };
 
 } // namespace StuCanvas::Vulkan

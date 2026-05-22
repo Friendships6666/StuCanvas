@@ -140,7 +140,7 @@ namespace StuCanvas::Vulkan
         }
 
         /**
-         * @brief 初始化 Vulkan 实例与物理显卡列表
+         * @brief 依据调用端传入的配置项初始化 Vulkan 实例与物理显卡列表
          */
         void initInstance(const VulkanContextConfig& config) {
             validationEnabled_ = config.enableValidation;
@@ -157,11 +157,28 @@ namespace StuCanvas::Vulkan
             appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
             appInfo.apiVersion = config.apiVersion;
 
+            // 拷贝一份临时扩展列表，进行自动补齐，防止修改只读入参 config
+            std::vector<const char*> instanceExtensions = config.requiredInstanceExtensions;
+
+            // 安全机制：如果开启了 Validation 层，自动检测并补齐所需的 VK_EXT_debug_utils 实例扩展
+            if (validationEnabled_) {
+                bool hasDebugUtils = false;
+                for (const auto& ext : instanceExtensions) {
+                    if (std::strcmp(ext, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0) {
+                        hasDebugUtils = true;
+                        break;
+                    }
+                }
+                if (!hasDebugUtils) {
+                    instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+                }
+            }
+
             VkInstanceCreateInfo createInfo{};
             createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
             createInfo.pApplicationInfo = &appInfo;
-            createInfo.enabledExtensionCount = static_cast<uint32_t>(config.requiredInstanceExtensions.size());
-            createInfo.ppEnabledExtensionNames = config.requiredInstanceExtensions.data();
+            createInfo.enabledExtensionCount = static_cast<uint32_t>(instanceExtensions.size());
+            createInfo.ppEnabledExtensionNames = instanceExtensions.data();
 
             VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo{};
             if (validationEnabled_) {
@@ -218,7 +235,7 @@ namespace StuCanvas::Vulkan
          * @brief 在指定的物理设备上实例化独立的 RAII 逻辑设备
          * @param physicalDeviceIndex 选中的 physicalDevices_ vector 下标
          * @param requiredExtensions 需要为该逻辑设备开启的扩展
-         * @param pNextFeatures 可选的 1.1/1.2/1.3 链指针（如 VkPhysicalDeviceSynchronization2Features）
+         * @param pNextFeatures 可选的 1.1/1.2/1.3 链指针（如其它定制化的物理器件功能）
          */
         void createLogicalDevice(uint32_t physicalDeviceIndex,
                                  const std::vector<const char*>& requiredExtensions,
@@ -285,10 +302,24 @@ namespace StuCanvas::Vulkan
                 queueCreateInfos.push_back(queueCreateInfo);
             }
 
+            // 核心修改 1：在逻辑设备内部强制开启 Vulkan 1.3 中的 synchronization2 特征
+            VkPhysicalDeviceVulkan13Features vulkan13Features{};
+            vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+            vulkan13Features.synchronization2 = VK_TRUE; // 强制启用，解决 vkQueueSubmit2 报错
+
+            // 核心修改 2：强制配置 Vulkan 1.1 中的 shaderDrawParameters 特性 (与 1.3 链合)
+            VkPhysicalDeviceVulkan11Features vulkan11Features{};
+            vulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+            vulkan11Features.shaderDrawParameters = VK_TRUE;
+
+            // 链式组装：1.3 Features -> 1.1 Features -> 外部传参（如有）
+            vulkan13Features.pNext = &vulkan11Features;
+            vulkan11Features.pNext = const_cast<void*>(pNextFeatures);
+
             // C. 逻辑设备配置
             VkDeviceCreateInfo createInfo{};
             createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-            createInfo.pNext = pNextFeatures;
+            createInfo.pNext = &vulkan13Features; // 将组装好的配置特征链绑定至逻辑设备
             createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
             createInfo.pQueueCreateInfos = queueCreateInfos.data();
 

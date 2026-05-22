@@ -112,7 +112,7 @@ int main() {
 
         // 5. 触发物理显存零拷贝的高性能硬转码
         std::cout << "[Transcode] Exporting rendering frames to GPU NVENC stream..." << std::endl;
-        canvas.exportYuv(0ULL, 180ULL);
+        canvas.exportYuv();
 
         std::cout << "\n[Success] All processes completed! Output saved to: " << exportCfg.outputPath << std::endl;
 
