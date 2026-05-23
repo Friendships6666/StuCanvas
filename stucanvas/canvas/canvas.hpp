@@ -15,7 +15,6 @@
 #include "../types/triangles.hpp"      // Triangles3D_GPU
 #include "../types/path.hpp"           // Path3D_GPU
 #include <vulkan/vulkan.h>
-#include "../canvas/vulkan/init.hpp"
 #include "../canvas/vulkan/swap_chains.hpp"
 #include "../canvas/vulkan/renderpass.hpp"
 #include "../canvas/vulkan/render_pipeline.hpp"
@@ -23,12 +22,12 @@
 #include "../canvas/vulkan/buffer.hpp"
 #include "../canvas/vulkan/present.hpp"
 #include "../utils/block_deque.hpp"
-#include "../canvas/vulkan/video_encoder_av1.hpp"
-#include "../canvas/vulkan/offscreen_target_h265.hpp"
+#include "../canvas/vulkan/offscreen_target.hpp"
 #include "../utils/ivf_writer.hpp"
+#include "../utils/av1_writer.hpp"
 #include "../canvas/vulkan/compute_pipeline.hpp"
-#include "../canvas/vulkan/video_encoder_h265.hpp"
 #include "../canvas/vulkan/nvenc_cuda_encoder.hpp"
+#include "../canvas/vulkan/config.hpp"
 #include "../external/nvidia/cuviddec.h"
 #include "../external/nvidia/nvcuvid.h"
 #include "../external/nvidia/nvEncodeAPI.h"
@@ -500,7 +499,7 @@ namespace StuCanvas
         /// 直接访问所有片段（只读）
         const std::vector<CanvasClip>& GetClips() const { return clips_; }
         void render(uint64_t start_frame = 0);
-        void exportYuv(std::optional<uint64_t> start_frame = std::nullopt, std::optional<uint64_t> end_frame = std::nullopt);
+        void exportVideo(std::optional<uint64_t> start_frame = std::nullopt, std::optional<uint64_t> end_frame = std::nullopt);
 
     private:
         utils::BlockDeque<CanvasClip, 256> clips_;
@@ -1373,7 +1372,7 @@ void NLECanvas<T>::render(uint64_t start_frame)
 
 
 template <typename T>
-void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<uint64_t> end_frame) {
+void NLECanvas<T>::exportVideo(std::optional<uint64_t> start_frame, std::optional<uint64_t> end_frame) {
     using namespace Vulkan;
 
     // 1. 确定导出区间与分辨率
@@ -1407,7 +1406,7 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
     nvConfig.gop_size = exportCfg.gopSize;
     nvConfig.quality_preset = exportCfg.tuningPreset;
 
-    // 3. 声明并建立无头模式（Headless）下的统一 Vulkan 运行上下文
+    // 3. 声明并建立无头模式（Headless）下的 Vulkan 运行上下文 (RAII)
     VulkanContext vkCtx;
 
     VulkanContextConfig config{};
@@ -1453,7 +1452,7 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
         return true;
     });
 
-    // 5. 自动算力加权：选出性能最强的独立显卡（Discrete GPU 权重最高，平局则由 maxImageDimension2D 决策）
+    // 5. 自动算力加权：选出性能最强的物理显卡（独显优先，并以 maxImageDimension2D 平局打破）
     uint32_t bestDeviceIndex = 0;
     int bestScore = -1;
     const auto& physDevices = vkCtx.getPhysicalDevices();
@@ -1475,12 +1474,23 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
         }
     }
 
-    // 在选定的最强物理卡上创建逻辑设备（内部默认已托管强制开启 shaderDrawParameters，无需外部传递特征链）
+    // 在选定最强卡上创建逻辑设备（内部默认自动托管并使能 shaderDrawParameters 与 synchronization2 特性）
     vkCtx.createLogicalDevice(bestDeviceIndex, config.requiredDeviceExtensions);
 
+    // 6. 定义好输出路径与临时磁盘暂存文件路径
+    const std::string finalPath = exportCfg.outputPath; // 最终导出的目标 MP4 路径
+    std::string tempPath;                              // 临时裸流文件路径
+    if (exportCfg.codec == VideoCodec::AV1) {
+        tempPath = finalPath + ".temp.ivf";
+    } else if (exportCfg.codec == VideoCodec::HEVC) {
+        tempPath = finalPath + ".temp.h265";
+    } else {
+        tempPath = finalPath + ".temp.h264";
+    }
+
     // ========================================================================
-    // 【核心同步机制】：使用局部嵌套大括号包含所有依赖该 Device 的具体 Vulkan 资源
-    // 确保这些资源在大括号结束、vkCtx 自动析构前，全部完美、有序地回收完毕。
+    // 【生命周期安全围栏】：使用嵌套大括号包含所有依赖该 Device 的具体 Vulkan 资源
+    // 确保这些资源在外部大括号结束、vkCtx 开始析构前，全部安全、完美地释放干净
     // ========================================================================
     {
         const auto& primaryDev = vkCtx.getPrimaryDevice();
@@ -1504,13 +1514,7 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
 
         // 初始化异步 CUDA 硬件视频编码器
         NvencCudaEncoder encoder(nvConfig);
-#ifdef _WIN32
-        VkExternalMemoryHandleTypeFlags memHandleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-        VkExternalSemaphoreHandleTypeFlags semHandleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
-#else
-        VkExternalMemoryHandleTypeFlags memHandleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
-        VkExternalSemaphoreHandleTypeFlags semHandleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
-#endif
+
         // 构建两个具有外部导入（Export）共享显存属性的线性双缓冲 VkBuffer 资源
         struct ExportableBuffer {
             VkBuffer buffer = VK_NULL_HANDLE;
@@ -1521,7 +1525,11 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
 
         for (int i = 0; i < 2; ++i) {
             VkExternalMemoryBufferCreateInfo extBufferInfo{ VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO };
-            extBufferInfo.handleTypes = memHandleType;
+#ifdef _WIN32
+            extBufferInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#else
+            extBufferInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
 
             VkBufferCreateInfo bufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
             bufferInfo.pNext = &extBufferInfo;
@@ -1538,7 +1546,11 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
             exportStagingBuffers[i].size = memReq.size;
 
             VkExportMemoryAllocateInfo exportAllocInfo{ VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO };
-            exportAllocInfo.handleTypes = memHandleType;
+#ifdef _WIN32
+            exportAllocInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#else
+            exportAllocInfo.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
 
             VkMemoryAllocateInfo allocInfo{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
             allocInfo.pNext = &exportAllocInfo;
@@ -1573,7 +1585,7 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
             vkBindBufferMemory(device, exportStagingBuffers[i].buffer, exportStagingBuffers[i].memory, 0);
         }
 
-        // Compute Shader (RGBA -> NV12) 转换环境准备
+        // Compute 转换环境准备
         VkSamplerCreateInfo samplerInfo{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
         samplerInfo.magFilter = VK_FILTER_LINEAR;
         samplerInfo.minFilter = VK_FILTER_LINEAR;
@@ -1614,9 +1626,12 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
         };
         Alloc(gfxPool, &gfxCmd); Alloc(cmtPool, &cmtCmd);
 
-        // 创建支持导出到 CUDA 的共享同步信号量
         VkExportSemaphoreCreateInfo exportSemInfo{ VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO };
-        exportSemInfo.handleTypes = semHandleType;
+#ifdef _WIN32
+        exportSemInfo.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+#else
+        exportSemInfo.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+#endif
 
         VkSemaphoreCreateInfo semCi{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
         semCi.pNext = &exportSemInfo;
@@ -1627,37 +1642,48 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
             throw std::runtime_error("Vulkan: Failed to create exportable semaphores.");
         }
 
-        // 将 Vulkan 信号量句柄安全导入至 CUDA 流中进行链式同步
+        // 导出信号量并导入至 CUDA 中进行流级等待
         CUexternalSemaphore cudaWaitSem = nullptr;
-    #ifdef _WIN32
+#ifdef _WIN32
         auto fpGetSemaphoreWin32HandleKHR = (PFN_vkGetSemaphoreWin32HandleKHR)vkGetDeviceProcAddr(device, "vkGetSemaphoreWin32HandleKHR");
         if (!fpGetSemaphoreWin32HandleKHR) throw std::runtime_error("Vulkan: Failed to load vkGetSemaphoreWin32HandleKHR");
-        VkSemaphoreGetWin32HandleInfoKHR getSemWin32Info{ VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR, nullptr, semComputeDone, static_cast<VkExternalSemaphoreHandleTypeFlagBits>(semHandleType) };
+        VkSemaphoreGetWin32HandleInfoKHR getSemWin32Info{
+            VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR,
+            nullptr,
+            semComputeDone,
+            VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT
+        };
         HANDLE semHandle = nullptr;
         fpGetSemaphoreWin32HandleKHR(device, &getSemWin32Info, &semHandle);
         cudaWaitSem = encoder.ImportSemaphore(semHandle, false);
-    #else
+#else
         auto fpGetSemaphoreFdKHR = (PFN_vkGetSemaphoreFdKHR)vkGetDeviceProcAddr(device, "vkGetSemaphoreFdKHR");
         if (!fpGetSemaphoreFdKHR) throw std::runtime_error("Vulkan: Failed to load vkGetSemaphoreFdKHR");
-        VkSemaphoreGetFdInfoKHR getSemFdInfo{ VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR, nullptr, semComputeDone, static_cast<VkExternalSemaphoreHandleTypeFlagBits>(semHandleType) };
+        VkSemaphoreGetFdInfoKHR getSemFdInfo{
+            VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
+            nullptr,
+            semComputeDone,
+            VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT
+        };
         int semFd = -1;
         fpGetSemaphoreFdKHR(device, &getSemFdInfo, &semFd);
         cudaWaitSem = encoder.ImportSemaphore(semFd, false);
-    #endif
+#endif
 
-        std::ofstream videoFile(exportCfg.outputPath, std::ios::binary);
-        if (!videoFile.is_open()) throw std::runtime_error("Failed to open output path: " + exportCfg.outputPath);
+        // 开启临时流式暂存文件
+        std::ofstream tempFile(tempPath, std::ios::binary);
+        if (!tempFile.is_open()) {
+            throw std::runtime_error("Vulkan/Exporter: Failed to open temporary raw stream file: " + tempPath);
+        }
 
         const bool isAV1 = (exportCfg.codec == VideoCodec::AV1);
         if (isAV1) {
-            IVFWriter::WriteHeader(videoFile, exWidth, exHeight, FPS_, total_frames);
+            IVFWriter::WriteHeader(tempFile, exWidth, exHeight, FPS_, total_frames);
         }
 
         Vulkan::CanvasBufferGroup buffers;
 
-        // ==========================================================
-        // 13. GPU 零拷贝主硬件转码循环
-        // ==========================================================
+        // 零拷贝主硬件转码循环
         for (uint64_t current_f = start_f; current_f <= end_f; ++current_f) {
             uint32_t frameIdx = (uint32_t)(current_f - start_f);
             uint32_t currPingPong = frameIdx % 2;
@@ -1760,11 +1786,12 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
                 false
             );
 
+            // 写入临时暂存文件
             if (!out_bitstream.empty()) {
                 if (isAV1) {
-                    IVFWriter::WriteFrame(videoFile, out_bitstream.data(), out_bitstream.size(), frameIdx);
+                    IVFWriter::WriteFrame(tempFile, out_bitstream.data(), out_bitstream.size(), frameIdx);
                 } else {
-                    videoFile.write(reinterpret_cast<const char*>(out_bitstream.data()), out_bitstream.size());
+                    tempFile.write(reinterpret_cast<const char*>(out_bitstream.data()), out_bitstream.size());
                 }
             }
 
@@ -1773,10 +1800,11 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
             }
         }
 
-        // 14. 清理局部显卡与编码资源
+        // 14. 视频写入完成，关闭临时流文件
         vkDeviceWaitIdle(device);
-        videoFile.close();
+        tempFile.close();
 
+        // 15. 清理局部显卡与编码资源
         for (int i = 0; i < 2; ++i) {
             vkDestroyBuffer(device, exportStagingBuffers[i].buffer, nullptr);
             vkFreeMemory(device, exportStagingBuffers[i].memory, nullptr);
@@ -1792,8 +1820,29 @@ void NLECanvas<T>::exportYuv(std::optional<uint64_t> start_frame, std::optional<
         vkDestroySemaphore(device, semComputeDone, nullptr);
 
         CleanupVulkanResources(device, descSetLayout, VK_NULL_HANDLE, descriptors, pipelines);
-    } // <--- 作用域结束，vkCtx 自适应析构，保证所有 Vulkan 核心设备完全销毁不产生任何泄露 [1]
+    } // <--- 作用域结束，vkCtx 自适应析构，保证所有 Vulkan 核心设备完全安全销毁
 
-    std::cout << "\n[Exporter] SUCCESS: Compressed stream saved to " << exportCfg.outputPath << std::endl;
+    // ========================================================================
+    // 16. 调用封装器，将临时裸流极速、无损地打包（Mux）为标准的 MP4 容器格式 [1]
+    // ========================================================================
+    std::cout << "\n[Exporter] Re-muxing temporary stream to standards-compliant MP4..." << std::endl;
+    bool mux_success = false;
+
+    if (exportCfg.codec == VideoCodec::AV1) {
+        mux_success = ConvertAv1ToMp4(tempPath, finalPath, exWidth, exHeight, FPS_);
+    } else if (exportCfg.codec == VideoCodec::HEVC) {
+        mux_success = ConvertH265ToMp4(tempPath, finalPath, exWidth, exHeight, FPS_);
+    } else {
+        mux_success = ConvertH264ToMp4(tempPath, finalPath, exWidth, exHeight, FPS_);
+    }
+
+    // 17. 删除磁盘上的临时缓存文件
+    std::remove(tempPath.c_str());
+
+    if (mux_success) {
+        std::cout << "[Exporter] SUCCESS: Video remuxed and saved to " << finalPath << std::endl;
+    } else {
+        std::cerr << "[Exporter] ERROR: MP4 multiplexing failed. Raw stream preserved in " << tempPath << std::endl;
+    }
 }
 } // namespace StuCanvas
