@@ -1,11 +1,22 @@
-# StuCanvas
+<p align="center">
+  <!-- 引入官方高清 Vulkan 矢量图标志，完美兼容 GitHub 的深色和浅色模式 -->
+  <img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Vulkan_logo.svg" alt="Vulkan Logo" width="450">
+</p>
 
-# StuCanvas
+<p align="center">
+  <a href="https://opensource.org/licenses/MIT">
+    <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="License: MIT">
+  </a>
+  <a href="https://www.vulkan.org/">
+    <img src="https://img.shields.io/badge/Vulkan-1.4_Ready-red.svg?style=for-the-badge&logo=vulkan&logoColor=white" alt="Vulkan 1.4">
+  </a>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
-[![Vulkan 1.4](https://img.shields.io/badge/Vulkan-1.4_Ready-red.svg?style=for-the-badge&logo=vulkan&logoColor=white)](https://www.vulkan.org/)
+<h1 align="center">StuCanvas</h1>
 
-**StuCanvas** 是一款专为现代化开发环境量身打造的跨平台、高性能、交互式实时与离线科学可视化综合计算引擎。
+<p align="center">
+  <strong>StuCanvas</strong> 是一款专为现代化开发环境量身打造的跨平台、高性能、交互式实时与离线科学可视化综合计算引擎。
+</p>
 
 ---
 
