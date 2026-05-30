@@ -41,3 +41,26 @@ StuCanvas 在设计上借鉴了 **GeoGebra, Desmos, Algodoo, Manim, GrafEq** 等
 * **显存就地编码（In-place VRAM Encoding）**：视频导出时，渲染帧数据直接通过驱动调用显存就地进行编码。数据无需在 CPU 与 GPU 之间进行低效拷贝，系统开销极低。最高支持 **8192 × 8192** 超高分辨率的主流格式视频导出。
 
 ---
+
+
+## 🛠️ Dependencies & Powered By (第三方依赖列表)
+
+为了实现高性能图形渲染、物理模拟与着色器动态编译，**StuCanvas** 引入并深度集成了以下业界优秀的开源技术与硬件加速接口：
+
+|                                      徽标 (Logo)                                      | 依赖项 (Dependency) | 许可协议 (License) | 说明与核心用途 (Description) |
+|:-----------------------------------------------------------------------------------:| :--- | :--- | :--- |
+|       <img src="./docs/logos/Vulkan_RGB_Dec16.svg" height="26" alt="Vulkan">        | **Vulkan SDK** | Apache 2.0 | 现代低开销、跨平台的图形与计算 API，用于构建高性能多线程渲染管线。 |
+|     <img src="./docs/logos/nvidia-logo-vert-wht.png" height="26" alt="NVIDIA">      | **NVIDIA Driver API** | Proprietary | 结合 CUDA 技术，实现极低开销的显存就地编码（In-place VRAM Encoding）以及视频导出硬件加速。 <br>*(注：浅色主题可替换为 `nvidia-logo-vert-blk.png`)* |
+|        <img src="./docs/logos/Intel-logo-nobox.png" height="20" alt="Intel">        | **Intel CPU Tech & TBB** | Apache 2.0 / MIT | 深度结合多核心 CPU 并行计算，大幅度优化复杂的图论几何求解与依赖树构建。 |
+|           <img src="./docs/logos/slang-logo.svg" height="22" alt="Slang">           | **Slang Shading Language** | Apache 2.0 | 现代化的着色器语言与编译服务，提供灵活的跨平台（Vulkan/SPIR-V）着色器生成与动态管理。 |
+| <img src="./docs/logos/Eigen_Silly_Professor_135x135.png" height="32" alt="Eigen3"> | **Eigen3** | MPL2 | 紧凑、高效的 C++ 线性代数库，用于底层的矩阵变换、几何坐标求解与代数计算。 |
+|          <img src="./docs/logos/sdl-original.svg" height="20" alt="SDL3">           | **SDL3** | zlib | 跨平台底层开发库，提供健壮的窗口管理、事件捕获及多媒体上下文环境。 |
+
+
+### 🏷️ Trademarks & Disclaimers (商标与免责声明)
+
+*   **Intel** 以及 **Intel Inside** 均为 Intel Corporation 及其子公司的注册商标。
+*   **NVIDIA**、**GeForce** 均为 NVIDIA Corporation 的注册商标。
+*   **Vulkan** 以及 Vulkan 徽标是 Khronos Group Inc. 的注册商标。
+*   本软件中所引用的各品牌 Logo 及注册商标仅用于标示系统底层的技术依赖与兼容性，其知识产权与版权均归属各对应商标持有人所有。
+---
