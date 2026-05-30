@@ -1,7 +1,9 @@
 # StuCanvas
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Vulkan](https://img.shields.io/badge/Vulkan-1.4-red?style=flat-square&logo=vulkan)](https://www.vulkan.org/)
+# StuCanvas
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
+[![Vulkan 1.4](https://img.shields.io/badge/Vulkan-1.4_Ready-red.svg?style=for-the-badge&logo=vulkan&logoColor=white)](https://www.vulkan.org/)
 
 **StuCanvas** 是一款专为现代化开发环境量身打造的跨平台、高性能、交互式实时与离线科学可视化综合计算引擎。
 
