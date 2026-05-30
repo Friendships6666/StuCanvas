@@ -166,6 +166,7 @@ add_executable(StuCanvas main.cpp
         stucanvas/object/graph.hpp
         stucanvas/object/types.hpp
         stucanvas/rust_bridge/typst_c/typst_c.hpp
+        test.cpp
 )
 
 # 确保在编译主程序前，前置自动分片拼装工作已安全结束
