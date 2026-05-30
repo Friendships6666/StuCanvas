@@ -1,0 +1,24 @@
+[package]
+name = "typst_c"
+version = "0.1.0"
+edition = "2024"
+[lib]
+name = "typst_c"
+path = "src/lib.rs"
+crate-type = ["lib", "staticlib", "cdylib"] # 支持 FFI 静态库和动态库打包
+
+
+[profile.release]
+opt-level = 'z'      # 极限体积优化：'z' 会让编译器专注于缩减二进制体积，而非无脑提速
+lto = true           # 全局链接时优化 (Link-Time Optimization)：
+codegen-units = 1    # 限制代码生成单元为 1：这会延长编译时间，但能让 LTO 获得最大程度的代码剪裁效果
+panic = 'abort'      # 崩溃直接终止：FFI 边界不应向 C++ 传递堆栈回溯，此项可直接剥离掉数兆字节的栈回溯符号表
+strip = true         # 物理剥离符号表：自动在编译后运行 strip 命令，彻底剔除所有调试符号（关键：直接砍掉 90% 体积）
+
+
+[dependencies]
+typst = "0.14.2"
+typst-as-lib = { version = "0.15.4", features = ["packages", "ureq"] }
+typst-pdf = "0.13"
+typst-svg = "0.14.2"
+ttf-parser = "0.25.1"

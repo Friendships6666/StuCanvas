@@ -38,7 +38,8 @@ private:
         size_ = 0;
         for (auto& entry : old_table) {
             if (entry.state == State::FILLED) {
-                insert(entry.first, entry.second);
+                // 【核心优化】：使用 std::move 转移 vector 的堆内存所有权，消除扩容时的深拷贝 [1.1.2]
+                insert(entry.first, std::move(entry.second));
             }
         }
     }

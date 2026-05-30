@@ -1,0 +1,309 @@
+{
+  "WORLDS": {
+    "WORLD_2D": 1,
+    "WORLD_3D": 2,
+    "WORLD_META": 4
+  },
+  "CATEGORIES": {
+    "CAT_POINT": 0,
+    "CAT_LINEAR": 1,
+    "CAT_CURVE": 2,
+    "CAT_SURFACE": 3,
+    "CAT_FUNCTION": 4,
+    "CAT_SCALAR": 5,
+    "CAT_TEST": 6
+  },
+  "NODE_TYPES": [
+    {
+      "name": "POINT_2D_FREE",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT"],
+      "id": 1
+    },
+    {
+      "name": "POINT_2D_MID",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT"],
+      "id": 2
+    },
+    {
+      "name": "POINT_2D_SNAP",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT"],
+      "id": 3
+    },
+    {
+      "name": "POINT_2D_SECTION",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT"],
+      "id": 4
+    },
+    {
+      "name": "POINT_2D_INTERSECT",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT"],
+      "id": 5
+    },
+    {
+      "name": "LINE_2D_SEGMENT",
+      "world": "WORLD_2D",
+      "categories": ["CAT_LINEAR"],
+      "id": 1
+    },
+    {
+      "name": "LINE_2D_STRAIGHT",
+      "world": "WORLD_2D",
+      "categories": ["CAT_LINEAR"],
+      "id": 2
+    },
+    {
+      "name": "LINE_2D_RAY",
+      "world": "WORLD_2D",
+      "categories": ["CAT_LINEAR"],
+      "id": 3
+    },
+    {
+      "name": "LINE_2D_PERPENDICULAR",
+      "world": "WORLD_2D",
+      "categories": ["CAT_LINEAR"],
+      "id": 4
+    },
+    {
+      "name": "LINE_2D_PARALLEL",
+      "world": "WORLD_2D",
+      "categories": ["CAT_LINEAR"],
+      "id": 5
+    },
+    {
+      "name": "CIRCLE_2D",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "id": 1
+    },
+    {
+      "name": "ARC_2D",
+      "world": "WORLD_2D",
+      "categories": ["CAT_CURVE"],
+      "id": 2
+    },
+    {
+      "name": "ELLIPSE_2D",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "id": 3
+    },
+    {
+      "name": "HYPERBOLA_2D",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "id": 4
+    },
+    {
+      "name": "PARABOLA_2D",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "id": 5
+    },
+    {
+      "name": "POLY_2D_GENERATIVE",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT", "CAT_LINEAR", "CAT_CURVE"],
+      "id": 6
+    },
+    {
+      "name": "POINT_3D_FREE",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT"],
+      "id": 1
+    },
+    {
+      "name": "POINT_3D_MID",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT"],
+      "id": 2
+    },
+    {
+      "name": "POINT_3D_SNAP",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT"],
+      "id": 3
+    },
+    {
+      "name": "POINT_3D_SECTION",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT"],
+      "id": 4
+    },
+    {
+      "name": "POINT_3D_INTERSECT",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT"],
+      "id": 5
+    },
+    {
+      "name": "LINE_3D_SEGMENT",
+      "world": "WORLD_3D",
+      "categories": ["CAT_LINEAR"],
+      "id": 1
+    },
+    {
+      "name": "LINE_3D_STRAIGHT",
+      "world": "WORLD_3D",
+      "categories": ["CAT_LINEAR"],
+      "id": 2
+    },
+    {
+      "name": "LINE_3D_RAY",
+      "world": "WORLD_3D",
+      "categories": ["CAT_LINEAR"],
+      "id": 3
+    },
+    {
+      "name": "LINE_3D_PERPENDICULAR",
+      "world": "WORLD_3D",
+      "categories": ["CAT_LINEAR"],
+      "id": 4
+    },
+    {
+      "name": "LINE_3D_PARALLEL",
+      "world": "WORLD_3D",
+      "categories": ["CAT_LINEAR"],
+      "id": 5
+    },
+    {
+      "name": "PLANE_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_LINEAR", "CAT_SURFACE"],
+      "id": 1
+    },
+    {
+      "name": "PLANE_3D_PARALLEL",
+      "world": "WORLD_3D",
+      "categories": ["CAT_LINEAR", "CAT_SURFACE"],
+      "id": 2
+    },
+    {
+      "name": "PLANE_3D_PERPENDICULAR",
+      "world": "WORLD_3D",
+      "categories": ["CAT_LINEAR", "CAT_SURFACE"],
+      "id": 3
+    },
+    {
+      "name": "SPHERE_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT", "CAT_SURFACE"],
+      "id": 4
+    },
+    {
+      "name": "CYLINDER_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_SURFACE"],
+      "id": 5
+    },
+    {
+      "name": "CONE_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_SURFACE"],
+      "id": 6
+    },
+    {
+      "name": "CUBOID_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_SURFACE"],
+      "id": 7
+    },
+    {
+      "name": "PLATONIC_SOLID_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_SURFACE"],
+      "id": 8
+    },
+    {
+      "name": "CIRCLE_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "id": 1
+    },
+    {
+      "name": "ARC_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_CURVE"],
+      "id": 2
+    },
+    {
+      "name": "ELLIPSE_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "id": 3
+    },
+    {
+      "name": "HYPERBOLA_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "id": 4
+    },
+    {
+      "name": "PARABOLA_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "id": 5
+    },
+    {
+      "name": "POLY_3D_GENERATIVE",
+      "world": "WORLD_3D",
+      "categories": ["CAT_POINT", "CAT_LINEAR", "CAT_CURVE"],
+      "id": 6
+    },
+    {
+      "name": "SCALAR",
+      "world": "WORLD_META",
+      "categories": ["CAT_SCALAR"],
+      "id": 1
+    },
+    {
+      "name": "FUNC_EXPLICIT_2D",
+      "world": "WORLD_META",
+      "categories": ["CAT_FUNCTION"],
+      "id": 1
+    },
+    {
+      "name": "FUNC_EXPLICIT_3D",
+      "world": "WORLD_META",
+      "categories": ["CAT_FUNCTION"],
+      "id": 2
+    },
+    {
+      "name": "FUNC_IMPLICIT_2D",
+      "world": "WORLD_META",
+      "categories": ["CAT_FUNCTION"],
+      "id": 3
+    },
+    {
+      "name": "FUNC_IMPLICIT_3D",
+      "world": "WORLD_META",
+      "categories": ["CAT_FUNCTION"],
+      "id": 4
+    },
+    {
+      "name": "FUNC_PARAMETRIC_2D",
+      "world": "WORLD_META",
+      "categories": ["CAT_FUNCTION"],
+      "id": 5
+    },
+    {
+      "name": "FUNC_PARAMETRIC_3D",
+      "world": "WORLD_META",
+      "categories": ["CAT_FUNCTION"],
+      "id": 6
+    },
+    {
+      "name": "UNKNOWN",
+      "world": "WORLD_META",
+      "categories": ["CAT_POINT"],
+      "id": 65535
+    }
+
+
+
+  ]
+}
