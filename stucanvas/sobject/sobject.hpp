@@ -28,7 +28,7 @@ namespace StuCanvas
 
     // 虚表定义
     template <typename T>
-    struct ObjectVTable
+    struct SObjectVTable
     {
         void (*solver)(SObjectGraph<T>&, SObject<T>&) = nullptr;
         void (*discretize_to_points)(SObjectGraph<T>&, SObject<T>&) = nullptr;
@@ -53,7 +53,7 @@ namespace StuCanvas
 
 
 
-        const ObjectVTable<T>* vptr = nullptr;
+        const SObjectVTable<T>* vptr = nullptr;
         SObjectGraph<T>* graph = nullptr; // 反向指针
 
 
