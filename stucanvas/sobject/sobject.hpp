@@ -27,14 +27,7 @@ namespace StuCanvas
 
 
     // 虚表定义
-    template <typename T>
-    struct SObjectVTable
-    {
-        void (*solver)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-        void (*discretize_to_points)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-        void (*discretize_to_strips)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-        void (*discretize_to_triangles)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    };
+
 
     template <typename T>
     struct SObject

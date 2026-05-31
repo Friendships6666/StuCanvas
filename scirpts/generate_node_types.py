@@ -68,7 +68,7 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
     node_types = config["NODE_TYPES"]
 
     # 1. 扫描所有 C++ 文件
-    cpp_source = scan_cpp_source_code("../stucanvas")
+    cpp_source = scan_cpp_source_code("../stucanvas/sobject")
 
     content = []
     content.append("/***************************************************************************")
@@ -154,9 +154,17 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
     content.append("    // ========================================================")
     content.append("    // 编译期静态虚函数表 (VTable) 内部模板定义 (支持按需延迟解算)")
     content.append("    // ========================================================")
-    content.append("    template <typename T> struct ObjectGraph;")
-    content.append("    template <typename T> struct Object;")
-    content.append("    template <typename T> struct ObjectVTable; // 核心前向声明")
+    content.append("    template <typename T> struct SObjectGraph;")
+    content.append("    template <typename T> struct SObject;")
+    content.append("    template <typename T>")
+    content.append("    struct SObjectVTable")
+    content.append("    {")
+    content.append("    void (*solver)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*discretize_to_points)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*discretize_to_strips)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*discretize_to_paths)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*discretize_to_triangles)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    };")
     content.append("")
 
     # 虚表定义与函数指针的映射规则
@@ -186,14 +194,14 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
 
             # 【物理检测】：检查该 C++ 符号是否存在
             if check_symbol_exists(cpp_source, func_name):
-                found_declarations.append(f"    template <typename T> void {func_name}(ObjectGraph<T>&, Object<T>&);")
+                found_declarations.append(f"    template <typename T> void {func_name}(SObjectGraph<T>&, SObject<T>&);")
                 assignments.append(f"        .{field} = &{func_name}<T>")
             else:
                 assignments.append(f"        .{field} = nullptr")
 
         vdef = []
         vdef.append(f"    template <typename T>")
-        vdef.append(f"    inline const ObjectVTable<T> {base}_VTable = {{")
+        vdef.append(f"    inline const SObjectVTable<T> {base}_VTable = {{")
         vdef.append(",\n".join(assignments))
         vdef.append(f"    }};")
         vtable_definitions.append("\n".join(vdef))

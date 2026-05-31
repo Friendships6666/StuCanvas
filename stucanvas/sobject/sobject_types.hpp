@@ -125,7 +125,15 @@ namespace StuCanvas {
     // ========================================================
     template <typename T> struct SObjectGraph;
     template <typename T> struct SObject;
-    template <typename T> struct SObjectVTable; // 核心前向声明
+    template <typename T>
+    struct SObjectVTable
+    {
+    void (*solver)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    void (*discretize_to_points)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    void (*discretize_to_strips)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    void (*discretize_to_paths)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    void (*discretize_to_triangles)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    };
 
     // ---- 物理存在的解算与离散化模板函数前向声明 ----
 

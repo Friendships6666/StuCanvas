@@ -123,15 +123,23 @@ namespace StuCanvas {
     // ========================================================
     // 编译期静态虚函数表 (VTable) 内部模板定义 (支持按需延迟解算)
     // ========================================================
-    template <typename T> struct ObjectGraph;
-    template <typename T> struct Object;
-    template <typename T> struct ObjectVTable; // 核心前向声明
+    template <typename T> struct SObjectGraph;
+    template <typename T> struct SObject;
+    template <typename T>
+    struct SObjectVTable
+    {
+    void (*solver)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    void (*discretize_to_points)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    void (*discretize_to_strips)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    void (*discretize_to_paths)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    void (*discretize_to_triangles)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    };
 
     // ---- 物理存在的解算与离散化模板函数前向声明 ----
 
     // ---- 自动拼装完毕的 C++17 内联全局虚表定义 (声明与定义合一) ----
     template <typename T>
-    inline const ObjectVTable<T> Point2DFree_VTable = {
+    inline const SObjectVTable<T> Point2DFree_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -140,7 +148,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Point2DMid_VTable = {
+    inline const SObjectVTable<T> Point2DMid_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -149,7 +157,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Point2DSnap_VTable = {
+    inline const SObjectVTable<T> Point2DSnap_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -158,7 +166,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Point2DSection_VTable = {
+    inline const SObjectVTable<T> Point2DSection_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -167,7 +175,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Point2DIntersect_VTable = {
+    inline const SObjectVTable<T> Point2DIntersect_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -176,7 +184,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Line2DSegment_VTable = {
+    inline const SObjectVTable<T> Line2DSegment_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -185,7 +193,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Line2DStraight_VTable = {
+    inline const SObjectVTable<T> Line2DStraight_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -194,7 +202,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Line2DRay_VTable = {
+    inline const SObjectVTable<T> Line2DRay_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -203,7 +211,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Line2DPerpendicular_VTable = {
+    inline const SObjectVTable<T> Line2DPerpendicular_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -212,7 +220,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Line2DParallel_VTable = {
+    inline const SObjectVTable<T> Line2DParallel_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -221,7 +229,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Circle2D_VTable = {
+    inline const SObjectVTable<T> Circle2D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -230,7 +238,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Arc2D_VTable = {
+    inline const SObjectVTable<T> Arc2D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -239,7 +247,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Ellipse2D_VTable = {
+    inline const SObjectVTable<T> Ellipse2D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -248,7 +256,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Hyperbola2D_VTable = {
+    inline const SObjectVTable<T> Hyperbola2D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -257,7 +265,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Parabola2D_VTable = {
+    inline const SObjectVTable<T> Parabola2D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -266,7 +274,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Poly2DGenerative_VTable = {
+    inline const SObjectVTable<T> Poly2DGenerative_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -275,7 +283,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Point3DFree_VTable = {
+    inline const SObjectVTable<T> Point3DFree_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -284,7 +292,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Point3DMid_VTable = {
+    inline const SObjectVTable<T> Point3DMid_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -293,7 +301,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Point3DSnap_VTable = {
+    inline const SObjectVTable<T> Point3DSnap_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -302,7 +310,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Point3DSection_VTable = {
+    inline const SObjectVTable<T> Point3DSection_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -311,7 +319,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Point3DIntersect_VTable = {
+    inline const SObjectVTable<T> Point3DIntersect_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -320,7 +328,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Line3DSegment_VTable = {
+    inline const SObjectVTable<T> Line3DSegment_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -329,7 +337,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Line3DStraight_VTable = {
+    inline const SObjectVTable<T> Line3DStraight_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -338,7 +346,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Line3DRay_VTable = {
+    inline const SObjectVTable<T> Line3DRay_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -347,7 +355,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Line3DPerpendicular_VTable = {
+    inline const SObjectVTable<T> Line3DPerpendicular_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -356,7 +364,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Line3DParallel_VTable = {
+    inline const SObjectVTable<T> Line3DParallel_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -365,7 +373,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Plane3D_VTable = {
+    inline const SObjectVTable<T> Plane3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -374,7 +382,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Plane3DParallel_VTable = {
+    inline const SObjectVTable<T> Plane3DParallel_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -383,7 +391,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Plane3DPerpendicular_VTable = {
+    inline const SObjectVTable<T> Plane3DPerpendicular_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -392,7 +400,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Sphere3D_VTable = {
+    inline const SObjectVTable<T> Sphere3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -401,7 +409,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Cylinder3D_VTable = {
+    inline const SObjectVTable<T> Cylinder3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -410,7 +418,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Cone3D_VTable = {
+    inline const SObjectVTable<T> Cone3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -419,7 +427,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Cuboid3D_VTable = {
+    inline const SObjectVTable<T> Cuboid3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -428,7 +436,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> PlatonicSolid3D_VTable = {
+    inline const SObjectVTable<T> PlatonicSolid3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -437,7 +445,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Circle3D_VTable = {
+    inline const SObjectVTable<T> Circle3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -446,7 +454,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Arc3D_VTable = {
+    inline const SObjectVTable<T> Arc3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -455,7 +463,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Ellipse3D_VTable = {
+    inline const SObjectVTable<T> Ellipse3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -464,7 +472,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Hyperbola3D_VTable = {
+    inline const SObjectVTable<T> Hyperbola3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -473,7 +481,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Parabola3D_VTable = {
+    inline const SObjectVTable<T> Parabola3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -482,7 +490,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Poly3DGenerative_VTable = {
+    inline const SObjectVTable<T> Poly3DGenerative_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -491,7 +499,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Scalar_VTable = {
+    inline const SObjectVTable<T> Scalar_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -500,7 +508,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> FuncExplicit2D_VTable = {
+    inline const SObjectVTable<T> FuncExplicit2D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -509,7 +517,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> FuncExplicit3D_VTable = {
+    inline const SObjectVTable<T> FuncExplicit3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -518,7 +526,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> FuncImplicit2D_VTable = {
+    inline const SObjectVTable<T> FuncImplicit2D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -527,7 +535,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> FuncImplicit3D_VTable = {
+    inline const SObjectVTable<T> FuncImplicit3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -536,7 +544,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> FuncParametric2D_VTable = {
+    inline const SObjectVTable<T> FuncParametric2D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -545,7 +553,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> FuncParametric3D_VTable = {
+    inline const SObjectVTable<T> FuncParametric3D_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
@@ -554,7 +562,7 @@ namespace StuCanvas {
     };
 
     template <typename T>
-    inline const ObjectVTable<T> Unknown_VTable = {
+    inline const SObjectVTable<T> Unknown_VTable = {
         .solver = nullptr,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
