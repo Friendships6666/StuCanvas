@@ -192,6 +192,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/types/cpu/svg_typst.hpp
         stucanvas/types/cpu/cpu_types.hpp
         stucanvas/sobject/sobject_data.hpp
+        stucanvas/sobject/solver.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 

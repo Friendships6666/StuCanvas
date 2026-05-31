@@ -1,2 +1,2 @@
 #pragma once
-#include "typst_c.hpp"
+#include "../rust_bridge/typst_c/typst_c.hpp"
