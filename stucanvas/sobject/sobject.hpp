@@ -7,8 +7,8 @@
 #include "../types/segment_strip.hpp"  // 包含 SegmentStrip3D
 #include "../utils/block_deque.hpp"
 #include "stucanvas/types/cpu/cpu_types.hpp"
-#include "types.hpp"
-#include "object_data.hpp"
+#include "sobject_types.hpp"
+#include "sobject_data.hpp"
 namespace StuCanvas
 {
     template <typename T>
@@ -31,7 +31,9 @@ namespace StuCanvas
     struct ObjectVTable
     {
         void (*solver)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-        void (*plotter)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+        void (*discretize_to_points)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+        void (*discretize_to_strips)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+        void (*discretize_to_triangles)(SObjectGraph<T>&, SObject<T>&) = nullptr;
     };
 
     template <typename T>

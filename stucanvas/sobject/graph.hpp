@@ -10,7 +10,7 @@
 #include <mutex>
 #include <tbb/parallel_for.h>
 #include <flat_map.hpp>
-#include "object.hpp"
+#include "sobject.hpp"
 
 namespace StuCanvas {
 

@@ -180,9 +180,9 @@ add_library(StuCanvasCore STATIC
         stucanvas/canvas/vulkan/vk_ctx.hpp
         stucanvas/canvas/vulkan/config.hpp
         stucanvas/utils/av1_writer.hpp
-        stucanvas/sobject/object.hpp
+        stucanvas/sobject/sobject.hpp
         stucanvas/sobject/graph.hpp
-        stucanvas/sobject/types.hpp
+        stucanvas/sobject/sobject_types.hpp
         stucanvas/rust_bridge/typst_c/typst_c.hpp
         stucanvas/types/cpu/point.hpp
         stucanvas/types/cpu/segment_strips.hpp
@@ -191,7 +191,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/types/gpu/point.hpp
         stucanvas/types/cpu/svg_typst.hpp
         stucanvas/types/cpu/cpu_types.hpp
-        stucanvas/sobject/object_data.hpp
+        stucanvas/sobject/sobject_data.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
