@@ -18,6 +18,7 @@ use std::os::raw::c_char;
 use std::fs;
 use std::path::Path;
 use std::collections::HashMap;
+use std::mem::ManuallyDrop; // 💡 【关键修复 1】：显式导入 ManuallyDrop，消除 E0433 报错
 use typst_as_lib::TypstEngine;
 use typst::layout::{PagedDocument, Point, Transform};
 
@@ -35,7 +36,6 @@ pub unsafe extern "C" fn stucanvas_compile_typst(
     markup_str: *const c_char,
     fonts_dir: *const c_char,
 ) -> CompileResult {
-    // 显式指定 null_mut 的泛型类型，消除 "Type annotations needed" 报错
     if markup_str.is_null() || fonts_dir.is_null() {
         return CompileResult {
             outline: std::ptr::null_mut::<Outline>(),
@@ -68,10 +68,8 @@ pub unsafe extern "C" fn stucanvas_compile_typst(
         .with_package_file_resolver()
         .build();
 
-    // 通过 .output 获取真正的 Result<PagedDocument, TypstAsLibError>
     match engine.compile::<PagedDocument>().output {
         Ok(compiled_doc) => {
-            // 编译成功路径：保持绝对静默，禁止任何 println!
             let mut pool = GeometryPool { lookup: HashMap::new() };
             let mut geometries = Vec::new();
             let mut instances = Vec::new();
@@ -91,7 +89,6 @@ pub unsafe extern "C" fn stucanvas_compile_typst(
             }
         }
         Err(error) => {
-            // 编译失败路径：此时才格式化并输出错误信息
             let err_str = format!("❌ [Typst 语法/编译错误]\n{:#?}", error);
 
             let c_err = CString::new(err_str).unwrap_or_else(|_| CString::new("Unknown compile error").unwrap());
@@ -119,42 +116,27 @@ pub unsafe extern "C" fn stucanvas_free_string(err_str: *mut c_char) {
     let _ = unsafe { CString::from_raw(err_str) };
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn stucanvas_free_outline(outline: *mut Outline) {
-    if outline.is_null() {
-        return;
-    }
+// =====================================================================
+// 5. FFI 内存自动析构回收模块（高度兼容 C++ 五法则值类型）
+// =====================================================================
 
-    // 💡 针对 Rust 2024 规范：使用显式安全作用域包裹 FFI 裸指针和内存回收操作，零警告编译 [1]
-    let out_box = unsafe { Box::from_raw(outline) };
-    let geometries = unsafe { out_box.geometries.into_vec() };
-    let instances = unsafe { out_box.instances.into_vec() };
-
-    for shared_geom in geometries {
-        unsafe { free_geometry_resources(shared_geom.geometry) };
-    }
-
-    for instance in instances {
-        unsafe {
-            free_paint_resources(instance.fill_paint);
-            free_paint_resources(instance.stroke_paint);
-
-            // 释放可能分配的虚线 Dash 堆内存 [1]
-            let _ = instance.dash_array.into_vec();
-        }
+// 💡 【关键修复 2】：在 lib.rs 内部显式实现 FFI 容器转换助手，消除 E0425 报错
+unsafe fn cvec_to_vec<T>(cvec: CVec<T>) -> Vec<T> {
+    if cvec.ptr.is_null() {
+        Vec::new()
+    } else {
+        Vec::from_raw_parts(cvec.ptr, cvec.len as usize, cvec.cap as usize)
     }
 }
-
 
 unsafe fn free_geometry_resources(geometry: Geometry) {
     match geometry.ty {
         GeometryType::Path => {
-            let path_geom = unsafe { std::mem::ManuallyDrop::into_inner(geometry.data.path) };
-            // points 和 verbs 拥有外部堆物理指针，必须手动回收 [15.1]
-            let _ = unsafe { path_geom.points.into_vec() };
-            let _ = unsafe { path_geom.verbs.into_vec() };
+            let path_geom = unsafe { ManuallyDrop::into_inner(geometry.data.path) };
+            let _ = unsafe { cvec_to_vec(path_geom.points) };
+            let _ = unsafe { cvec_to_vec(path_geom.verbs) };
         }
-        // 💡 显式标明 Line 和 Rect 是平铺内存，无任何外部堆分配，自动伴随释放
+        // 💡 Line 和 Rect 仅包含平铺 POD 数据，属于连续内存，自动伴随释放
         GeometryType::Line => {}
         GeometryType::Rect => {}
     }
@@ -163,8 +145,8 @@ unsafe fn free_geometry_resources(geometry: Geometry) {
 unsafe fn free_paint_resources(paint: Paint) {
     match paint.ty {
         PaintType::Gradient => {
-            // 💡 【物理泄露修复】：回收 Gradient 底层 stops 拥有的堆内存 [1]
-            let _ = unsafe { paint.gradient.stops.into_vec() };
+            // 回收 Gradient 底层 stops 拥有的堆内存 [1]
+            let _ = unsafe { cvec_to_vec(paint.gradient.stops) };
         }
         PaintType::Tiling => {
             let tiling = paint.tiling;
@@ -175,4 +157,54 @@ unsafe fn free_paint_resources(paint: Paint) {
         }
         _ => {}
     }
+}
+
+/// # Safety
+/// 💡 【双析构支持 1】：专门用于 C++ 侧在栈上/容器内以【值类型】直接析构 Outline 时调用。
+/// 仅清理内部持有的 geometries/instances 堆内存，绝对不释放传入的 outline 指针本身。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn stucanvas_free_outline_members(outline: *mut Outline) {
+    if outline.is_null() {
+        return;
+    }
+    // 获取可变引用，直接在当前内存块上重置内部 CVector 容器
+    let out = unsafe { &mut *outline };
+
+    let instances = unsafe {
+        cvec_to_vec(std::mem::replace(
+            &mut out.instances,
+            CVec { ptr: std::ptr::null_mut(), len: 0, cap: 0 }
+        ))
+    };
+    for instance in instances {
+        unsafe {
+            free_paint_resources(instance.fill_paint);
+            free_paint_resources(instance.stroke_paint);
+            let _ = cvec_to_vec(instance.dash_array);
+        }
+    }
+
+    let geometries = unsafe {
+        cvec_to_vec(std::mem::replace(
+            &mut out.geometries,
+            CVec { ptr: std::ptr::null_mut(), len: 0, cap: 0 }
+        ))
+    };
+    for sg in geometries {
+        unsafe { free_geometry_resources(sg.geometry) };
+    }
+}
+
+/// # Safety
+/// 💡 【双析构支持 2】：专门用于 C++ 侧以【智能指针】托管释放从 compile 接口返回的物理指针。
+/// 深度清理 Outline 内部所有成员后，最后收回并销毁其自身在堆上的 Box 空间。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn stucanvas_free_outline(outline: *mut Outline) {
+    if outline.is_null() {
+        return;
+    }
+    // 1. 先安全清理 Outline 内部的所有子成员堆资源
+    unsafe { stucanvas_free_outline_members(outline) };
+    // 2. 重新打包为 Box，收回并彻底销毁 Outline 自身的 48 字节堆空间
+    let _ = unsafe { Box::from_raw(outline) };
 }

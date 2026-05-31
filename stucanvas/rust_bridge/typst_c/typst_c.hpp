@@ -13,12 +13,30 @@
 #include <memory>
 #include <string_view>
 
-// =====================================================================
-// 1. 底层 C 兼容数据结构定义 (C++ 链接性，支持模板与对齐)
-// =====================================================================
-
-// 前向声明不透明的 Outline 结构
+// 前向声明不透明的 Outline 和 CompileResult 结构体
 struct Outline;
+struct CompileResult;
+
+// =====================================================================
+// 1. 导出 C 风格函数声明 (C 链接性，前置以支持 Outline 析构器调用) [1.2.2]
+// =====================================================================
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+CompileResult stucanvas_compile_typst(const char* markup_str, const char* fonts_dir);
+void stucanvas_free_outline(Outline* outline);
+void stucanvas_free_outline_members(Outline* outline); // 💡 【核心新增】：仅回收成员堆资源的 FFI 接口
+void stucanvas_free_string(char* err_str);
+void stucanvas_print_detailed_outline(const Outline* outline);
+
+#ifdef __cplusplus
+}
+#endif
+
+// =====================================================================
+// 2. 底层 C 兼容数据结构定义 (C++ 链接性，支持模板与对齐)
+// =====================================================================
 
 /// FFI 安全的动态数组容器 (与 Rust 的 CVec<T> 完全一致)
 template <typename T>
@@ -61,7 +79,7 @@ struct Transform2D {
 enum class PathVerb : uint8_t {
     MoveTo = 0,
     LineTo = 1,
-    CubicTo = 2, // 已剔除无用的 QuadTo 分支，紧凑对齐
+    CubicTo = 2, // 已精简 QuadTo 分支，紧凑对齐
     Close = 3
 };
 
@@ -205,9 +223,47 @@ struct DrawInstance {
     double dash_offset;
 };
 
+// =====================================================================
+// 💡 【核心重构】：支持五法则、移动独占型的高性能 Outline 值类型 [1.1.2]
+// =====================================================================
 struct Outline {
     CVector<SharedGeometry> geometries; ///< 共享几何池 [3.2.1]
     CVector<DrawInstance> instances;   ///< 实例化绘制指令队列 [3.2.1]
+
+    // ① 默认构造：零初始化
+    Outline() noexcept {
+        geometries = { nullptr, 0, 0 };
+        instances = { nullptr, 0, 0 };
+    }
+
+    // ② 析构函数：生命周期结束（如从 FlatMap 中清空/移除）时，自动调用 FFI 仅回收成员，绝不释放 Outline 自身 [1.1.2]
+    ~Outline() noexcept {
+        ::stucanvas_free_outline_members(this);
+    }
+
+    // ③ 禁用拷贝：从编译期完全杜绝 FFI 裸指针发生浅拷贝引起的 Double Free 灾难 [1.1.2]
+    Outline(const Outline&) = delete;
+    Outline& operator=(const Outline&) = delete;
+
+    // ④ 移动构造：极速接管原 Outline 拥有的堆资源，并将原对象安全置空（耗时仅 0.01 微秒） [1.1.2, 1.1.7]
+    Outline(Outline&& other) noexcept {
+        geometries = other.geometries;
+        instances = other.instances;
+        other.geometries = { nullptr, 0, 0 };
+        other.instances = { nullptr, 0, 0 };
+    }
+
+    // ⑤ 移动赋值
+    Outline& operator=(Outline&& other) noexcept {
+        if (this != &other) {
+            ::stucanvas_free_outline_members(this); // 先行深度释放自己旧的内部数据 [1.1.2]
+            geometries = other.geometries;
+            instances = other.instances;
+            other.geometries = { nullptr, 0, 0 };
+            other.instances = { nullptr, 0, 0 };
+        }
+        return *this;
+    }
 };
 
 /// FFI 裸复合返回体 [1.2.2]
@@ -215,22 +271,6 @@ struct CompileResult {
     Outline* outline;   ///< 成功时指向堆内存中的 Outline，失败时为 nullptr [1.2.2]
     char* error_msg;    ///< 失败时指向编译报错字符串，成功时为 nullptr [1.2.2]
 };
-
-// =====================================================================
-// 2. 导出 C 风格函数声明 (C 链接性，仅包裹底层导出入口) [1.2.2]
-// =====================================================================
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-CompileResult stucanvas_compile_typst(const char* markup_str, const char* fonts_dir);
-void stucanvas_free_outline(Outline* outline);
-void stucanvas_free_string(char* err_str);
-void stucanvas_print_detailed_outline(const Outline* outline);
-
-#ifdef __cplusplus
-}
-#endif
 
 // =====================================================================
 // 3. 现代 C++ 自动化内存管理包装 (RAII 核心层) [1.1.2]
@@ -241,6 +281,8 @@ namespace StuCanvas {
 struct OutlineDeleter {
     void operator()(Outline* ptr) const noexcept {
         if (ptr) {
+            // 💡 提示：智能指针指向的 Outline 是由 Rust 在堆上动态申请的，
+            // 必须调用 stucanvas_free_outline 深度回收其内部成员并彻底销毁该 Outline 指针自身 [1.1.2]。
             ::stucanvas_free_outline(ptr);
         }
     }
@@ -321,7 +363,7 @@ static_assert(sizeof(Point2D) == 16, "Mismatched size of Point2D");
 static_assert(sizeof(RGBA) == 16, "Mismatched size of RGBA");
 static_assert(sizeof(Transform2D) == 48, "Mismatched size of Transform2D");
 static_assert(sizeof(CVector<double>) == 24, "Mismatched size of CVec");
-// 💡 升级：精简无效几何后，SharedGeometry 在 64 位平台对齐大小已精确固定为 64 字节
+// 💡 升级：精简无效几何并融入五法则后，SharedGeometry 在 64 位平台对齐大小已精确固定为 64 字节
 static_assert(sizeof(SharedGeometry) == 64, "SharedGeometry alignment failure");
 static_assert(sizeof(CompileResult) == 16, "Mismatched size of CompileResult");
 #endif

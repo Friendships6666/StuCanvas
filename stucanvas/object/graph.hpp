@@ -31,6 +31,8 @@ namespace StuCanvas {
     struct ObjectGraph {
         using value_type = T;
 
+        utils::FlatMap<const Object<T>*, Outline> fonts_2d;
+
 
         utils::FlatMap<const Object<T>*,Point2D_CPU<T>> points_2d;
         utils::FlatMap<const Object<T>*,Point3D_CPU<T>> points_3d;
@@ -38,6 +40,7 @@ namespace StuCanvas {
         utils::FlatMap<const Object<T>*,SegmentStrips3D_CPU<T>> segment_stips_3d;
         utils::FlatMap<const Object<T>*,Triangles2D_CPU<T>> triangles_2d;
         utils::FlatMap<const Object<T>*,Triangles3D_CPU<T>> triangles_3d;
+
 
 
 
