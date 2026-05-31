@@ -6,6 +6,7 @@
 #include "../types/point.hpp"         // 保持原始 Point3D, Point2D 无 UV 格式
 #include "../types/segment_strip.hpp"  // 包含 SegmentStrip3D
 #include "../utils/block_deque.hpp"
+#include "stucanvas/types/cpu/cpu_types.hpp"
 #include "types.hpp"
 namespace StuCanvas {
 
@@ -53,6 +54,8 @@ namespace StuCanvas {
 
         utils::BlockDeque<Object*, 4> parents;
         utils::BlockDeque<Object*, 16> children;
+
+
 
 
         // 核心代数数据 Union

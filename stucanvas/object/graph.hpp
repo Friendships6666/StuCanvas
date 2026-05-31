@@ -32,12 +32,21 @@ namespace StuCanvas {
         using value_type = T;
 
 
-        // 内存连续且稳定的对象分配大池，无任何外部堆碎片
+        utils::FlatMap<const Object<T>*,Point2D_CPU<T>> points_2d;
+        utils::FlatMap<const Object<T>*,Point3D_CPU<T>> points_3d;
+        utils::FlatMap<const Object<T>*,SegmentStrips2D_CPU<T>> segment_stips_2d;
+        utils::FlatMap<const Object<T>*,SegmentStrips3D_CPU<T>> segment_stips_3d;
+        utils::FlatMap<const Object<T>*,Triangles2D_CPU<T>> triangles_2d;
+        utils::FlatMap<const Object<T>*,Triangles3D_CPU<T>> triangles_3d;
+
+
+
+
         utils::BlockDeque<Object<T>, 256> node_pool;
 
-        // ---- 1. 拓扑分层缓存 (消灭运行期拓扑排序开销) ----
+
         std::vector<std::vector<Object<T>*>> cached_levels;
-        bool topology_changed = true; // 仅在增删节点、改变连线时标记为 true
+        bool topology_changed = true;
 
         // ---- 2. 启发式反馈自检指标 ----
         struct FrameStats {

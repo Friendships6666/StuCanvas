@@ -190,6 +190,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/types/cpu/triangles.hpp
         stucanvas/types/gpu/point.hpp
         stucanvas/types/cpu/svg_typst.hpp
+        stucanvas/types/cpu/cpu_types.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
@@ -208,7 +209,6 @@ target_include_directories(StuCanvasCore PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/stucanvas/rust_bridge/typst_c
         ${CMAKE_CURRENT_SOURCE_DIR}/stucanvas/utils
-        ${CMAKE_CURRENT_SOURCE_DIR}/stucanvas/types
         ${CMAKE_CURRENT_SOURCE_DIR}/external
 )
 
