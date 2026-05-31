@@ -54,7 +54,7 @@ StuCanvas 在设计上借鉴了 **GeoGebra, Desmos, Algodoo, Manim, GrafEq** 等
 |        <br><img src="./docs/logos/Intel-logo-nobox.png" height="55" alt="Intel"><br><br>        | **Intel CPU Tech & TBB** | Apache 2.0 / MIT | 深度结合多核心 CPU 并行计算，大幅度优化复杂的图论几何求解与依赖树构建。                           |
 |           <br><img src="./docs/logos/slang-logo.svg" height="60" alt="Slang"><br><br>           | **Slang Shading Language** | Apache 2.0 | 现代化的着色器语言与编译服务，提供灵活的跨平台（Vulkan/SPIR-V）着色器生成与动态管理。                |
 | <br><img src="./docs/logos/Eigen_Silly_Professor_135x135.png" height="90" alt="Eigen3"><br><br> | **Eigen3** | MPL2 | 紧凑、高效的 C++ 线性代数库，用于底层的矩阵变换、几何坐标求解与代数计算。                          |
-|          <br><img src="./docs/logos/sdl-original.svg" height="55" alt="SDL3"><br><br>           | **SDL3** | zlib | 跨平台底层开发库，提供健壮的窗口管理、事件捕获及多媒体上下文环境。                                |
+|          <br><img src="./docs/logos/sdl-original.svg" height="90" alt="SDL3"><br><br>           | **SDL3** | zlib | 跨平台底层开发库，提供健壮的窗口管理、事件捕获及多媒体上下文环境。                                |
 
 ---
 
