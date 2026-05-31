@@ -8,13 +8,13 @@
 #include "../utils/block_deque.hpp"
 #include "stucanvas/types/cpu/cpu_types.hpp"
 #include "types.hpp"
-
+#include "object_data.hpp"
 namespace StuCanvas
 {
     template <typename T>
-    struct Object;
+    struct SObject;
     template <typename T>
-    struct ObjectGraph;
+    struct SObjectGraph;
 
     enum class NodeMask : uint64_t
     {
@@ -30,59 +30,44 @@ namespace StuCanvas
     template <typename T>
     struct ObjectVTable
     {
-        void (*solver)(ObjectGraph<T>&, Object<T>&) = nullptr;
-        void (*plotter)(ObjectGraph<T>&, Object<T>&) = nullptr;
+        void (*solver)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+        void (*plotter)(SObjectGraph<T>&, SObject<T>&) = nullptr;
     };
 
     template <typename T>
-    struct Object
+    struct SObject
     {
         NodeType type = NodeType::UNKNOWN;
         mutable uint64_t mask = 0;
         std::string name;
         uint64_t id{};
 
-        utils::BlockDeque<const Object*, 4> parents;
-        utils::BlockDeque<const Object*, 16> children;
+        utils::BlockDeque<const SObject*, 4> parents;
+        utils::BlockDeque<const SObject*, 16> children;
 
-        union
-        {
-            struct
-            {
-                T x, y;
-            } point_2d;
 
-            struct
-            {
-                T x0, y0, x1, y1;
-            } line_2d;
 
-            struct
-            {
-                T a, b, c, d;
-            } plane_3d;
-        } data;
+        SObjectData<T> data;
+
+
 
         const ObjectVTable<T>* vptr = nullptr;
-        ObjectGraph<T>* graph = nullptr; // 反向指针
+        SObjectGraph<T>* graph = nullptr; // 反向指针
 
-        // =========================================================================
-        // 💡 【五法则实现】：保障有向图拓扑安全的极致工程设计
-        // =========================================================================
 
         // ① 默认构造函数
-        Object() noexcept = default;
+        SObject() noexcept = default;
 
         // ② 析构函数：由于 std::string name, 以及 BlockDeque 内部自己拥有完善的 RAII 释放，
         // 默认析构函数会自动、安全地释放它们，无需我们在此手动释放内存。
-        ~Object() noexcept = default;
+        ~SObject() noexcept = default;
 
         // ③ 极其关键：显式删除拷贝构造与拷贝赋值，防止图拓扑结构发生不可逆的野指针崩塌
-        Object(const Object&) = delete;
-        Object& operator=(const Object&) = delete;
+        SObject(const SObject&) = delete;
+        SObject& operator=(const SObject&) = delete;
 
         // ④ 移动构造：接管所有数据，并对整个计算图进行“指针打补丁”
-        Object(Object&& other) noexcept
+        SObject(SObject&& other) noexcept
             : type(other.type),
               mask(other.mask),
               name(std::move(other.name)),
@@ -106,7 +91,7 @@ namespace StuCanvas
         }
 
         // ⑤ 移动赋值运算符
-        Object& operator=(Object&& other) noexcept
+        SObject& operator=(SObject&& other) noexcept
         {
             if (this != &other)
             {
@@ -145,12 +130,12 @@ namespace StuCanvas
 
     private:
         // 💡 物理指针打补丁：让所有与旧地址相连的节点，无缝指向新地址
-        void patch_connections(Object* old_addr, Object* new_addr) noexcept
+        void patch_connections(SObject* old_addr, SObject* new_addr) noexcept
         {
             // 让所有父节点中指向 old_addr 的子指针，全部改写为指向 new_addr
             for (size_t i = 0; i < parents.size(); ++i)
             {
-                Object* parent = parents[i];
+                SObject* parent = parents[i];
                 if (parent)
                 {
                     for (size_t j = 0; j < parent->children.size(); ++j)
@@ -165,7 +150,7 @@ namespace StuCanvas
             // 让所有子节点中指向 old_addr 的父指针，全部改写为指向 new_addr
             for (size_t i = 0; i < children.size(); ++i)
             {
-                Object* child = children[i];
+                SObject* child = children[i];
                 if (child)
                 {
                     for (size_t j = 0; j < child->parents.size(); ++j)
@@ -184,7 +169,7 @@ namespace StuCanvas
         {
             for (size_t i = 0; i < parents.size(); ++i)
             {
-                Object* parent = parents[i];
+                SObject* parent = parents[i];
                 if (parent)
                 {
                     // 利用 C++20 的 std::erase 极速从父节点的子队列中抹去自己
@@ -193,7 +178,7 @@ namespace StuCanvas
             }
             for (size_t i = 0; i < children.size(); ++i)
             {
-                Object* child = children[i];
+                SObject* child = children[i];
                 if (child)
                 {
                     std::erase(child->parents, this);

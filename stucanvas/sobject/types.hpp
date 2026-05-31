@@ -123,8 +123,8 @@ namespace StuCanvas {
     // ========================================================
     // 编译期静态虚函数表 (VTable) 内部模板定义 (支持按需延迟解算)
     // ========================================================
-    template <typename T> struct ObjectGraph;
-    template <typename T> struct Object;
+    template <typename T> struct SObjectGraph;
+    template <typename T> struct SObject;
     template <typename T> struct ObjectVTable; // 核心前向声明
 
     // ---- 物理存在的解算与离散化模板函数前向声明 ----
