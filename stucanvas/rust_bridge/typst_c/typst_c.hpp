@@ -61,9 +61,8 @@ struct Transform2D {
 enum class PathVerb : uint8_t {
     MoveTo = 0,
     LineTo = 1,
-    QuadTo = 2,
-    CubicTo = 3,
-    Close = 4
+    CubicTo = 2, // 已剔除无用的 QuadTo 分支，紧凑对齐
+    Close = 3
 };
 
 enum class FillRule : uint8_t {
@@ -111,10 +110,7 @@ enum class PaintType : uint8_t {
 enum class GeometryType : uint8_t {
     Path = 0,
     Line = 1,
-    Rect = 2,
-    Circle = 3,
-    Ellipse = 4,
-    Polygon = 5
+    Rect = 2
 };
 
 // =====================================================================
@@ -170,25 +166,6 @@ struct RectGeometry {
     Point2D origin;
     double width;
     double height;
-    double radius_top_left;
-    double radius_top_right;
-    double radius_bottom_right;
-    double radius_bottom_left;
-};
-
-struct CircleGeometry {
-    Point2D center;
-    double radius;
-};
-
-struct EllipseGeometry {
-    Point2D center;
-    double rx;
-    double ry;
-};
-
-struct PolygonGeometry {
-    CVector<Point2D> vertices;
 };
 
 /// 几何体内存合并联合体
@@ -196,9 +173,6 @@ union GeometryUnion {
     PathGeometry path;
     LineGeometry line;
     RectGeometry rect;
-    CircleGeometry circle;
-    EllipseGeometry ellipse;
-    PolygonGeometry polygon;
 };
 
 struct Geometry {
@@ -337,7 +311,7 @@ inline Result compile(const char* markup_str, const char* fonts_dir) {
     return Result(raw.outline, raw.error_msg);
 }
 
-} // namespace stucanvas
+} // namespace StuCanvas
 
 // =====================================================================
 // 4. 静态断言 (保证 64 位平台上的 FFI 对齐万无一失) [1]
@@ -347,6 +321,7 @@ static_assert(sizeof(Point2D) == 16, "Mismatched size of Point2D");
 static_assert(sizeof(RGBA) == 16, "Mismatched size of RGBA");
 static_assert(sizeof(Transform2D) == 48, "Mismatched size of Transform2D");
 static_assert(sizeof(CVector<double>) == 24, "Mismatched size of CVec");
-static_assert(sizeof(SharedGeometry) >= 48, "SharedGeometry alignment failure");
+// 💡 升级：精简无效几何后，SharedGeometry 在 64 位平台对齐大小已精确固定为 64 字节
+static_assert(sizeof(SharedGeometry) == 64, "SharedGeometry alignment failure");
 static_assert(sizeof(CompileResult) == 16, "Mismatched size of CompileResult");
 #endif

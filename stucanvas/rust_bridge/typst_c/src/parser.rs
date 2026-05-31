@@ -1,19 +1,32 @@
-// src/parser.rs
+/***************************************************************************
+* Copyright (c) 2026 Tian Yuxuan (Friendships666)                          *
+*                                                                          *
+* Distributed under the terms of the MIT License.                          *
+*                                                                          *
+* The full license is in the file LICENSE, distributed with this software. *
+***************************************************************************/
+
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
-use typst::layout::{Frame, FrameItem, Transform, Point, Abs, Ratio, Length};
-use typst::visualize::{Geometry as TGeom, CurveItem, Paint as TPaint, FixedStroke, Color, Gradient as TGrad};
+use typst::layout::{Frame, FrameItem, Transform, Point, Abs, Ratio};
+use typst::visualize::{Geometry as TGeom, CurveItem, Paint as TPaint, Color, Gradient as TGrad};
 
 use crate::types::*;
-use crate::outline_builder::{RawOutlineBuilder, RawContour};
+use crate::outline_builder::{RawOutlineBuilder};
 
-// 【重构】：仅记录字形到共享几何 ID 的映射
+// =====================================================================
+// 1. 编译期去重几何池
+// =====================================================================
 pub struct GeometryPool {
     pub lookup: HashMap<(String, u16), u32>,
 }
 
+// =====================================================================
+// 2. 基础数据类型转换函数
+// =====================================================================
+
+#[inline]
 pub fn convert_transform(ts: &Transform) -> Transform2D {
-    // 1对1直接对齐，性能最高
     Transform2D {
         sx: ts.sx.get(),
         ky: ts.ky.get(),
@@ -23,11 +36,16 @@ pub fn convert_transform(ts: &Transform) -> Transform2D {
         ty: ts.ty.to_pt(),
     }
 }
+
+#[inline]
 pub fn convert_color(color: &Color) -> RGBA {
     let rgb = color.to_rgb();
     RGBA { r: rgb.red, g: rgb.green, b: rgb.blue, a: rgb.alpha }
 }
 
+// =====================================================================
+// 3. 材质（Paint）转换与多态解析
+// =====================================================================
 pub fn convert_paint(paint: &TPaint, origin: Point, transform: Transform) -> Paint {
     match paint {
         TPaint::Solid(color) => Paint {
@@ -58,6 +76,11 @@ pub fn convert_paint(paint: &TPaint, origin: Point, transform: Transform) -> Pai
             let radius = grad.radius().map(|r| r.get()).unwrap_or(1.0);
             let angle = grad.angle().map(|a| a.to_rad()).unwrap_or(0.0);
 
+            // 💡 【渐变核心解算说明】：
+            // 在这一版的 Typst 中，线性渐变由 Angle 驱动，不存储物理的 start/end 坐标。
+            // 因此，我们在此处将 start/end 初始化为默认的 (0,0)（因为 center 返回 None）。
+            // 后端 Vulkan 渲染器（或 GPU Shader）应当采用 2D 渲染 standard：
+            // 利用传入的 angle 结合当前几何体的实际包围盒，在渲染时动态计算出精确的渐变起点与终点。
             let gp = GradientPaint {
                 ty: match grad {
                     TGrad::Linear(_) => GradientType::Linear,
@@ -68,7 +91,7 @@ pub fn convert_paint(paint: &TPaint, origin: Point, transform: Transform) -> Pai
                 end: Point2D { x: focal_center.x.get(), y: focal_center.y.get() },
                 radius,
                 angle,
-                spread: SpreadMethod::Pad,
+                spread: SpreadMethod::Pad, // 默认边缘平铺
                 relative: relative_val,
                 stops: CVec::from_vec(stops),
             };
@@ -81,13 +104,14 @@ pub fn convert_paint(paint: &TPaint, origin: Point, transform: Transform) -> Pai
             }
         }
         TPaint::Tiling(tiling) => {
+            // 递归编译平铺子帧并打包为 Box [3.2.1]
             let sub_outline = Box::new(compile_sub_frame(tiling.frame(), origin, transform));
             Paint {
                 ty: PaintType::Tiling,
                 solid_color: RGBA { r: 0., g: 0., b: 0., a: 0. },
                 gradient: unsafe { std::mem::zeroed() },
                 tiling: TilingPaint {
-                    pattern: Box::into_raw(sub_outline),
+                    pattern: Box::into_raw(sub_outline), // 转换为裸指针供 C++ 承接
                     width: tiling.size().x.to_pt(),
                     height: tiling.size().y.to_pt(),
                     spacing_x: tiling.spacing().x.to_pt(),
@@ -109,6 +133,9 @@ fn compile_sub_frame(frame: &Frame, origin: Point, transform: Transform) -> Outl
     }
 }
 
+// =====================================================================
+// 4. 核心物理帧转换为 FFI 格式
+// =====================================================================
 pub fn extract_frame_to_ffi(
     frame: &Frame,
     origin: Point,
@@ -133,6 +160,7 @@ pub fn extract_frame_to_ffi(
                     data: unsafe { std::mem::zeroed() },
                 };
 
+                // 💡 【物理匹配】：Line、Rect、Curve 已经 100% 穷尽并覆盖了此版 Typst 的 Geometry 变体
                 match &shape.geometry {
                     TGeom::Line(target) => {
                         geom.ty = GeometryType::Line;
@@ -143,11 +171,12 @@ pub fn extract_frame_to_ffi(
                     }
                     TGeom::Rect(size) => {
                         geom.ty = GeometryType::Rect;
+                        // 💡 带有圆角的矩形在排版生成 FrameItem 时已被 Typst 直接转换为 Curve(Path)，
+                        // 这里的 Rect 只需极简、高性能地表达非圆角标准矩形。
                         geom.data.rect = RectGeometry {
                             origin: Point2D { x: 0., y: 0. },
                             width: size.x.to_pt(),
                             height: size.y.to_pt(),
-                            radius_top_left: 0., radius_top_right: 0., radius_bottom_right: 0., radius_bottom_left: 0.,
                         };
                     }
                     TGeom::Curve(curve) => {
@@ -165,9 +194,9 @@ pub fn extract_frame_to_ffi(
                                     vbs.push(PathVerb::CubicTo);
                                 }
                                 CurveItem::Close => {
-                                    // 💡 【修正】：将闭合作为一个独立的 Verb 压入队列
+                                    // 💡 【闭合动作化控制】：
+                                    // 将“闭合”设计为一种特殊的 PathVerb 指令，处于动作流中，零点消耗 [1]
                                     vbs.push(PathVerb::Close);
-                                    // 物理特性：Close 动作不需要消耗 Point2D 坐标点 [1]
                                 }
                             }
                         }
@@ -235,7 +264,7 @@ pub fn extract_frame_to_ffi(
                     let offset_x = glyph.x_offset.at(text.size).to_pt() as f32;
                     let offset_y = glyph.y_offset.at(text.size).to_pt() as f32;
 
-                    // 1. 获取共享几何 ID（如果已存在则直接复用，10000个 'e' 在这里完全去重！）
+                    // 1. 获取共享几何 ID（如果已存在则直接复用）
                     let key = (font_family.clone(), glyph.id);
                     let geom_id = if let Some(&id) = pool.lookup.get(&key) {
                         id
@@ -247,16 +276,14 @@ pub fn extract_frame_to_ffi(
                         if let Some(c) = builder.current_contour.take() {
                             builder.contours.push(c);
                         }
-                        
+
                         let mut merged_points = Vec::new();
                         let mut merged_verbs = Vec::new();
-                        let mut closed = false;
+
+                        // 已清理：彻底删除了未使用的 `let mut closed` 局部变量，消除了静态警告 [1]
                         for raw_contour in builder.contours {
                             merged_points.extend(raw_contour.points);
                             merged_verbs.extend(raw_contour.verbs);
-                            if raw_contour.closed {
-                                closed = true;
-                            }
                         }
 
                         let geom = Geometry {
@@ -343,7 +370,11 @@ pub fn extract_frame_to_ffi(
                                 pts.push(Point2D { x: p3.x.to_pt(), y: p3.y.to_pt() });
                                 vbs.push(PathVerb::CubicTo);
                             }
-                            CurveItem::Close => {}
+                            CurveItem::Close => {
+                                // 💡 【关键修复】：在此处的 Group Clip 路径解析中，也同样将 Close 动作正确填入！
+                                // 避免含有剪裁蒙版的图容器（如圆角容器）因剪裁路径未闭合引起 Vulkan GPU 端 Stencil-Mask 渲染异常。
+                                vbs.push(PathVerb::Close);
+                            }
                         }
                     }
                     let clip_geom = Geometry {
@@ -386,3 +417,4 @@ pub fn extract_frame_to_ffi(
         }
     }
 }
+

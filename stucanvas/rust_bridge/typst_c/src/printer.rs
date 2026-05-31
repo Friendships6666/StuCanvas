@@ -1,4 +1,3 @@
-// src/printer.rs
 /***************************************************************************
 * Copyright (c) 2026 Tian Yuxuan (Friendships666)                          *
 *                                                                          *
@@ -94,31 +93,10 @@ unsafe fn print_geometry_details(geom: &Geometry, indent: &str) {
         }
         GeometryType::Rect => {
             let rect = &geom.data.rect;
-            println!("{}      - 几何类型: [Rect (矩形与圆角矩形)]", indent);
+            println!("{}      - 几何类型: [Rect (标准直角矩形)]", indent);
+            println!("{}        * 中心原点: ({:.4}, {:.4}) pt", indent, rect.origin.x, rect.origin.y);
             println!("{}        * 物理尺寸: 宽={:.4} pt, 高={:.4} pt", indent, rect.width, rect.height);
-            println!("{}        * 圆角半径: TL={:.2} | TR={:.2} | BR={:.2} | BL={:.2} pt",
-                     indent, rect.radius_top_left, rect.radius_top_right, rect.radius_bottom_right, rect.radius_bottom_left);
-        }
-        GeometryType::Circle => {
-            let circle = &geom.data.circle;
-            println!("{}      - 几何类型: [Circle (标准圆形)]", indent);
-            println!("{}        * 圆心坐标: ({:.4}, {:.4}) pt", indent, circle.center.x, circle.center.y);
-            println!("{}        * 物理半径: {:.4} pt", indent, circle.radius);
-        }
-        GeometryType::Ellipse => {
-            let ellipse = &geom.data.ellipse;
-            println!("{}      - 几何类型: [Ellipse (标准椭圆)]", indent);
-            println!("{}        * 中心坐标: ({:.4}, {:.4}) pt", indent, ellipse.center.x, ellipse.center.y);
-            println!("{}        * 物理半径: X半轴={:.4}, Y半轴={:.4} pt", indent, ellipse.rx, ellipse.ry);
-        }
-        GeometryType::Polygon => {
-            let poly = &*geom.data.polygon;
-            let vertices = poly.vertices.as_slice();
-            println!("{}      - 几何类型: [Polygon (多边形)]", indent);
-            println!("{}        * 顶点总数: {}", indent, vertices.len());
-            for (v_idx, v) in vertices.iter().enumerate() {
-                println!("{}          * Vertex [{}]: ({:.4}, {:.4}) pt", indent, v_idx, v.x, v.y);
-            }
+            // 💡 修正：已剔除无用的圆角半径参数打印（圆角已在 layout 时降级为 Path 自由曲线）
         }
         GeometryType::Path => {
             let path = &*geom.data.path;
@@ -141,13 +119,6 @@ unsafe fn print_geometry_details(geom: &Geometry, indent: &str) {
                             pt_idx += 1;
                         }
                     }
-                    PathVerb::QuadTo => {
-                        if pt_idx + 1 < pts.len() {
-                            println!("{}          * [{}] QuadTo : 控制点({:.4}, {:.4}) -> 终点({:.4}, {:.4}) pt",
-                                     indent, v_idx, pts[pt_idx].x, pts[pt_idx].y, pts[pt_idx+1].x, pts[pt_idx+1].y);
-                            pt_idx += 2;
-                        }
-                    }
                     PathVerb::CubicTo => {
                         if pt_idx + 2 < pts.len() {
                             println!("{}          * [{}] CubicTo: 控制点1({:.4}, {:.4}), 控制点2({:.4}, {:.4}) -> 终点({:.4}, {:.4}) pt",
@@ -155,9 +126,12 @@ unsafe fn print_geometry_details(geom: &Geometry, indent: &str) {
                             pt_idx += 3;
                         }
                     }
+                    PathVerb::Close => {
+                        // 💡 修正：增加对 Close 动作的对齐打印支持
+                        println!("{}          * [{}] Close", indent, v_idx);
+                    }
                 }
             }
-            println!("{}        * 闭合标志 (closed): {}", indent, path.closed);
         }
     }
 }

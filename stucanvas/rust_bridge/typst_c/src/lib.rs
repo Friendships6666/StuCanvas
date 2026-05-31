@@ -1,4 +1,11 @@
-// src/lib.rs
+/***************************************************************************
+* Copyright (c) 2026 Tian Yuxuan (Friendships666)                          *
+*                                                                          *
+* Distributed under the terms of the MIT License.                          *
+*                                                                          *
+* The full license is in the file LICENSE, distributed with this software. *
+***************************************************************************/
+
 pub mod types;
 pub mod outline_builder;
 pub mod parser;
@@ -28,7 +35,7 @@ pub unsafe extern "C" fn stucanvas_compile_typst(
     markup_str: *const c_char,
     fonts_dir: *const c_char,
 ) -> CompileResult {
-    // 【修复】：显示指定 null_mut 的泛型类型，消除 "Type annotations needed" 报错
+    // 显式指定 null_mut 的泛型类型，消除 "Type annotations needed" 报错
     if markup_str.is_null() || fonts_dir.is_null() {
         return CompileResult {
             outline: std::ptr::null_mut::<Outline>(),
@@ -36,8 +43,8 @@ pub unsafe extern "C" fn stucanvas_compile_typst(
         };
     }
 
-    let c_markup = CStr::from_ptr(markup_str).to_string_lossy().into_owned();
-    let c_fonts_path = CStr::from_ptr(fonts_dir).to_string_lossy().into_owned();
+    let c_markup = unsafe { CStr::from_ptr(markup_str) }.to_string_lossy().into_owned();
+    let c_fonts_path = unsafe { CStr::from_ptr(fonts_dir) }.to_string_lossy().into_owned();
 
     let mut font_buffers: Vec<Vec<u8>> = Vec::new();
     if let Ok(entries) = fs::read_dir(Path::new(&c_fonts_path)) {
@@ -61,7 +68,7 @@ pub unsafe extern "C" fn stucanvas_compile_typst(
         .with_package_file_resolver()
         .build();
 
-    // 【修复】：通过 .output 获取真正的 Result<PagedDocument, TypstAsLibError>
+    // 通过 .output 获取真正的 Result<PagedDocument, TypstAsLibError>
     match engine.compile::<PagedDocument>().output {
         Ok(compiled_doc) => {
             // 编译成功路径：保持绝对静默，禁止任何 println!
@@ -101,7 +108,7 @@ pub unsafe extern "C" fn stucanvas_print_detailed_outline(outline: *const Outlin
     if outline.is_null() {
         return;
     }
-    print_detailed_outline(outline);
+    unsafe { print_detailed_outline(outline) };
 }
 
 #[unsafe(no_mangle)]
@@ -109,7 +116,7 @@ pub unsafe extern "C" fn stucanvas_free_string(err_str: *mut c_char) {
     if err_str.is_null() {
         return;
     }
-    let _ = CString::from_raw(err_str);
+    let _ = unsafe { CString::from_raw(err_str) };
 }
 
 #[unsafe(no_mangle)]
@@ -118,45 +125,52 @@ pub unsafe extern "C" fn stucanvas_free_outline(outline: *mut Outline) {
         return;
     }
 
-    let out_box = Box::from_raw(outline);
-    let geometries = out_box.geometries.to_vec();
-    let instances = out_box.instances.to_vec();
+    // 💡 针对 Rust 2024 规范：使用显式安全作用域包裹 FFI 裸指针和内存回收操作，零警告编译 [1]
+    let out_box = unsafe { Box::from_raw(outline) };
+    let geometries = unsafe { out_box.geometries.into_vec() };
+    let instances = unsafe { out_box.instances.into_vec() };
 
     for shared_geom in geometries {
-        free_geometry_resources(shared_geom.geometry);
+        unsafe { free_geometry_resources(shared_geom.geometry) };
     }
 
     for instance in instances {
-        free_paint_resources(instance.fill_paint);
-        free_paint_resources(instance.stroke_paint);
-        instance.dash_array.to_vec();
+        unsafe {
+            free_paint_resources(instance.fill_paint);
+            free_paint_resources(instance.stroke_paint);
+
+            // 释放可能分配的虚线 Dash 堆内存 [1]
+            let _ = instance.dash_array.into_vec();
+        }
     }
 }
+
 
 unsafe fn free_geometry_resources(geometry: Geometry) {
     match geometry.ty {
         GeometryType::Path => {
-            let path_geom = std::mem::ManuallyDrop::into_inner(geometry.data.path);
-            path_geom.points.to_vec();
-            path_geom.verbs.to_vec();
+            let path_geom = unsafe { std::mem::ManuallyDrop::into_inner(geometry.data.path) };
+            // points 和 verbs 拥有外部堆物理指针，必须手动回收 [15.1]
+            let _ = unsafe { path_geom.points.into_vec() };
+            let _ = unsafe { path_geom.verbs.into_vec() };
         }
-        GeometryType::Polygon => {
-            let poly_geom = std::mem::ManuallyDrop::into_inner(geometry.data.polygon);
-            poly_geom.vertices.to_vec();
-        }
-        _ => {}
+        // 💡 显式标明 Line 和 Rect 是平铺内存，无任何外部堆分配，自动伴随释放
+        GeometryType::Line => {}
+        GeometryType::Rect => {}
     }
 }
 
 unsafe fn free_paint_resources(paint: Paint) {
     match paint.ty {
         PaintType::Gradient => {
-            paint.gradient.stops.to_vec();
+            // 💡 【物理泄露修复】：回收 Gradient 底层 stops 拥有的堆内存 [1]
+            let _ = unsafe { paint.gradient.stops.into_vec() };
         }
         PaintType::Tiling => {
             let tiling = paint.tiling;
             if !tiling.pattern.is_null() {
-                stucanvas_free_outline(tiling.pattern);
+                // 深度递归销毁 Tiling 嵌套，彻底根除物理内存溢出风险 [1]
+                unsafe { stucanvas_free_outline(tiling.pattern) };
             }
         }
         _ => {}

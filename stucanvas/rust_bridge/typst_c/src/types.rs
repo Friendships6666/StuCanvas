@@ -1,5 +1,16 @@
-// src/types.rs
+/***************************************************************************
+* Copyright (c) 2026 Tian Yuxuan (Friendships666)                          *
+*                                                                          *
+* Distributed under the terms of the MIT License.                          *
+*                                                                          *
+* The full license is in the file LICENSE, distributed with this software. *
+***************************************************************************/
+
 use std::mem::ManuallyDrop;
+
+// =====================================================================
+// 1. 跨语言 FFI 专用矢量容器 (CVec) 及其生命周期控制
+// =====================================================================
 
 #[repr(C)]
 pub struct CVec<T> {
@@ -9,13 +20,26 @@ pub struct CVec<T> {
 }
 
 impl<T> CVec<T> {
+    /// 构造一个物理内存安全的空 FFI 向量
+    #[inline]
+    pub fn empty() -> Self {
+        Self {
+            ptr: std::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        }
+    }
+
+    /// 从 Rust 的原生 Vec 封存并转移所有权至 FFI 容器
     pub fn from_vec(mut v: Vec<T>) -> Self {
         let ptr = v.as_mut_ptr();
         let len = v.len();
         let cap = v.capacity();
-        std::mem::forget(v);
+        std::mem::forget(v); // 阻止 Rust 自动释放堆内存
         Self { ptr, len, cap }
     }
+
+    /// 转换为只读切片视图
     pub unsafe fn as_slice(&self) -> &[T] {
         if self.ptr.is_null() || self.len == 0 {
             &[]
@@ -24,7 +48,8 @@ impl<T> CVec<T> {
         }
     }
 
-    pub unsafe fn to_vec(self) -> Vec<T> {
+    /// 💡 【新增】：将 CVec 物理内存无损恢复为 Rust 的 Vec 并收回堆控制权（用于安全释放）
+    pub unsafe fn into_vec(self) -> Vec<T> {
         if self.ptr.is_null() {
             Vec::new()
         } else {
@@ -32,6 +57,10 @@ impl<T> CVec<T> {
         }
     }
 }
+
+// =====================================================================
+// 2. 基础数学与颜色结构体 (FFI 对齐)
+// =====================================================================
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -49,7 +78,7 @@ pub struct RGBA {
     pub a: f32,
 }
 
-// 【重构】：改为纯粹的列主序布局（Column-Major）
+/// 列主序 2D 仿射变换矩阵（与 Eigen / GPU Shader 完美 1-to-1 物理对齐）
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct Transform2D {
@@ -58,14 +87,17 @@ pub struct Transform2D {
     pub tx: f64, pub ty: f64, // 第三列 (Column 2)
 }
 
+// =====================================================================
+// 3. FFI 强类型枚举 (强制 u8 占用 1 字节，完美对应 C++ 的 enum class : uint8_t)
+// =====================================================================
+
 #[repr(u8)]
 #[derive(Debug, Copy, Clone)]
 pub enum PathVerb {
     MoveTo = 0,
     LineTo = 1,
-    QuadTo = 2,
-    CubicTo = 3,
-    Close = 4
+    CubicTo = 2, // 已剔除无用的 QuadTo 分支，紧凑对齐
+    Close = 3,
 }
 
 #[repr(u8)]
@@ -124,6 +156,10 @@ pub enum PaintType {
     Tiling = 3,
 }
 
+// =====================================================================
+// 4. 画笔与材质数据结构
+// =====================================================================
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GradientStop {
@@ -160,21 +196,22 @@ pub struct Paint {
     pub tiling: TilingPaint,
 }
 
+// =====================================================================
+// 5. 多态几何体数据结构（已彻底精简冗余几何体）
+// =====================================================================
+
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum GeometryType {
     Path = 0,
     Line = 1,
     Rect = 2,
-    Circle = 3,
-    Ellipse = 4,
-    Polygon = 5,
 }
 
 #[repr(C)]
 pub struct PathGeometry {
     pub points: CVec<Point2D>,
-    pub verbs: CVec<PathVerb>
+    pub verbs: CVec<PathVerb>,
 }
 
 #[repr(C)]
@@ -190,30 +227,7 @@ pub struct RectGeometry {
     pub origin: Point2D,
     pub width: f64,
     pub height: f64,
-    pub radius_top_left: f64,
-    pub radius_top_right: f64,
-    pub radius_bottom_right: f64,
-    pub radius_bottom_left: f64,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct CircleGeometry {
-    pub center: Point2D,
-    pub radius: f64,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct EllipseGeometry {
-    pub center: Point2D,
-    pub rx: f64,
-    pub ry: f64,
-}
-
-#[repr(C)]
-pub struct PolygonGeometry {
-    pub vertices: CVec<Point2D>,
+    // 💡 属性瘦身：移除了 radius_* 圆角参数（圆角矩形已被自动降级并表示为 Path 几何体）
 }
 
 #[repr(C)]
@@ -221,9 +235,6 @@ pub union GeometryUnion {
     pub path: ManuallyDrop<PathGeometry>,
     pub line: LineGeometry,
     pub rect: RectGeometry,
-    pub circle: CircleGeometry,
-    pub ellipse: EllipseGeometry,
-    pub polygon: ManuallyDrop<PolygonGeometry>,
 }
 
 #[repr(C)]
@@ -232,18 +243,20 @@ pub struct Geometry {
     pub data: GeometryUnion,
 }
 
-// 【新增】：共享几何体（极其适合直接绑定为 Vulkan 的 Vertex Buffer 单元）
+// =====================================================================
+// 6. 共享缓冲与实例化绘制结构（Vulkan 极其友好型）
+// =====================================================================
+
 #[repr(C)]
 pub struct SharedGeometry {
     pub geometry_id: u32,
     pub geometry: Geometry,
 }
 
-// 【新增】：实例化渲染指令（极其适合直接绑定为 Vulkan 的 Instance Buffer / SSBO 元素）
 #[repr(C)]
 pub struct DrawInstance {
-    pub geometry_id: u32,       // 映射到上面的 SharedGeometry ID
-    pub transform: Transform2D,  // 独立的空间仿射变换矩阵
+    pub geometry_id: u32,
+    pub transform: Transform2D,
     pub opacity: f64,
     pub clip: bool,
 
@@ -259,7 +272,6 @@ pub struct DrawInstance {
     pub dash_offset: f64,
 }
 
-// 【重构】：Outline 不再包含膨胀的线圈，而是包含“去重几何体池”和“实例化指令链”
 #[repr(C)]
 pub struct Outline {
     pub geometries: CVec<SharedGeometry>,
