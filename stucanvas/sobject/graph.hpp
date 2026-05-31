@@ -108,6 +108,41 @@ namespace StuCanvas
             return node;
         }
 
+
+
+        const SObject<T>* createFreePoint3D(T x, T y,T z, std::string_view name = "FreePoint3D")
+        {
+            SObject<T>* node = AllocateModel(NodeType::POINT_2D_FREE, name);
+            node->data.point_3d.x = x;
+            node->data.point_3d.y = y;
+            node->data.point_3d.z = z;
+            node->vptr = &Point3DFree_VTable<T>;
+            return node;
+        }
+
+
+
+
+        const SObject<T>* createSegment2D(const SObject<T>* p1, const SObject<T>* p2,
+                                          std::string_view name = "Segment2D")
+        {
+            SObject<T>* node = AllocateModel(NodeType::LINE_2D_SEGMENT, name);
+            node->parents.push_back(p1);
+            node->parents.push_back(p2);
+            node->vptr = &Line2DSegment_VTable<T>;
+
+            // 建立双向拓扑依赖
+            const_cast<SObject<T>*>(p1)->children.push_back(node);
+            const_cast<SObject<T>*>(p2)->children.push_back(node);
+
+            return node;
+        }
+
+        /**
+         * @brief 在图谱中创建一个 2D 几何直线 (Straight Line)
+         * @param p1 直线上第一个点
+         * @param p2 直线上第二个点
+         */
         const SObject<T>* createStraightLine2D(const SObject<T>* p1, const SObject<T>* p2,
                                                std::string_view name = "StraightLine2D")
         {
@@ -116,10 +151,94 @@ namespace StuCanvas
             node->parents.push_back(p2);
             node->vptr = &Line2DStraight_VTable<T>;
 
-            // 双向依存连线
+            // 建立双向拓扑依赖
             const_cast<SObject<T>*>(p1)->children.push_back(node);
             const_cast<SObject<T>*>(p2)->children.push_back(node);
 
+            return node;
+        }
+
+        /**
+         * @brief 在图谱中创建一个 2D 几何射线 (Ray)
+         * @param p1 射线的起点 (发射源)
+         * @param p2 确定射线发射方向的第二个点
+         */
+        const SObject<T>* createRay2D(const SObject<T>* p1, const SObject<T>* p2,
+                                      std::string_view name = "Ray2D")
+        {
+            SObject<T>* node = AllocateModel(NodeType::LINE_2D_RAY, name);
+            node->parents.push_back(p1);
+            node->parents.push_back(p2);
+            node->vptr = &Line2DRay_VTable<T>;
+
+            // 建立双向拓扑依赖
+            const_cast<SObject<T>*>(p1)->children.push_back(node);
+            const_cast<SObject<T>*>(p2)->children.push_back(node);
+
+            return node;
+        }
+
+
+        // ========================================================================
+        // 3D 空间线元创建接口 (线段、直线、射线)
+        // ========================================================================
+
+        /**
+         * @brief 在图谱中创建一个 3D 几何线段 (Segment)
+         * @param p1 起始端点
+         * @param p2 终止端点
+         */
+        const SObject<T>* createSegment3D(const SObject<T>* p1, const SObject<T>* p2,
+                                          std::string_view name = "Segment3D")
+        {
+            SObject<T>* node = AllocateModel(NodeType::LINE_3D_SEGMENT, name);
+            node->parents.push_back(p1);
+            node->parents.push_back(p2);
+            node->vptr = &Line3DSegment_VTable<T>;
+
+            // 建立双向拓扑依赖
+            const_cast<SObject<T>*>(p1)->children.push_back(node);
+            const_cast<SObject<T>*>(p2)->children.push_back(node);
+
+            return node;
+        }
+
+        /**
+         * @brief 在图谱中创建一个 3D 几何直线 (Straight Line)
+         * @param p1 直线上第一个点
+         * @param p2 直线上第二个点
+         */
+        const SObject<T>* createStraightLine3D(const SObject<T>* p1, const SObject<T>* p2,
+                                               std::string_view name = "StraightLine3D")
+        {
+            SObject<T>* node = AllocateModel(NodeType::LINE_3D_STRAIGHT, name);
+            node->parents.push_back(p1);
+            node->parents.push_back(p2);
+            node->vptr = &Line3DStraight_VTable<T>;
+
+            // 建立双向拓扑依赖
+            const_cast<SObject<T>*>(p1)->children.push_back(node);
+            const_cast<SObject<T>*>(p2)->children.push_back(node);
+
+            return node;
+        }
+
+        /**
+         * @brief 在图谱中创建一个 3D 几何射线 (Ray)
+         * @param p1 射线的起点 (发射源)
+         * @param p2 确定射线发射方向的第二个点
+         */
+        const SObject<T>* createRay3D(const SObject<T>* p1, const SObject<T>* p2,
+                                      std::string_view name = "Ray3D")
+        {
+            SObject<T>* node = AllocateModel(NodeType::LINE_3D_RAY, name);
+            node->parents.push_back(p1);
+            node->parents.push_back(p2);
+            node->vptr = &Line3DRay_VTable<T>;
+
+            // 建立双向拓扑依赖
+            const_cast<SObject<T>*>(p1)->children.push_back(node);
+            const_cast<SObject<T>*>(p2)->children.push_back(node);
 
             return node;
         }
@@ -149,6 +268,44 @@ namespace StuCanvas
 
             return node;
         }
+
+
+        // --- stucanvas/object/graph.hpp 内部追加 ---
+
+        /**
+         * @brief 在图谱中创建一个 2D 几何中点
+         * @param p1 父节点 2D 点 1
+         * @param p2 父节点 2D 点 2
+         */
+        const SObject<T>* createMidPoint2D(const SObject<T>* p1, const SObject<T>* p2, std::string_view name = "MidPoint2D") {
+            SObject<T>* node = AllocateModel(NodeType::POINT_2D_MID, name);
+            node->parents.push_back(p1);
+            node->parents.push_back(p2);
+            node->vptr = &Point2DMid_VTable<T>;
+
+            // 建立双向拓扑依赖
+            const_cast<SObject<T>*>(p1)->children.push_back(node);
+            const_cast<SObject<T>*>(p2)->children.push_back(node);
+            return node;
+        }
+
+        /**
+         * @brief 在图谱中创建一个 3D 几何中点
+         * @param p1 父节点 3D 点 1
+         * @param p2 父节点 3D 点 2
+         */
+        const SObject<T>* createMidPoint3D(const SObject<T>* p1, const SObject<T>* p2, std::string_view name = "MidPoint3D") {
+            SObject<T>* node = AllocateModel(NodeType::POINT_3D_MID, name);
+            node->parents.push_back(p1);
+            node->parents.push_back(p2);
+            node->vptr = &Point3DMid_VTable<T>;
+
+            // 建立双向拓扑依赖
+            const_cast<SObject<T>*>(p1)->children.push_back(node);
+            const_cast<SObject<T>*>(p2)->children.push_back(node);
+            return node;
+        }
+
 
         void modifyPoint(const SObject<T>* model_ptr, T new_x, T new_y)
         {

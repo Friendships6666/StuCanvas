@@ -11,7 +11,7 @@ namespace StuCanvas
 
         struct
         {
-            T x, y ,z;
+            T x, y, z;
         } point_3d;
 
 
@@ -19,6 +19,11 @@ namespace StuCanvas
         {
             T x0, y0, x1, y1;
         } line_2d;
+
+        struct
+        {
+            T x0, y0, z0, x1, y1, z1;
+        } line_3d;
 
         struct
         {

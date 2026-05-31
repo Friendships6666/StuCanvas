@@ -13,22 +13,55 @@
 
 namespace StuCanvas
 {
-    /**
-     * @brief 2D 自由直线的代数解算器
-     * @note 拓扑排序算法已经完全保证了父节点（端点 P0, P1）在此函数运行前，
-     *       其代数状态（point_2d）已经更新为最新值。因此直接读取极为安全、高效！
-     */
     template <typename T>
-    void SolveLine2DStraight(SObjectGraph<T>& graph, SObject<T>& self) noexcept
-    {
+    inline void InternalSolveLinear2D(SObject<T>& self) noexcept {
         const SObject<T>* p0 = self.parents[0];
         const SObject<T>* p1 = self.parents[1];
 
+        // 极速寄存器搬运：2D -> 2D
         self.data.line_2d.x0 = p0->data.point_2d.x;
         self.data.line_2d.y0 = p0->data.point_2d.y;
         self.data.line_2d.x1 = p1->data.point_2d.x;
         self.data.line_2d.y1 = p1->data.point_2d.y;
     }
+
+    template <typename T>
+    inline void InternalSolveLinear3D(SObject<T>& self) noexcept {
+        const SObject<T>* p0 = self.parents[0];
+        const SObject<T>* p1 = self.parents[1];
+
+        // 极速寄存器搬运：3D -> 3D
+        self.data.line_3d.x0 = p0->data.point_3d.x;
+        self.data.line_3d.y0 = p0->data.point_3d.y;
+        self.data.line_3d.z0 = p0->data.point_3d.z;
+        self.data.line_3d.x1 = p1->data.point_3d.x;
+        self.data.line_3d.y1 = p1->data.point_3d.y;
+        self.data.line_3d.z1 = p1->data.point_3d.z;
+    }
+
+    // ========================================================================
+    // 💡 6 个公开解算器实现 (100% 代码复用)
+    // ========================================================================
+
+    // --- 2D 系列 ---
+    template <typename T>
+    void SolveLine2DStraight(SObjectGraph<T>&, SObject<T>& self) noexcept { InternalSolveLinear2D(self); }
+
+    template <typename T>
+    void SolveLine2DRay(SObjectGraph<T>&, SObject<T>& self) noexcept { InternalSolveLinear2D(self); }
+
+    template <typename T>
+    void SolveLine2DSegment(SObjectGraph<T>&, SObject<T>& self) noexcept { InternalSolveLinear2D(self); }
+
+    // --- 3D 系列 ---
+    template <typename T>
+    void SolveLine3DStraight(SObjectGraph<T>&, SObject<T>& self) noexcept { InternalSolveLinear3D(self); }
+
+    template <typename T>
+    void SolveLine3DRay(SObjectGraph<T>&, SObject<T>& self) noexcept { InternalSolveLinear3D(self); }
+
+    template <typename T>
+    void SolveLine3DSegment(SObjectGraph<T>&, SObject<T>& self) noexcept { InternalSolveLinear3D(self); }
 
 
     template <typename T>
@@ -74,4 +107,31 @@ namespace StuCanvas
         self.data.plane_3d.c = c;
         self.data.plane_3d.d = d;
     }
+
+    template <typename T>
+    void SolvePoint2DMid(SObjectGraph<T>& graph, SObject<T>& self) noexcept {
+        // 直接拉取两个父节点指针，不执行任何 null 检查，达到寄存器级运行效率
+        const SObject<T>* p0 = self.parents[0];
+        const SObject<T>* p1 = self.parents[1];
+
+        // 2D 中点计算：x_mid = (x0 + x1) * 0.5
+        self.data.point_2d.x = (p0->data.point_2d.x + p1->data.point_2d.x) * static_cast<T>(0.5);
+        self.data.point_2d.y = (p0->data.point_2d.y + p1->data.point_2d.y) * static_cast<T>(0.5);
+    }
+
+    /**
+     * @brief 3D 几何中点极致解算器
+     * @note 0 安全检查，纯浮点乘加（FMA）机器指令。
+     */
+    template <typename T>
+    void SolvePoint3DMid(SObjectGraph<T>& graph, SObject<T>& self) noexcept {
+        const SObject<T>* p0 = self.parents[0];
+        const SObject<T>* p1 = self.parents[1];
+
+        // 3D 中点计算：x_mid = (x0 + x1) * 0.5
+        self.data.point_3d.x = (p0->data.point_3d.x + p1->data.point_3d.x) * static_cast<T>(0.5);
+        self.data.point_3d.y = (p0->data.point_3d.y + p1->data.point_3d.y) * static_cast<T>(0.5);
+        self.data.point_3d.z = (p0->data.point_3d.z + p1->data.point_3d.z) * static_cast<T>(0.5);
+    }
+
 } // namespace StuCanvas

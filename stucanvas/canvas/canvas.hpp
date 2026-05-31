@@ -31,8 +31,6 @@
 #include "eigen3/Eigen/Dense"
 namespace StuCanvas
 {
-
-
     namespace Vulkan
     {
 
@@ -184,6 +182,7 @@ namespace StuCanvas
             }
         }
     };
+
 
     enum class ProjectionMode : uint32_t
     {

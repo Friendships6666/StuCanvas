@@ -193,6 +193,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/types/cpu/cpu_types.hpp
         stucanvas/sobject/sobject_data.hpp
         stucanvas/sobject/solver.hpp
+        stucanvas/sobject/discretizer_points.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
