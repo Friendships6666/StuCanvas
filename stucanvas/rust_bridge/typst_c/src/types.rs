@@ -65,6 +65,7 @@ pub enum PathVerb {
     LineTo = 1,
     QuadTo = 2,
     CubicTo = 3,
+    Close = 4
 }
 
 #[repr(u8)]
@@ -173,8 +174,7 @@ pub enum GeometryType {
 #[repr(C)]
 pub struct PathGeometry {
     pub points: CVec<Point2D>,
-    pub verbs: CVec<PathVerb>,
-    pub closed: bool,
+    pub verbs: CVec<PathVerb>
 }
 
 #[repr(C)]

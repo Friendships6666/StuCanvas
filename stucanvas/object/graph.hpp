@@ -14,7 +14,7 @@
 #include <thread>
 #include <mutex>
 #include <tbb/parallel_for.h> // 引入 Intel oneTBB 并行库
-#include <../utils/flat_map.hpp>
+#include <flat_map.hpp>
 #include "object.hpp" // Object 对象从独立文件 object.hpp 引入
 
 namespace StuCanvas {

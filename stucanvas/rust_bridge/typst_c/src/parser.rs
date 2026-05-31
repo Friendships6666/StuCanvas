@@ -164,13 +164,16 @@ pub fn extract_frame_to_ffi(
                                     pts.push(Point2D { x: p3.x.to_pt(), y: p3.y.to_pt() });
                                     vbs.push(PathVerb::CubicTo);
                                 }
-                                CurveItem::Close => {}
+                                CurveItem::Close => {
+                                    // 💡 【修正】：将闭合作为一个独立的 Verb 压入队列
+                                    vbs.push(PathVerb::Close);
+                                    // 物理特性：Close 动作不需要消耗 Point2D 坐标点 [1]
+                                }
                             }
                         }
                         geom.data.path = ManuallyDrop::new(PathGeometry {
                             points: CVec::from_vec(pts),
                             verbs: CVec::from_vec(vbs),
-                            closed: curve.0.iter().any(|item| matches!(item, CurveItem::Close)),
                         });
                     }
                 }
@@ -244,8 +247,7 @@ pub fn extract_frame_to_ffi(
                         if let Some(c) = builder.current_contour.take() {
                             builder.contours.push(c);
                         }
-
-                        // 【核心设计】：将字形可能存在的多个孤立线圈（如字母 i 的点与身子）完全合并为一个单 Path 几何体
+                        
                         let mut merged_points = Vec::new();
                         let mut merged_verbs = Vec::new();
                         let mut closed = false;
@@ -263,7 +265,6 @@ pub fn extract_frame_to_ffi(
                                 path: ManuallyDrop::new(PathGeometry {
                                     points: CVec::from_vec(merged_points),
                                     verbs: CVec::from_vec(merged_verbs),
-                                    closed,
                                 })
                             }
                         };
@@ -351,7 +352,6 @@ pub fn extract_frame_to_ffi(
                             path: ManuallyDrop::new(PathGeometry {
                                 points: CVec::from_vec(pts),
                                 verbs: CVec::from_vec(vbs),
-                                closed: true,
                             })
                         }
                     };

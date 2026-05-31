@@ -5,7 +5,6 @@
 #include <algorithm>
 #include "../types/point.hpp"         // 保持原始 Point3D, Point2D 无 UV 格式
 #include "../types/segment_strip.hpp"  // 包含 SegmentStrip3D
-#include "../types/mesh.hpp"           // 包含 RGBA
 #include "../utils/block_deque.hpp"
 #include "types.hpp"
 namespace StuCanvas {
@@ -63,10 +62,6 @@ namespace StuCanvas {
             struct { T a, b, c, d; } plane_3d;
             struct {T v0,v1,v2,v3,v4,v5,v6,v7;} test;
         } data;
-
-        // 纯几何拓扑输出
-        std::vector<Point3D<T>>        result_points_3d;
-        std::vector<SegmentStrip3D<T>> result_strips;
 
         const ObjectVTable<T>* vptr = nullptr;
         ObjectGraph<T>* graph = nullptr; // 反向指针

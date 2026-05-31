@@ -28,10 +28,9 @@
 #include "../canvas/vulkan/compute_pipeline.hpp"
 #include "../canvas/vulkan/nvenc_cuda_encoder.hpp"
 #include "../canvas/vulkan/config.hpp"
-#include "../external/nvidia/cuviddec.h"
-#include "../external/nvidia/nvcuvid.h"
-#include "../external/nvidia/nvEncodeAPI.h"
-
+#include "external/nvidia/cuviddec.h"
+#include "external/nvidia/nvcuvid.h"
+#include "nvidia/cuda.h"
 namespace StuCanvas
 {
 

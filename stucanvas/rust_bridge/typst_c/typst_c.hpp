@@ -22,7 +22,7 @@ struct Outline;
 
 /// FFI 安全的动态数组容器 (与 Rust 的 CVec<T> 完全一致)
 template <typename T>
-struct CVec {
+struct CVector {
     T* ptr;           ///< 指向堆内存首地址的指针 [1]
     uint64_t len;     ///< 数组有效元素数量 [1]
     uint64_t cap;     ///< 数组的最大分配容量 [1]
@@ -62,7 +62,8 @@ enum class PathVerb : uint8_t {
     MoveTo = 0,
     LineTo = 1,
     QuadTo = 2,
-    CubicTo = 3
+    CubicTo = 3,
+    Close = 4
 };
 
 enum class FillRule : uint8_t {
@@ -133,7 +134,7 @@ struct GradientPaint {
     double angle;
     SpreadMethod spread;
     RelativeTo relative;
-    CVec<GradientStop> stops;
+    CVector<GradientStop> stops;
 };
 
 struct TilingPaint {
@@ -156,9 +157,8 @@ struct Paint {
 // =====================================================================
 
 struct PathGeometry {
-    CVec<Point2D> points;
-    CVec<PathVerb> verbs;
-    bool closed;
+    CVector<Point2D> points;
+    CVector<PathVerb> verbs;
 };
 
 struct LineGeometry {
@@ -188,7 +188,7 @@ struct EllipseGeometry {
 };
 
 struct PolygonGeometry {
-    CVec<Point2D> vertices;
+    CVector<Point2D> vertices;
 };
 
 /// 几何体内存合并联合体
@@ -227,13 +227,13 @@ struct DrawInstance {
     LineCap stroke_cap;
     LineJoin stroke_join;
     double miter_limit;
-    CVec<double> dash_array;
+    CVector<double> dash_array;
     double dash_offset;
 };
 
 struct Outline {
-    CVec<SharedGeometry> geometries; ///< 共享几何池 [3.2.1]
-    CVec<DrawInstance> instances;   ///< 实例化绘制指令队列 [3.2.1]
+    CVector<SharedGeometry> geometries; ///< 共享几何池 [3.2.1]
+    CVector<DrawInstance> instances;   ///< 实例化绘制指令队列 [3.2.1]
 };
 
 /// FFI 裸复合返回体 [1.2.2]
@@ -346,7 +346,7 @@ inline Result compile(const char* markup_str, const char* fonts_dir) {
 static_assert(sizeof(Point2D) == 16, "Mismatched size of Point2D");
 static_assert(sizeof(RGBA) == 16, "Mismatched size of RGBA");
 static_assert(sizeof(Transform2D) == 48, "Mismatched size of Transform2D");
-static_assert(sizeof(CVec<double>) == 24, "Mismatched size of CVec");
+static_assert(sizeof(CVector<double>) == 24, "Mismatched size of CVec");
 static_assert(sizeof(SharedGeometry) >= 48, "SharedGeometry alignment failure");
 static_assert(sizeof(CompileResult) == 16, "Mismatched size of CompileResult");
 #endif

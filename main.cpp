@@ -2,9 +2,8 @@
 * Copyright (c) 2026 Multilingual Vector & Printer Test                    *
 ***************************************************************************/
 
-#include "stucanvas/rust_bridge/typst_c/typst_c.hpp"
+#include "typst_c.hpp"
 #include <iostream>
-
 // 多语言测试模板：包含中、韩、阿（从右往左连写）三种复杂的矢量文本
 static const char* MULTILINGUAL_TEMPLATE = R"(
 #set page(width: 250pt, height: 140pt, fill: none, margin: 10pt)
