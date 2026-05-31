@@ -136,6 +136,7 @@ namespace StuCanvas {
     };
 
     // ---- 物理存在的解算与离散化模板函数前向声明 ----
+    template <typename T> void SolveLine2DStraight(SObjectGraph<T>&, SObject<T>&);
 
     // ---- 自动拼装完毕的 C++17 内联全局虚表定义 (声明与定义合一) ----
     template <typename T>
@@ -194,7 +195,7 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Line2DStraight_VTable = {
-        .solver = nullptr,
+        .solver = &SolveLine2DStraight<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
