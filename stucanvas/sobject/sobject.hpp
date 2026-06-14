@@ -158,7 +158,6 @@ namespace StuCanvas
             }
         }
 
-        // 💡 安全解耦：从当前的拓扑网路中彻底蒸发自己，不留任何悬空指针
         void disconnect_self() noexcept
         {
             for (size_t i = 0; i < parents.size(); ++i)
