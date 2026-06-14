@@ -123,7 +123,6 @@ namespace StuCanvas
         [[nodiscard]] bool has_mask(NodeMask m) const noexcept { return (mask & static_cast<uint64_t>(m)) != 0; }
 
     private:
-        // 💡 物理指针打补丁：让所有与旧地址相连的节点，无缝指向新地址
         void patch_connections(SObject* old_addr, SObject* new_addr) noexcept
         {
             // 让所有父节点中指向 old_addr 的子指针，全部改写为指向 new_addr

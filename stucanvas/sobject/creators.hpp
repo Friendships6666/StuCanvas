@@ -5,15 +5,18 @@
 namespace StuCanvas
 {
      template <typename T>
-    SObject<T>* SObjectGraph<T>::AllocateModel(NodeType type, std::string_view name)
+    SObject<T>* SObjectGraph<T>::AllocateModel(NodeType type, std::string_view name,bool is_dirty)
     {
         auto& node = node_pool.emplace_back();
         node.type = type;
         node.name = name;
         node.graph = this;
 
-        node.set_mask(NodeMask::DIRTY);
-        dirty_list.push_back(&node);
+        if (is_dirty)
+        {
+            node.set_mask(NodeMask::DIRTY);
+            dirty_list.push_back(&node);
+        }
 
         topology_changed = true;
         return &node;
@@ -187,20 +190,16 @@ namespace StuCanvas
     }
 
 
-
     template <typename T>
-    const SObject<T>* SObjectGraph<T>::createScalar(T value, std::string_view name)
+    /**
+             * @brief 创建一个纯代数标量节点 (无父节点，仅作为计算源)
+             * @param value 初始标量值
+             * @param info C++20 引导参数包 (仅支持改名)
+             */
+            const SObject<T>* SObjectGraph<T>::createScalar(T value,std::string_view name)
      {
          // 物理分配（node_pool 分配会将节点默认置脏，从而加入脏列表进行首帧解算）
-         auto& node = node_pool.emplace_back();
-         node.type = NodeType::SCALAR;
-         node.name = name;
-         node.graph = this;
-
-         node.set_mask(NodeMask::DIRTY);
-         dirty_list.push_back(&node);
-
-         topology_changed = true;
+         SObject<T>* node = AllocateModel(NodeType::SCALAR, name,false);
          node->data.scalar.value = value;
 
          // 标量无父节点，因此 node->parents 保持默认空

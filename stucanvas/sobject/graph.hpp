@@ -70,7 +70,7 @@ namespace StuCanvas
         }
 
 
-        SObject<T>* AllocateModel(NodeType type, std::string_view name);
+        SObject<T>* AllocateModel(NodeType type, std::string_view name,bool is_dirty = true);
 
         // ─── 1. 含有数值参数的创建函数（采用 C++20 可选参数包） ───
 
