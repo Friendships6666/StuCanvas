@@ -6,11 +6,13 @@
 #include <algorithm>
 #include <thread>
 #include <mutex>
+#include <limits>
 #include <tbb/parallel_for.h>
 #include "../utils/flat_map.hpp"
 #include "sobject.hpp"
 #include "../types/cpu/cpu_types.hpp"
-
+#include "eigen3/Eigen/Dense"
+#include "instance.hpp"
 namespace StuCanvas
 {
     // ========================================================================
@@ -18,13 +20,15 @@ namespace StuCanvas
     // ========================================================================
 
     template <typename T>
-    struct Point2DCreateInfo {
+    struct Point2DCreateInfo
+    {
         std::string_view name = "FreePoint2D";
         std::vector<const SObject<T>*> parents = {};
     };
 
     template <typename T>
-    struct Point3DCreateInfo {
+    struct Point3DCreateInfo
+    {
         std::string_view name = "FreePoint3D";
         std::vector<const SObject<T>*> parents = {};
     };
@@ -35,10 +39,43 @@ namespace StuCanvas
     // ========================================================================
     // 核心对象图谱 (SObjectGraph) —— 100% 稀疏级 O(M) 推送计算图
     // ========================================================================
+    enum class AlignBoundary : uint8_t { Min, Center, Max };
+
+
+
     template <typename T>
     struct SObjectGraph
     {
         using value_type = T;
+
+
+        utils::BlockDeque<SObjectFamily<T>, 64> family_pool;
+
+
+        // 接口：创建一个高能几何家族，返回只读指针
+        const SObjectFamily<T>* createFamily(const SObject<T>* start_node)
+        {
+            // 在大池中原位构造家族，自动运行 getFamily 爬取并装配成员
+            auto& fam = family_pool.emplace_back(*this, start_node);
+            return &fam;
+        }
+
+
+        // 1. 将实例池升级为 BlockDeque，保证物理地址一生不变！
+        utils::BlockDeque<SObjectInstance<T>, 256> instances;
+
+        // 2. 接口修改：返回不可变的只读实例指针 [3.2.1]
+        const SObjectInstance<T>* createInstance(const SObjectFamily<T>* family)
+        {
+            // 在内存池中原位构造
+            auto& inst = instances.emplace_back();
+            inst.source_family = family;
+            inst.BakeMatrix();
+
+            return &inst; // 极速返回物理地址！
+        }
+
+
 
         utils::FlatMap<const SObject<T>*, Outline> fonts_2d;
         utils::FlatMap<const SObject<T>*, Point2D_CPU<T>> points_2d;
@@ -62,7 +99,6 @@ namespace StuCanvas
         bool topology_changed = true;
 
 
-
         // 物理寻址安全：辅助函数，获取节点在大池中的物理下标
         size_t GetNodeIndex(const SObject<T>* node) const noexcept
         {
@@ -70,7 +106,7 @@ namespace StuCanvas
         }
 
 
-        SObject<T>* AllocateModel(NodeType type, std::string_view name,bool is_dirty = true);
+        SObject<T>* AllocateModel(NodeType type, std::string_view name, bool is_dirty = true);
 
         // ─── 1. 含有数值参数的创建函数（采用 C++20 可选参数包） ───
 
@@ -101,9 +137,11 @@ namespace StuCanvas
         const SObject<T>* createPlane3D(const SObject<T>* p1, const SObject<T>* p2, const SObject<T>* p3,
                                         std::string_view name = "Plane3D");
 
-        const SObject<T>* createMidPoint2D(const SObject<T>* p1, const SObject<T>* p2, std::string_view name = "MidPoint2D");
+        const SObject<T>* createMidPoint2D(const SObject<T>* p1, const SObject<T>* p2,
+                                           std::string_view name = "MidPoint2D");
 
-        const SObject<T>* createMidPoint3D(const SObject<T>* p1, const SObject<T>* p2, std::string_view name = "MidPoint3D");
+        const SObject<T>* createMidPoint3D(const SObject<T>* p1, const SObject<T>* p2,
+                                           std::string_view name = "MidPoint3D");
         const SObject<T>* createScalar(T value, std::string_view name = "Scalar");
 
         // ─── 3. 修改函数与拓扑关系动态重组 ───
@@ -133,11 +171,16 @@ namespace StuCanvas
             if (topology_changed)
             {
                 CompileLeveledOrder();
+                for (size_t i = 0; i < family_pool.size(); ++i)
+                {
+                    family_pool[i].refresh(); // 自动重新爬取拓扑网络，补齐成员
+                }
                 topology_changed = false;
             }
 
             // 3. 排序：利用外部侧边 SoA 数组进行局部脏节点的拓扑排序 (O(M log M))
-            std::sort(dirty_list.begin(), dirty_list.end(), [this](const SObject<T>* a, const SObject<T>* b) {
+            std::sort(dirty_list.begin(), dirty_list.end(), [this](const SObject<T>* a, const SObject<T>* b)
+            {
                 return topo_indices[GetNodeIndex(a)] < topo_indices[GetNodeIndex(b)];
             });
 
@@ -186,7 +229,6 @@ namespace StuCanvas
                 node->clear_mask(NodeMask::DIRTY);
             }
             dirty_list.clear();
-
         }
 
     private:
@@ -242,7 +284,7 @@ namespace StuCanvas
                 {
                     size_t curr_idx = GetNodeIndex(curr);
 
-                    topo_indices[curr_idx]  = static_cast<uint32_t>(global_topo_counter++);
+                    topo_indices[curr_idx] = static_cast<uint32_t>(global_topo_counter++);
                     level_indices[curr_idx] = static_cast<uint32_t>(current_level_idx);
 
                     for (auto* child : curr->children)
@@ -258,11 +300,64 @@ namespace StuCanvas
                 current_level_idx++;
             }
         }
+
+        std::vector<SObject<T>*> getFamily(const SObject<T>* start_node)
+        {
+            std::vector<SObject<T>*> family;
+
+            // 1. 预分配小空间，避免小规模图频繁触发 vector 内部扩容
+            family.reserve(32);
+
+            // 强转为非 const 指针，以便我们临时读写 VISITED 状态掩码
+            auto* start = const_cast<SObject<T>*>(start_node);
+
+            // 2. 声明一维工作队列（直接利用连续内存提升 Cache 命中率）
+            std::vector<SObject<T>*> queue;
+            queue.reserve(32);
+
+            // 将起点压入，并标记为已访问，防止回溯
+            queue.push_back(start);
+            start->set_mask(NodeMask::VISITED);
+
+            size_t head = 0;
+            while (head < queue.size())
+            {
+                SObject<T>* curr = queue[head];
+                head++;
+
+                // 归入家族列表
+                family.push_back(curr);
+
+                // ─── A. 向上追溯所有的父亲（双向依存搜寻） ───
+                for (size_t i = 0; i < curr->parents.size(); ++i)
+                {
+                    auto* parent = const_cast<SObject<T>*>(curr->parents[i]);
+                    if (parent && !parent->has_mask(NodeMask::VISITED))
+                    {
+                        parent->set_mask(NodeMask::VISITED);
+                        queue.push_back(parent); // 加入探索队列
+                    }
+                }
+
+                // ─── B. 向下追溯所有的孩子 ───
+                for (size_t i = 0; i < curr->children.size(); ++i)
+                {
+                    auto* child = const_cast<SObject<T>*>(curr->children[i]);
+                    if (child && !child->has_mask(NodeMask::VISITED))
+                    {
+                        child->set_mask(NodeMask::VISITED);
+                        queue.push_back(child); // 加入探索队列
+                    }
+                }
+            }
+
+            // 3. 【极速扫尾】：擦除这家人身上的所有临时 VISITED 标记，100% 恢复节点纯净状态
+            for (auto* node : family)
+            {
+                node->clear_mask(NodeMask::VISITED);
+            }
+
+            return family;
+        }
     };
-
-
-
-
-
-
 } // namespace StuCanvas

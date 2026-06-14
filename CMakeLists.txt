@@ -197,6 +197,8 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/creators.hpp
         stucanvas/sobject/modifiers.hpp
         stucanvas/sobject/getters.hpp
+        stucanvas/sobject/instance.hpp
+        stucanvas/sobject/family.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
