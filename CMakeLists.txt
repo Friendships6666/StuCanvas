@@ -194,6 +194,9 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/sobject_data.hpp
         stucanvas/sobject/solver.hpp
         stucanvas/sobject/discretizer_points.hpp
+        stucanvas/sobject/creators.hpp
+        stucanvas/sobject/modifiers.hpp
+        stucanvas/sobject/getters.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 

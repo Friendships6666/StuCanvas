@@ -119,10 +119,6 @@ namespace StuCanvas
         self.data.point_2d.y = (p0->data.point_2d.y + p1->data.point_2d.y) * static_cast<T>(0.5);
     }
 
-    /**
-     * @brief 3D 几何中点极致解算器
-     * @note 0 安全检查，纯浮点乘加（FMA）机器指令。
-     */
     template <typename T>
     void SolvePoint3DMid(SObjectGraph<T>& graph, SObject<T>& self) noexcept {
         const SObject<T>* p0 = self.parents[0];

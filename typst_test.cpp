@@ -17,7 +17,7 @@ int main() {
 
     // 1. 构建测试用的 Typst 排版标记文本
     // 包含：标准几何图形、多维变换矩阵、线性渐变、圆角容器、实例化字形以及嵌套 Group。
-    const char* typst_markup = R"(
+    const char *typst_markup = R"(
         #set page(width: 250pt, height: 250pt, margin: 15pt)
 
         // 1. 测试标准矩形
@@ -55,6 +55,16 @@ int main() {
         ]
     )";
 
+
+   struct test {
+      float a;
+      double b;
+      char c;
+   };
+   test Test;
+ 
+
+   std::cout << Test.a << std::endl;
     // 💡 提示：该路径必须指向包含 .ttf / .otf 字体文件的实际目录，以供 Typst 排版时加载字体。
     // 在 Linux 下通常可以指向 "/usr/share/fonts" 或本地项目的 "fonts" 文件夹。
     const char* fonts_directory = "fonts";
