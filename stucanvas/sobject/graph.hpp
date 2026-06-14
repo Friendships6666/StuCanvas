@@ -29,17 +29,8 @@ namespace StuCanvas
         std::vector<const SObject<T>*> parents = {};
     };
 
-    template <typename T>
-    struct ModifyPoint2DInfo {
-        std::string_view name = "";                  // 若为空，则保持原名不动
-        std::vector<const SObject<T>*> parents = {}; // 若非空，则动态更新父子拓扑关系
-    };
 
 
-    template <typename T>
-    struct ScalarCreateInfo {
-        std::string_view name = "Scalar";
-    };
 
     // ========================================================================
     // 核心对象图谱 (SObjectGraph) —— 100% 稀疏级 O(M) 推送计算图
@@ -113,6 +104,7 @@ namespace StuCanvas
         const SObject<T>* createMidPoint2D(const SObject<T>* p1, const SObject<T>* p2, std::string_view name = "MidPoint2D");
 
         const SObject<T>* createMidPoint3D(const SObject<T>* p1, const SObject<T>* p2, std::string_view name = "MidPoint3D");
+        const SObject<T>* createScalar(T value, std::string_view name = "Scalar");
 
         // ─── 3. 修改函数与拓扑关系动态重组 ───
 
