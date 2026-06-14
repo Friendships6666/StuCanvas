@@ -136,7 +136,15 @@ namespace StuCanvas {
     };
 
     // ---- 物理存在的解算与离散化模板函数前向声明 ----
+    template <typename T> void SolveLine2DRay(SObjectGraph<T>&, SObject<T>&);
+    template <typename T> void SolveLine2DSegment(SObjectGraph<T>&, SObject<T>&);
     template <typename T> void SolveLine2DStraight(SObjectGraph<T>&, SObject<T>&);
+    template <typename T> void SolveLine3DRay(SObjectGraph<T>&, SObject<T>&);
+    template <typename T> void SolveLine3DSegment(SObjectGraph<T>&, SObject<T>&);
+    template <typename T> void SolveLine3DStraight(SObjectGraph<T>&, SObject<T>&);
+    template <typename T> void SolvePlane3D(SObjectGraph<T>&, SObject<T>&);
+    template <typename T> void SolvePoint2DMid(SObjectGraph<T>&, SObject<T>&);
+    template <typename T> void SolvePoint3DMid(SObjectGraph<T>&, SObject<T>&);
 
     // ---- 自动拼装完毕的 C++17 内联全局虚表定义 (声明与定义合一) ----
     template <typename T>
@@ -150,7 +158,7 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Point2DMid_VTable = {
-        .solver = nullptr,
+        .solver = &SolvePoint2DMid<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
@@ -186,7 +194,7 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Line2DSegment_VTable = {
-        .solver = nullptr,
+        .solver = &SolveLine2DSegment<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
@@ -204,7 +212,7 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Line2DRay_VTable = {
-        .solver = nullptr,
+        .solver = &SolveLine2DRay<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
@@ -294,7 +302,7 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Point3DMid_VTable = {
-        .solver = nullptr,
+        .solver = &SolvePoint3DMid<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
@@ -330,7 +338,7 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Line3DSegment_VTable = {
-        .solver = nullptr,
+        .solver = &SolveLine3DSegment<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
@@ -339,7 +347,7 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Line3DStraight_VTable = {
-        .solver = nullptr,
+        .solver = &SolveLine3DStraight<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
@@ -348,7 +356,7 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Line3DRay_VTable = {
-        .solver = nullptr,
+        .solver = &SolveLine3DRay<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
@@ -375,7 +383,7 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Plane3D_VTable = {
-        .solver = nullptr,
+        .solver = &SolvePlane3D<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
