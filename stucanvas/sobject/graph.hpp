@@ -35,6 +35,12 @@ namespace StuCanvas
         std::vector<const SObject<T>*> parents = {}; // 若非空，则动态更新父子拓扑关系
     };
 
+
+    template <typename T>
+    struct ScalarCreateInfo {
+        std::string_view name = "Scalar";
+    };
+
     // ========================================================================
     // 核心对象图谱 (SObjectGraph) —— 100% 稀疏级 O(M) 推送计算图
     // ========================================================================
@@ -64,14 +70,7 @@ namespace StuCanvas
         std::vector<std::vector<SObject<T>*>> cached_levels;
         bool topology_changed = true;
 
-        struct FrameStats
-        {
-            size_t dirty_count = 0;
-            size_t query_count = 0;
-        };
 
-        FrameStats last_frame_stats{0, 0};
-        FrameStats curr_frame_stats{0, 0};
 
         // 物理寻址安全：辅助函数，获取节点在大池中的物理下标
         size_t GetNodeIndex(const SObject<T>* node) const noexcept
@@ -79,16 +78,6 @@ namespace StuCanvas
             return node - &node_pool[0];
         }
 
-        void NewFrame() noexcept
-        {
-            last_frame_stats = curr_frame_stats;
-            curr_frame_stats = {0, 0};
-
-            for (size_t i = 0; i < node_pool.size(); ++i)
-            {
-                node_pool[i].clear_mask(NodeMask::QUERIED);
-            }
-        }
 
         SObject<T>* AllocateModel(NodeType type, std::string_view name);
 
@@ -127,9 +116,12 @@ namespace StuCanvas
 
         // ─── 3. 修改函数与拓扑关系动态重组 ───
 
+        void markDirty(SObject<T>* node) noexcept;
         // 修改 2D 点数值，支持通过参数包同时可选更改名称或拓扑
-        void modifyPoint2D(const SObject<T>* model_ptr, T new_x, T new_y, const ModifyPoint2DInfo<T>& info = {});
+        void modifyPoint2D(const SObject<T>* model_ptr, T new_x, T new_y);
 
+        void modifyScalar(const SObject<T>* model_ptr, T new_value);
+        void modifyName(const SObject<T>* model_ptr, std::string_view new_name);
         // 核心亮点：允许在运行期，动态拆除旧连线并重组新的父子依赖（无缝应对 CAD 撤销、动态拼装等需求）
         void modifyParents(const SObject<T>* model_ptr, const std::vector<const SObject<T>*>& new_parents);
 
@@ -203,7 +195,6 @@ namespace StuCanvas
             }
             dirty_list.clear();
 
-            curr_frame_stats.dirty_count = 0;
         }
 
     private:

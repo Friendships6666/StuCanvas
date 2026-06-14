@@ -29,5 +29,10 @@ namespace StuCanvas
         {
             T a, b, c, d;
         } plane_3d;
+
+        struct
+        {
+            T value;
+        } scalar;
     };
 }

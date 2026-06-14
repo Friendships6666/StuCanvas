@@ -185,4 +185,25 @@ namespace StuCanvas
         const_cast<SObject<T>*>(p2)->children.push_back(node);
         return node;
     }
+
+
+
+    /**
+         * @brief 创建一个纯代数标量节点 (无父节点，仅作为计算源)
+         * @param value 初始标量值
+         * @param info C++20 引导参数包 (仅支持改名)
+         */
+    template <typename T>
+    const SObject<T>* createScalar(T value, const ScalarCreateInfo<T>& info = {})
+     {
+         // 物理分配（node_pool 分配会将节点默认置脏，从而加入脏列表进行首帧解算）
+         SObject<T>* node = AllocateModel(NodeType::SCALAR, info.name);
+         node->data.scalar.value = value;
+         node->vptr = &Scalar_VTable<T>;
+
+         // 标量无父节点，因此 node->parents 保持默认空
+         return node;
+     }
+
+
 }
