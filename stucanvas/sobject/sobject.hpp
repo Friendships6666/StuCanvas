@@ -6,7 +6,7 @@
 #include "../types/point.hpp"         // 保持原始 Point3D, Point2D 无 UV 格式
 #include "../types/segment_strip.hpp"  // 包含 SegmentStrip3D
 #include "../utils/block_deque.hpp"
-#include "stucanvas/types/cpu/cpu_types.hpp"
+#include "../types/cpu/cpu_types.hpp"
 #include "sobject_types.hpp"
 #include "sobject_data.hpp"
 namespace StuCanvas
@@ -26,7 +26,6 @@ namespace StuCanvas
     };
 
 
-    // 虚表定义
 
 
     template <typename T>
@@ -164,26 +163,22 @@ namespace StuCanvas
         {
             for (size_t i = 0; i < parents.size(); ++i)
             {
-                SObject* parent = parents[i];
+                const SObject* parent = parents[i];
                 if (parent)
                 {
-                    // 利用 C++20 的 std::erase 极速从父节点的子队列中抹去自己
-                    std::erase(parent->children, this);
+                    // 物理强转并调用我们的无序快速抹除
+                    const_cast<SObject*>(parent)->children.erase_unordered(this);
                 }
             }
             for (size_t i = 0; i < children.size(); ++i)
             {
-                SObject* child = children[i];
+                const SObject* child = children[i];
                 if (child)
                 {
-                    std::erase(child->parents, this);
+                    const_cast<SObject*>(child)->parents.erase_unordered(this);
                 }
             }
         }
 
-        void NotifyDirty() const noexcept
-        {
-            set_mask(NodeMask::DIRTY);
-        }
     };
 }

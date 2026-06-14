@@ -152,6 +152,60 @@ namespace StuCanvas::utils
         // 元素修改
         // ==========================================
 
+        // ==========================================
+        // 极速无序抹除（不保持顺序，Swap-and-Pop 极致加速，最适合 DAG 连线）
+        // ==========================================
+        size_t erase_unordered(const T& value) noexcept
+        {
+            size_t erased_count = 0;
+            for (size_t i = 0; i < total_size_; )
+            {
+                if ((*this)[i] == value)
+                {
+                    // 如果不是最后一个元素，则将最后一个元素移到当前位置进行覆盖
+                    if (i != total_size_ - 1)
+                    {
+                        (*this)[i] = std::move((*this)[total_size_ - 1]);
+                    }
+                    pop_back(); // 直接物理弹出末尾
+                    erased_count++;
+                    // 注意：因为末尾元素换到了当前位置 i，所以不需要自增 i，继续检查当前位置
+                }
+                else
+                {
+                    ++i;
+                }
+            }
+            return erased_count;
+        }
+
+        // ==========================================
+        // 顺序抹除（保持原有顺序，相当于 std::vector::erase）
+        // ==========================================
+        size_t erase(const T& value) noexcept
+        {
+            size_t erased_count = 0;
+            for (size_t i = 0; i < total_size_; )
+            {
+                if ((*this)[i] == value)
+                {
+                    // 将后续元素依次向前挪动一位（跨块拷贝较慢）
+                    for (size_t j = i; j < total_size_ - 1; ++j)
+                    {
+                        (*this)[j] = std::move((*this)[j + 1]);
+                    }
+                    pop_back();
+                    erased_count++;
+                }
+                else
+                {
+                    ++i;
+                }
+            }
+            return erased_count;
+        }
+
+
         template <typename... Args>
         T& emplace_back(Args&&... args)
         {
