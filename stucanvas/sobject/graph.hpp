@@ -13,6 +13,7 @@
 #include "../types/cpu/cpu_types.hpp"
 #include "eigen3/Eigen/Dense"
 #include "instance.hpp"
+#include "tiny_vector.hpp"
 namespace StuCanvas
 {
     // ========================================================================
@@ -77,13 +78,13 @@ namespace StuCanvas
         utils::BlockDeque<SObject<T>, 256> node_pool;
 
         // 脏节点收集列表
-        std::vector<SObject<T>*> dirty_list;
+        utils::TinyVector<SObject<T>*> dirty_list;
 
         // 侧边属性并行数组 (SoA)，彻底免去 SObject 内置索引的空间开销
-        std::vector<uint32_t> topo_indices;
-        std::vector<uint32_t> level_indices;
+        utils::TinyVector<uint32_t> topo_indices;
+        utils::TinyVector<uint32_t> level_indices;
 
-        std::vector<std::vector<SObject<T>*>> cached_levels;
+        utils::TinyVector<utils::TinyVector<SObject<T>*>> cached_levels;
         bool topology_changed = true;
 
 
@@ -247,8 +248,8 @@ namespace StuCanvas
             topo_indices.resize(node_pool.size());
             level_indices.resize(node_pool.size());
 
-            std::vector<size_t> in_degrees(node_pool.size(), 0);
-            std::vector<SObject<T>*> current_level;
+            utils::TinyVector<size_t> in_degrees(node_pool.size(), 0);
+            utils::TinyVector<SObject<T>*> current_level;
 
             for (size_t i = 0; i < node_pool.size(); ++i)
             {
@@ -266,7 +267,7 @@ namespace StuCanvas
             while (!current_level.empty())
             {
                 cached_levels.push_back(current_level);
-                std::vector<SObject<T>*> next_level;
+                utils::TinyVector<SObject<T>*> next_level;
 
                 for (auto* curr : current_level)
                 {
@@ -289,9 +290,9 @@ namespace StuCanvas
             }
         }
 
-        std::vector<SObject<T>*> getFamily(const SObject<T>* start_node)
+        utils::TinyVector<SObject<T>*> getFamily(const SObject<T>* start_node)
         {
-            std::vector<SObject<T>*> family;
+            utils::TinyVector<SObject<T>*> family;
 
             // 1. 预分配小空间，避免小规模图频繁触发 vector 内部扩容
             family.reserve(32);
@@ -300,7 +301,7 @@ namespace StuCanvas
             auto* start = const_cast<SObject<T>*>(start_node);
 
             // 2. 声明一维工作队列（直接利用连续内存提升 Cache 命中率）
-            std::vector<SObject<T>*> queue;
+            utils::TinyVector<SObject<T>*> queue;
             queue.reserve(32);
 
             // 将起点压入，并标记为已访问，防止回溯

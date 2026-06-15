@@ -9,7 +9,7 @@
 #include "../types/cpu/cpu_types.hpp"
 #include "sobject_types.hpp"
 #include "sobject_data.hpp"
-#include "ptr_block_deque.hpp"
+#include "block_deque.hpp"
 namespace StuCanvas
 {
 
@@ -36,8 +36,8 @@ namespace StuCanvas
         std::string name;
         uint64_t id{};
 
-        utils::PtrBlockDeque<const SObject*, 4> parents;
-        utils::PtrBlockDeque<const SObject*, 16> children;
+        utils::BlockDeque<const SObject*, 4> parents;
+        utils::BlockDeque<const SObject*, 16> children;
 
 
 
