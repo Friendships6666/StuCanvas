@@ -281,6 +281,109 @@ namespace StuCanvas::utils
             return *this;
         }
 
+
+        // ─────────────────────────────────────────────────────────────────────────
+    // 1. 通用版新增成员函数 (通常在 public 区域，clear() 之后添加)
+    // ─────────────────────────────────────────────────────────────────────────
+    public:
+        /**
+         * @brief 动态调整容器大小（就地默认构造/析构释放）
+         */
+        void resize(uint32_t new_size)
+        {
+            uint32_t cur_size = size();
+            if (new_size < cur_size)
+            {
+                // 1. 缩减大小：安全析构多余元素，不缩减物理容量
+                for (uint32_t i = new_size; i < cur_size; ++i) {
+                    m_data[i].~T();
+                }
+                get_header()->size = new_size;
+            }
+            else if (new_size > cur_size)
+            {
+                // 2. 扩容大小：利用特化 rehash 物理就地扩容，随后 placement new 默认构造
+                reserve(new_size);
+                Header* h = get_header();
+                assert(m_data != nullptr); // 🚀 消除分析器空指针警告
+                for (uint32_t i = cur_size; i < new_size; ++i) {
+                    new (&m_data[i]) T();
+                }
+                h->size = new_size;
+            }
+        }
+
+        /**
+         * @brief 动态调整容器大小，并用 val 填充新槽位
+         */
+        void resize(uint32_t new_size, const T& val)
+        {
+            uint32_t cur_size = size();
+            if (new_size < cur_size)
+            {
+                for (uint32_t i = new_size; i < cur_size; ++i) {
+                    m_data[i].~T();
+                }
+                get_header()->size = new_size;
+            }
+            else if (new_size > cur_size)
+            {
+                reserve(new_size);
+                Header* h = get_header();
+                assert(m_data != nullptr);
+                for (uint32_t i = cur_size; i < new_size; ++i) {
+                    new (&m_data[i]) T(val);
+                }
+                h->size = new_size;
+            }
+        }
+
+        /**
+         * @brief 将当前内容替换为 count 个拷贝的 val
+         */
+        void assign(uint32_t count, const T& val)
+        {
+            clear();
+            if (count > 0)
+            {
+                reserve(count);
+                Header* h = get_header();
+                assert(m_data != nullptr);
+                for (uint32_t i = 0; i < count; ++i) {
+                    new (&m_data[i]) T(val);
+                }
+                h->size = count;
+            }
+        }
+
+        /**
+         * @brief 将当前内容替换为区间 [first, last) 内的数据
+         */
+        void assign(const T* first, const T* last)
+        {
+            clear();
+            if (first != last)
+            {
+                uint32_t count = static_cast<uint32_t>(last - first);
+                reserve(count);
+                Header* h = get_header();
+                assert(m_data != nullptr);
+
+                // 🚀 性能压榨：如果是平凡类型，直接通过物理 memcpy 传递，耗时归零！
+                if constexpr (std::is_trivially_copyable_v<T>) {
+                    std::memcpy(reinterpret_cast<void*>(m_data),
+                                reinterpret_cast<const void*>(first),
+                                count * sizeof(T));
+                } else {
+                    for (uint32_t i = 0; i < count; ++i) {
+                        new (&m_data[i]) T(first[i]);
+                    }
+                }
+                h->size = count;
+            }
+        }
+
+
         [[nodiscard]] uint32_t size() const noexcept
         {
             auto* h = get_header();
@@ -640,6 +743,136 @@ namespace StuCanvas::utils
                 }
             }
             return *this;
+        }
+// ─────────────────────────────────────────────────────────────────────────
+    // 2. 指针偏特化版新增成员函数 (在 public 区域，clear() 之后添加)
+    // ─────────────────────────────────────────────────────────────────────────
+    public:
+        /**
+         * @brief 动态调整指针数组大小（哨兵状态智能转换）
+         */
+        void resize(uint32_t new_size)
+        {
+            uint32_t cur_size = size();
+            if (new_size == cur_size) return;
+
+            // 1. 大小缩减为 0，一键 clear 清空堆
+            if (new_size == 0) {
+                clear();
+                return;
+            }
+
+            // 2. 极限压缩：大小缩减为 1，直接回收多元素堆空间，强行收缩为单元素（Tag 0）寄存器状态！
+            if (new_size == 1) {
+                if (is_multi()) {
+                    T val = get_multi_array()[0];
+                    deallocate_heap(get_multi_array());
+                    m_val = reinterpret_cast<uintptr_t>(val);
+                }
+                return;
+            }
+
+            // 3. 多元素扩容/缩减
+            if (new_size < cur_size) {
+                // 缩减：指针为平凡析构类型，不需要循环调用 ~T()，直接修改 Header 尺寸状态
+                Header* h = get_header();
+                h->size = new_size;
+            } else {
+                // 扩容：就地 realloc，随后将新槽位极速清零（指针默认值为 nullptr）
+                reserve(new_size);
+                Header* h = get_header();
+                T* array = get_multi_array();
+                assert(array != nullptr); // 🚀 消除分析器空指针警告
+                std::memset(reinterpret_cast<void*>(array + cur_size),
+                            0,
+                            (new_size - cur_size) * sizeof(T));
+                h->size = new_size;
+            }
+        }
+
+        /**
+         * @brief 动态调整指针数组大小，并用 val 填充新槽位
+         */
+        void resize(uint32_t new_size, T val)
+        {
+            assert(val != nullptr && "Cannot store null pointer into TinyVector");
+            uint32_t cur_size = size();
+            if (new_size == cur_size) return;
+
+            if (new_size == 0) {
+                clear();
+                return;
+            }
+            if (new_size == 1) {
+                if (is_multi()) { deallocate_heap(get_multi_array()); }
+                m_val = reinterpret_cast<uintptr_t>(val);
+                return;
+            }
+
+            if (new_size < cur_size) {
+                Header* h = get_header();
+                h->size = new_size;
+            } else {
+                reserve(new_size);
+                Header* h = get_header();
+                T* array = get_multi_array();
+                assert(array != nullptr);
+                for (uint32_t i = cur_size; i < new_size; ++i) {
+                    array[i] = val;
+                }
+                h->size = new_size;
+            }
+        }
+
+        /**
+         * @brief 将当前指针数组内容替换为 count 个拷贝的 val
+         */
+        void assign(uint32_t count, T val)
+        {
+            assert(val != nullptr && "Cannot store null pointer into TinyVector");
+            clear();
+            if (count == 1)
+            {
+                m_val = reinterpret_cast<uintptr_t>(val);
+            }
+            else if (count > 1)
+            {
+                T* array = allocate_heap(count);
+                Header* h = reinterpret_cast<Header*>(reinterpret_cast<char*>(array) - HeaderOffset);
+                for (uint32_t i = 0; i < count; ++i) {
+                    array[i] = val;
+                }
+                h->size = count;
+                m_val = reinterpret_cast<uintptr_t>(array) | 1;
+            }
+        }
+
+        /**
+         * @brief 将当前内容替换为区间 [first, last) 内的数据指针
+         */
+        void assign(const T* first, const T* last)
+        {
+            clear();
+            if (first != last)
+            {
+                uint32_t count = static_cast<uint32_t>(last - first);
+                if (count == 1)
+                {
+                    assert(first[0] != nullptr && "Cannot store null pointer into TinyVector");
+                    m_val = reinterpret_cast<uintptr_t>(first[0]);
+                }
+                else
+                {
+                    T* array = allocate_heap(count);
+                    Header* h = reinterpret_cast<Header*>(reinterpret_cast<char*>(array) - HeaderOffset);
+                    // 🚀 指针特化：直接调用系统级极致优化 memcpy 传递指针数组
+                    std::memcpy(reinterpret_cast<void*>(array),
+                                reinterpret_cast<const void*>(first),
+                                count * sizeof(T));
+                    h->size = count;
+                    m_val = reinterpret_cast<uintptr_t>(array) | 1;
+                }
+            }
         }
 
         [[nodiscard]] uint32_t size() const noexcept
