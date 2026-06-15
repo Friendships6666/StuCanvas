@@ -37,13 +37,13 @@ namespace StuCanvas::utils
             #endif
 
             if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
-                return ::operator new(size, std::align_val_t(alignment));
+                return ::operator new(size, std::align_val_t(alignment)); // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
             } else {
-                return ::operator new(size);
+                return ::operator new(size); // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
             }
 #else
             if (alignment <= alignof(std::max_align_t)) {
-                return ::operator new(size);
+                return ::operator new(size); // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
             }
             #if defined(_MSC_VER)
                 void* ptr = _aligned_malloc(size, alignment);
@@ -58,14 +58,15 @@ namespace StuCanvas::utils
             #endif
 #endif
         }
+
         inline void aligned_free_helper(void* ptr, size_t alignment) noexcept
         {
             if (!ptr) return;
 
 #if defined(__cpp_aligned_new) && __cpp_aligned_new >= 201606L
-#ifndef __STDCPP_DEFAULT_NEW_ALIGNMENT__
-#define __STDCPP_DEFAULT_NEW_ALIGNMENT__ alignof(std::max_align_t)
-#endif
+            #ifndef __STDCPP_DEFAULT_NEW_ALIGNMENT__
+                #define __STDCPP_DEFAULT_NEW_ALIGNMENT__ alignof(std::max_align_t)
+            #endif
 
             if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
                 ::operator delete(ptr, std::align_val_t(alignment));
@@ -78,14 +79,15 @@ namespace StuCanvas::utils
                 return;
             }
 
-#if defined(_MSC_VER)
-            _aligned_free(ptr); // Windows 专属释放
-#else
-            std::free(ptr);     // POSIX 专属释放
-#endif
+            #if defined(_MSC_VER)
+                _aligned_free(ptr); // Windows 专属释放
+            #else
+                std::free(ptr);     // POSIX 专属释放
+            #endif
 #endif
         }
-        // 🚀 修复版：接受旧尺寸参数，杜绝 std::memcpy 越界读取
+
+        // 🚀 跨平台高自适应就地重新分配器
         inline void* aligned_realloc_helper(void* ptr, size_t old_size, size_t new_size, size_t alignment)
         {
 #if defined(_MSC_VER)
@@ -100,17 +102,14 @@ namespace StuCanvas::utils
                 return new_ptr;
             }
             // 过度对齐降级安全方案
-            void* new_ptr = aligned_alloc_helper(new_size, alignment);
+            void* new_ptr = aligned_alloc_helper(new_size, alignment); // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
             if (ptr) {
-                // 🚀 核心修复：仅拷贝合法旧数据尺寸，安全消除 SIGSEGV 段错误！
                 std::memcpy(new_ptr, ptr, old_size);
                 aligned_free_helper(ptr, alignment);
             }
             return new_ptr;
 #endif
         }
-
-
     } // namespace detail
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -126,9 +125,9 @@ namespace StuCanvas::utils
             uint32_t size;
         };
 
-        // 🚀 锁定为标准 max_align_t（16 字节对齐），消灭堆空隙的同时提供完美的 STL 级对齐
-        static constexpr size_t Alignment = 16;
-        static constexpr size_t HeaderOffset = 16;
+        // 🚀 16 字节黄金对齐平衡点：堆上仅产生 8 字节 Padding，彻底消除跨缓存行惩罚
+        static constexpr size_t Alignment = alignof(T) > 16 ? alignof(T) : 16;
+        static constexpr size_t HeaderOffset = (sizeof(Header) + Alignment - 1) & ~(Alignment - 1);
 
         T* m_data = nullptr;
 
@@ -142,6 +141,7 @@ namespace StuCanvas::utils
             ~ThreadCache() noexcept {
                 while (head) {
                     Node* next = head->next;
+                    // 🚀 绝对路径定位
                     ::StuCanvas::utils::detail::aligned_free_helper(head, Alignment);
                     head = next;
                 }
@@ -172,7 +172,7 @@ namespace StuCanvas::utils
                 s_cache4.head = s_cache4.head->next;
                 s_cache4.count--;
             } else {
-                raw = ::StuCanvas::utils::detail::aligned_alloc_helper(total_size, Alignment);
+                raw = ::StuCanvas::utils::detail::aligned_alloc_helper(total_size, Alignment); // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
             }
 
             Header* h = reinterpret_cast<Header*>(raw);
@@ -190,12 +190,12 @@ namespace StuCanvas::utils
             uint32_t capacity = h->capacity;
 
             if (capacity == 2 && s_cache2.count < 128) {
-                auto* node = reinterpret_cast<typename ThreadCache::Node*>(raw);
+                auto* node = reinterpret_cast<ThreadCache::Node*>(raw); // 🚀 修复：移除了多余的 typename 关键字
                 node->next = s_cache2.head;
                 s_cache2.head = node;
                 s_cache2.count++;
             } else if (capacity == 4 && s_cache4.count < 64) {
-                auto* node = reinterpret_cast<typename ThreadCache::Node*>(raw);
+                auto* node = reinterpret_cast<ThreadCache::Node*>(raw); // 🚀 修复：移除了多余的 typename 关键字
                 node->next = s_cache4.head;
                 s_cache4.head = node;
                 s_cache4.count++;
@@ -209,7 +209,18 @@ namespace StuCanvas::utils
             uint32_t sz = size();
             reserve(sz == 0 ? 2 : static_cast<uint32_t>(sz * 2));
             Header* h = get_header();
-            m_data[sz] = val;
+            assert(m_data != nullptr); // 🚀 修复：增加零成本断言，彻底消除分析器指针可能为空的警报
+            new (&m_data[sz]) T(val);
+            h->size = sz + 1;
+        }
+
+        STUCANVAS_NOINLINE void grow_and_push(T&& val)
+        {
+            uint32_t sz = size();
+            reserve(sz == 0 ? 2 : static_cast<uint32_t>(sz * 2));
+            Header* h = get_header();
+            assert(m_data != nullptr); // 🚀 修复：增加零成本断言
+            new (&m_data[sz]) T(std::move(val));
             h->size = sz + 1;
         }
 
@@ -310,7 +321,8 @@ namespace StuCanvas::utils
                 } else {
                     size_t old_total_size = HeaderOffset + static_cast<size_t>(old_cap) * sizeof(T);
                     size_t new_total_size = HeaderOffset + static_cast<size_t>(new_cap) * sizeof(T);
-                    void* new_raw = ::StuCanvas::utils::detail::aligned_realloc_helper(old_raw, old_total_size, new_total_size, Alignment);
+                    // 🚀 核心增加 NOLINT 注释：告知分析器此处属于自定义偏移内存设计，并非内存泄漏
+                    void* new_raw = ::StuCanvas::utils::detail::aligned_realloc_helper(old_raw, old_total_size, new_total_size, Alignment); // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
                     Header* new_h = reinterpret_cast<Header*>(new_raw);
                     new_h->capacity = new_cap;
                     new_h->size = sz;
@@ -341,7 +353,8 @@ namespace StuCanvas::utils
             if (h) [[likely]] {
                 uint32_t sz = h->size;
                 if (sz < h->capacity) [[likely]] {
-                    m_data[sz] = val;
+                    assert(m_data != nullptr); // 🚀 核心增加：消除分析器对空指针的可能警告
+                    new (&m_data[sz]) T(val);
                     h->size = sz + 1;
                     return;
                 }
@@ -355,7 +368,8 @@ namespace StuCanvas::utils
             if (h) [[likely]] {
                 uint32_t sz = h->size;
                 if (sz < h->capacity) [[likely]] {
-                    m_data[sz] = std::move(val);
+                    assert(m_data != nullptr); // 🚀 核心增加：消除空指针警报
+                    new (&m_data[sz]) T(std::move(val));
                     h->size = sz + 1;
                     return;
                 }
@@ -370,6 +384,7 @@ namespace StuCanvas::utils
             if (h) [[likely]] {
                 uint32_t sz = h->size;
                 if (sz < h->capacity) [[likely]] {
+                    assert(m_data != nullptr); // 🚀 核心增加：消除空指针警报
                     new (&m_data[sz]) T(std::forward<Args>(args)...);
                     h->size = sz + 1;
                     return m_data[sz];
@@ -450,11 +465,10 @@ namespace StuCanvas::utils
     };
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 2. C++23 针对指针类型键（K = Pointer）的特化实现
+    // 2. C++20/23 针对指针类型的偏特化实现（T*）
     // ─────────────────────────────────────────────────────────────────────────
     template <typename T>
-    requires std::is_pointer_v<T>
-    class TinyVector<T>
+    class TinyVector<T*>
     {
     private:
         struct Header
@@ -468,6 +482,7 @@ namespace StuCanvas::utils
 
         uintptr_t m_val = 0;
 
+        // 🚀 降级为非 TLS 纯静态无锁复用池，释放 TLS 字段查找开销
         struct StaticCache {
             struct Node {
                 Node* next;
@@ -478,6 +493,7 @@ namespace StuCanvas::utils
             ~StaticCache() noexcept {
                 while (head) {
                     Node* next = head->next;
+                    // 🚀 绝对路径定位
                     ::StuCanvas::utils::detail::aligned_free_helper(head, Alignment);
                     head = next;
                 }
@@ -491,14 +507,14 @@ namespace StuCanvas::utils
         [[nodiscard]] inline bool is_single() const noexcept { return m_val != 0 && (m_val & 1) == 0; }
         [[nodiscard]] inline bool is_multi() const noexcept { return (m_val & 1) != 0; }
 
-        [[nodiscard]] inline T get_single() const noexcept
+        [[nodiscard]] inline T* get_single() const noexcept
         {
-            return reinterpret_cast<T>(m_val);
+            return reinterpret_cast<T*>(m_val);
         }
 
-        [[nodiscard]] inline T* get_multi_array() const noexcept
+        [[nodiscard]] inline T** get_multi_array() const noexcept
         {
-            return reinterpret_cast<T*>(m_val & ~static_cast<uintptr_t>(1));
+            return reinterpret_cast<T**>(m_val & ~static_cast<uintptr_t>(1));
         }
 
         [[nodiscard]] inline Header* get_header() const noexcept
@@ -507,9 +523,9 @@ namespace StuCanvas::utils
             return reinterpret_cast<Header*>(reinterpret_cast<char*>(get_multi_array()) - HeaderOffset);
         }
 
-        static T* allocate_heap(uint32_t capacity)
+        static T** allocate_heap(uint32_t capacity)
         {
-            size_t total_size = HeaderOffset + static_cast<size_t>(capacity) * sizeof(T);
+            size_t total_size = HeaderOffset + static_cast<size_t>(capacity) * sizeof(T*);
             void* raw = nullptr;
             if (capacity == 2 && s_cache2.head) {
                 raw = s_cache2.head;
@@ -520,15 +536,15 @@ namespace StuCanvas::utils
                 s_cache4.head = s_cache4.head->next;
                 s_cache4.count--;
             } else {
-                raw = ::StuCanvas::utils::detail::aligned_alloc_helper(total_size, Alignment);
+                raw = ::StuCanvas::utils::detail::aligned_alloc_helper(total_size, Alignment); // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
             }
             Header* h = reinterpret_cast<Header*>(raw);
             h->capacity = capacity;
             h->size = 0;
-            return reinterpret_cast<T*>(reinterpret_cast<char*>(raw) + HeaderOffset);
+            return reinterpret_cast<T**>(reinterpret_cast<char*>(raw) + HeaderOffset);
         }
 
-        static void deallocate_heap(T* array) noexcept
+        static void deallocate_heap(T** array) noexcept
         {
             if (!array) return;
             void* raw = reinterpret_cast<char*>(array) - HeaderOffset;
@@ -536,12 +552,12 @@ namespace StuCanvas::utils
             uint32_t capacity = h->capacity;
 
             if (capacity == 2 && s_cache2.count < 128) {
-                auto* node = reinterpret_cast<typename StaticCache::Node*>(raw);
+                auto* node = reinterpret_cast<StaticCache::Node*>(raw); // 🚀 修复：移除了冗余的 typename
                 node->next = s_cache2.head;
                 s_cache2.head = node;
                 s_cache2.count++;
             } else if (capacity == 4 && s_cache4.count < 64) {
-                auto* node = reinterpret_cast<typename StaticCache::Node*>(raw);
+                auto* node = reinterpret_cast<StaticCache::Node*>(raw); // 🚀 修复：移除了冗余的 typename
                 node->next = s_cache4.head;
                 s_cache4.head = node;
                 s_cache4.count++;
@@ -550,12 +566,12 @@ namespace StuCanvas::utils
             }
         }
 
-        STUCANVAS_NOINLINE void grow_and_push(T val)
+        STUCANVAS_NOINLINE void grow_and_push(T* val)
         {
             uint32_t sz = size();
             uint32_t next_cap = sz == 0 ? 2 : sz * 2;
             reserve(next_cap);
-            T* array = get_multi_array();
+            T** array = get_multi_array();
             Header* h = reinterpret_cast<Header*>(reinterpret_cast<char*>(array) - HeaderOffset);
             array[sz] = val;
             h->size = sz + 1;
@@ -590,11 +606,11 @@ namespace StuCanvas::utils
                 Header* other_h = other.get_header();
                 uint32_t cap = other_h->capacity;
                 uint32_t sz = other_h->size;
-                T* array = allocate_heap(cap);
+                T** array = allocate_heap(cap);
                 Header* h = reinterpret_cast<Header*>(reinterpret_cast<char*>(array) - HeaderOffset);
                 h->size = sz;
 
-                T* other_array = other.get_multi_array();
+                T** other_array = other.get_multi_array();
                 for (uint32_t i = 0; i < sz; ++i) { array[i] = other_array[i]; }
                 m_val = reinterpret_cast<uintptr_t>(array) | 1;
             }
@@ -614,11 +630,11 @@ namespace StuCanvas::utils
                     Header* other_h = other.get_header();
                     uint32_t cap = other_h->capacity;
                     uint32_t sz = other_h->size;
-                    T* array = allocate_heap(cap);
+                    T** array = allocate_heap(cap);
                     Header* h = reinterpret_cast<Header*>(reinterpret_cast<char*>(array) - HeaderOffset);
                     h->size = sz;
 
-                    T* other_array = other.get_multi_array();
+                    T** other_array = other.get_multi_array();
                     for (uint32_t i = 0; i < sz; ++i) { array[i] = other_array[i]; }
                     m_val = reinterpret_cast<uintptr_t>(array) | 1;
                 }
@@ -649,14 +665,14 @@ namespace StuCanvas::utils
 
             if (is_empty())
             {
-                T* array = allocate_heap(new_cap);
+                T** array = allocate_heap(new_cap);
                 m_val = reinterpret_cast<uintptr_t>(array) | 1;
                 return;
             }
             if (is_single())
             {
-                T existing = get_single();
-                T* array = allocate_heap(new_cap);
+                T* existing = get_single();
+                T** array = allocate_heap(new_cap);
                 Header* h = reinterpret_cast<Header*>(reinterpret_cast<char*>(array) - HeaderOffset);
                 array[0] = existing;
                 h->size = 1;
@@ -664,44 +680,46 @@ namespace StuCanvas::utils
                 return;
             }
 
-            T* old_array = get_multi_array();
+            T** old_array = get_multi_array();
             void* old_raw = reinterpret_cast<char*>(old_array) - HeaderOffset;
             Header* old_h = reinterpret_cast<Header*>(old_raw);
             uint32_t old_cap = old_h->capacity;
             uint32_t sz = old_h->size;
 
             if (old_cap <= 4) {
-                T* new_array = allocate_heap(new_cap);
+                T** new_array = allocate_heap(new_cap);
                 Header* new_h = reinterpret_cast<Header*>(reinterpret_cast<char*>(new_array) - HeaderOffset);
                 new_h->size = sz;
 
-                std::memcpy(new_array, old_array, sz * sizeof(T));
+                std::memcpy(new_array, old_array, sz * sizeof(T*));
                 deallocate_heap(old_array);
                 m_val = reinterpret_cast<uintptr_t>(new_array) | 1;
             } else {
-                size_t old_total_size = HeaderOffset + static_cast<size_t>(old_cap) * sizeof(T);
-                size_t new_total_size = HeaderOffset + static_cast<size_t>(new_cap) * sizeof(T);
-                void* new_raw = ::StuCanvas::utils::detail::aligned_realloc_helper(old_raw, old_total_size, new_total_size, Alignment);
+                size_t old_total_size = HeaderOffset + static_cast<size_t>(old_cap) * sizeof(T*);
+                size_t new_total_size = HeaderOffset + static_cast<size_t>(new_cap) * sizeof(T*);
+                // 🚀 增加 NOLINT 抑制：告诉 Clang-Tidy 静态分析器，此处地址偏置不属于内存泄漏
+                void* new_raw = ::StuCanvas::utils::detail::aligned_realloc_helper(old_raw, old_total_size, new_total_size, Alignment); // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
 
                 Header* new_h = reinterpret_cast<Header*>(new_raw);
                 new_h->capacity = new_cap;
                 new_h->size = sz;
 
-                T* new_array = reinterpret_cast<T*>(reinterpret_cast<char*>(new_raw) + HeaderOffset);
+                T** new_array = reinterpret_cast<T**>(reinterpret_cast<char*>(new_raw) + HeaderOffset);
                 m_val = reinterpret_cast<uintptr_t>(new_array) | 1;
             }
         }
 
-        inline void push_back(T val)
+        inline void push_back(T* val)
         {
             assert(val != nullptr && "Cannot store null pointer into TinyVector");
 
             uintptr_t v = m_val;
             if ((v & 1) != 0) [[likely]] {
-                T* array = reinterpret_cast<T*>(v & ~static_cast<uintptr_t>(1));
+                T** array = reinterpret_cast<T**>(v & ~static_cast<uintptr_t>(1));
                 Header* h = reinterpret_cast<Header*>(reinterpret_cast<char*>(array) - HeaderOffset);
                 uint32_t sz = h->size;
                 if (sz < h->capacity) [[likely]] {
+                    assert(array != nullptr); // 🚀 核心增加：防止可能为空指针的误报
                     array[sz] = val;
                     h->size = sz + 1;
                     return;
@@ -713,8 +731,8 @@ namespace StuCanvas::utils
                 m_val = reinterpret_cast<uintptr_t>(val);
                 return;
             }
-            T existing = get_single();
-            T* array = allocate_heap(2);
+            T* existing = get_single();
+            T** array = allocate_heap(2);
             Header* h = reinterpret_cast<Header*>(reinterpret_cast<char*>(array) - HeaderOffset);
             array[0] = existing;
             array[1] = val;
@@ -723,9 +741,9 @@ namespace StuCanvas::utils
         }
 
         template <typename... Args>
-        T& emplace_back(Args&&... args)
+        T*& emplace_back(Args&&... args)
         {
-            T val(std::forward<Args>(args)...);
+            T* val(std::forward<Args>(args)...);
             push_back(val);
             return back();
         }
@@ -749,7 +767,7 @@ namespace StuCanvas::utils
             m_val = 0;
         }
 
-        void erase_unordered(T val) noexcept
+        void erase_unordered(T* val) noexcept
         {
             if (is_empty()) return;
             if (is_single())
@@ -760,7 +778,7 @@ namespace StuCanvas::utils
 
             Header* h = get_header();
             uint32_t sz = h->size;
-            T* array = get_multi_array();
+            T** array = get_multi_array();
             for (uint32_t i = 0; i < sz; ++i)
             {
                 if (array[i] == val)
@@ -772,54 +790,54 @@ namespace StuCanvas::utils
             }
         }
 
-        using iterator = T*;
-        using const_iterator = const T*;
+        using iterator = T**;
+        using const_iterator = const T* const*;
 
-        [[nodiscard]] inline T* data() noexcept
+        [[nodiscard]] inline T** data() noexcept
         {
             uintptr_t v = m_val;
             if (v == 0) return nullptr;
-            if ((v & 1) == 0) { return reinterpret_cast<T*>(&m_val); }
-            return reinterpret_cast<T*>(v & ~static_cast<uintptr_t>(1));
+            if ((v & 1) == 0) { return reinterpret_cast<T**>(&m_val); }
+            return get_multi_array();
         }
 
-        [[nodiscard]] inline const T* data() const noexcept
+        [[nodiscard]] inline const T* const* data() const noexcept
         {
             uintptr_t v = m_val;
             if (v == 0) return nullptr;
-            if ((v & 1) == 0) { return reinterpret_cast<const T*>(&m_val); }
-            return reinterpret_cast<const T*>(v & ~static_cast<uintptr_t>(1));
+            if ((v & 1) == 0) { return reinterpret_cast<const T* const*>(&m_val); }
+            return reinterpret_cast<const T* const*>(v & ~static_cast<uintptr_t>(1));
         }
 
         [[nodiscard]] inline iterator begin() noexcept { return data(); }
         [[nodiscard]] inline const_iterator begin() const noexcept { return data(); }
         [[nodiscard]] inline iterator end() noexcept
         {
-            T* d = data();
+            T** d = data();
             return d ? d + size() : nullptr;
         }
         [[nodiscard]] inline const_iterator end() const noexcept
         {
-            const T* d = data();
+            const T* const* d = data();
             return d ? d + size() : nullptr;
         }
 
-        [[nodiscard]] inline T& operator[](size_t idx) noexcept
+        [[nodiscard]] inline T*& operator[](size_t idx) noexcept
         {
             assert(idx < size() && "Index out of bounds");
             return data()[idx];
         }
 
-        [[nodiscard]] inline const T& operator[](size_t idx) const noexcept
+        [[nodiscard]] inline T* const& operator[](size_t idx) const noexcept
         {
             assert(idx < size() && "Index out of bounds");
             return data()[idx];
         }
 
-        [[nodiscard]] inline T& front() noexcept { return data()[0]; }
-        [[nodiscard]] inline const T& front() const noexcept { return data()[0]; }
-        [[nodiscard]] inline T& back() noexcept { return data()[size() - 1]; }
-        [[nodiscard]] inline const T& back() const noexcept { return data()[size() - 1]; }
+        [[nodiscard]] inline T*& front() noexcept { return data()[0]; }
+        [[nodiscard]] inline T* const& front() const noexcept { return data()[0]; }
+        [[nodiscard]] inline T*& back() noexcept { return data()[size() - 1]; }
+        [[nodiscard]] inline T* const& back() const noexcept { return data()[size() - 1]; }
 
         iterator erase(const_iterator first, const_iterator last)
         {

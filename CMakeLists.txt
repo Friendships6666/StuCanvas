@@ -201,8 +201,6 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/family.hpp
         stucanvas/sobject/visual.hpp
         stucanvas/utils/tiny_vector.hpp
-        stucanvas/utils/ptr_vector.hpp
-        stucanvas/utils/ptr_block_deque.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
@@ -288,19 +286,19 @@ target_link_libraries(deque_test PRIVATE StuCanvasCore)
 configure_stucanvas_target(deque_test)
 
 
-add_executable(ptr_vector_test tests/performance/ptr_vector_test.cpp
-        
-)
-target_link_libraries(ptr_vector_test PRIVATE StuCanvasCore)
-configure_stucanvas_target(ptr_vector_test)
+#add_executable(ptr_vector_test tests/performance/ptr_vector_test.cpp
+#
+#)
+#target_link_libraries(ptr_vector_test PRIVATE StuCanvasCore)
+#configure_stucanvas_target(ptr_vector_test)
 
 
 
-add_executable(ptr_deque_test tests/performance/ptr_deque_test.cpp
-        
-)
-target_link_libraries(ptr_deque_test PRIVATE StuCanvasCore)
-configure_stucanvas_target(ptr_deque_test)
+#add_executable(ptr_deque_test tests/performance/ptr_deque_test.cpp
+#
+#)
+#target_link_libraries(ptr_deque_test PRIVATE StuCanvasCore)
+#configure_stucanvas_target(ptr_deque_test)
 
 
 add_executable(flat_map_test tests/performance/flat_map_test.cpp
