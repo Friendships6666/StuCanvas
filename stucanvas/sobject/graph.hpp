@@ -61,19 +61,7 @@ namespace StuCanvas
         }
 
 
-        // 1. 将实例池升级为 BlockDeque，保证物理地址一生不变！
-        utils::BlockDeque<SObjectInstance<T>, 256> instances;
 
-        // 2. 接口修改：返回不可变的只读实例指针 [3.2.1]
-        const SObjectInstance<T>* createInstance(const SObjectFamily<T>* family)
-        {
-            // 在内存池中原位构造
-            auto& inst = instances.emplace_back();
-            inst.source_family = family;
-            inst.BakeMatrix();
-
-            return &inst; // 极速返回物理地址！
-        }
 
 
 

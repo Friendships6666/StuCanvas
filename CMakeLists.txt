@@ -199,6 +199,10 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/getters.hpp
         stucanvas/sobject/instance.hpp
         stucanvas/sobject/family.hpp
+        stucanvas/sobject/visual.hpp
+        stucanvas/utils/tiny_vector.hpp
+        stucanvas/utils/ptr_vector.hpp
+        stucanvas/utils/ptr_block_deque.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
@@ -219,12 +223,12 @@ target_include_directories(StuCanvasCore PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/stucanvas/utils
         ${CMAKE_CURRENT_SOURCE_DIR}/external
 )
-
 target_link_libraries(StuCanvasCore PUBLIC
         Vulkan::Vulkan
         Eigen3::Eigen
         TBB::tbb
         typst_c_lib
+        /usr/lib/libLLVM.so
         "${SDL3_EXTERNAL_LIB}"
         "${SLANG_EXTERNAL_LIB}"
         ${NVENC_LIB_PATH}
@@ -264,13 +268,51 @@ endfunction()
 # ============================================================================
 # 8. 编译当前主可执行程序 StuCanvas（运行 typst_test.cpp，自动继承所有编译参数）
 # ============================================================================
-add_executable(typst_test typst_test.cpp)
+add_executable(typst_test tests/ffi/typst_test.cpp)
 target_link_libraries(typst_test PRIVATE StuCanvasCore)
 configure_stucanvas_target(typst_test)
 
-# ============================================================================
-# 💡 未来扩展提示：当你以后新建其他测试（如 test.cpp）时，只需在底部追加以下 3 行：
-# ============================================================================
-# add_executable(typst_test test.cpp)
-# target_link_libraries(typst_test PRIVATE StuCanvasCore)
-# configure_stucanvas_target(typst_test)
+
+add_executable(tiny_vector_test tests/performance/tiny_vector_test.cpp
+        )
+target_link_libraries(tiny_vector_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(tiny_vector_test)
+
+
+
+add_executable(deque_test tests/performance/deque_test.cpp
+        
+
+)
+target_link_libraries(deque_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(deque_test)
+
+
+add_executable(ptr_vector_test tests/performance/ptr_vector_test.cpp
+        
+)
+target_link_libraries(ptr_vector_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(ptr_vector_test)
+
+
+
+add_executable(ptr_deque_test tests/performance/ptr_deque_test.cpp
+        
+)
+target_link_libraries(ptr_deque_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(ptr_deque_test)
+
+
+add_executable(flat_map_test tests/performance/flat_map_test.cpp
+        
+)
+target_link_libraries(flat_map_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(flat_map_test)
+
+
+
+add_executable(llvm_tiny_vector_test tests/performance/llvm_tiny_vector_test.cpp
+
+)
+target_link_libraries(llvm_tiny_vector_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(llvm_tiny_vector_test)

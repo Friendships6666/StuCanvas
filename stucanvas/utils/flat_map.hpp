@@ -1,211 +1,761 @@
+/***************************************************************************
+* Copyright (c) 2026 Tian Yuxuan (Friendships666)                          *
+*                                                                          *
+* Distributed under the terms of the MIT License.                          *
+*                                                                          *
+* The full license is in the file LICENSE, distributed with this software. *
+***************************************************************************/
+
 #pragma once
-#include <vector>
 #include <cstdint>
-#include <stdexcept>
-#include <iterator>
+#include <new>
+#include <utility>
 #include <algorithm>
+#include <type_traits>
+#include <cassert>
+#include <cstdlib>
+#include <cstddef>
+#include <functional>
+#include "tiny_vector.hpp" // 复用我们先前实现的极致跨平台对齐内存分配器
 
-namespace StuCanvas::utils {
+namespace StuCanvas::utils
+{
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1. 通用版 FlatMap 模版（非指针类型走这个默认模版）
+    // ─────────────────────────────────────────────────────────────────────────
+    template <typename K, typename V>
+    class FlatMap
+    {
+    public:
+        enum class State : uint8_t { EMPTY, FILLED, DELETED };
 
-template <typename K, typename V>
-class FlatMap {
-public:
-    enum class State : uint8_t { EMPTY, FILLED, DELETED };
+        struct Entry {
+            K first;
+            V second;
+            State state = State::EMPTY;
+        };
 
-    struct Entry {
-        K first;
-        V second;
-        State state = State::EMPTY;
-    };
+    private:
+        struct Header {
+            uint32_t capacity;
+            uint32_t size;
+        };
 
-private:
-    std::vector<Entry> table_;
-    size_t size_ = 0;
-    size_t mask_ = 0;
+        static constexpr size_t Alignment = alignof(Entry) > alignof(std::max_align_t)
+                                            ? alignof(Entry)
+                                            : alignof(std::max_align_t);
+        static constexpr size_t HeaderOffset = (sizeof(Header) + Alignment - 1) & ~(Alignment - 1);
 
-    static size_t hash_key(K key) {
-        uint64_t x = static_cast<uint64_t>(key);
-        x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
-        x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
-        x = x ^ (x >> 31);
-        return static_cast<size_t>(x);
-    }
+        Entry* m_table = nullptr;
 
-    void rehash(size_t new_capacity) {
-        auto old_table = std::move(table_);
-        table_.assign(new_capacity, Entry{});
-        mask_ = new_capacity - 1;
-        size_ = 0;
-        for (auto& entry : old_table) {
-            if (entry.state == State::FILLED) {
-                // 【核心优化】：使用 std::move 转移 vector 的堆内存所有权，消除扩容时的深拷贝 [1.1.2]
-                insert(entry.first, std::move(entry.second));
+        static size_t hash_key(const K& key) noexcept {
+            uint64_t x = static_cast<uint64_t>(std::hash<K>{}(key));
+            x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+            x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+            x = x ^ (x >> 31);
+            return static_cast<size_t>(x);
+        }
+
+        [[nodiscard]] inline Header* get_header() const noexcept
+        {
+            if (!m_table) return nullptr;
+            return reinterpret_cast<Header*>(reinterpret_cast<char*>(m_table) - HeaderOffset);
+        }
+
+        static Entry* allocate_table(uint32_t capacity)
+        {
+            size_t total_size = HeaderOffset + static_cast<size_t>(capacity) * sizeof(Entry);
+            void* raw = detail::aligned_alloc_helper(total_size, Alignment);
+
+            Header* h = reinterpret_cast<Header*>(raw);
+            h->capacity = capacity;
+            h->size = 0;
+
+            Entry* table = reinterpret_cast<Entry*>(reinterpret_cast<char*>(raw) + HeaderOffset);
+            for (uint32_t i = 0; i < capacity; ++i) {
+                new (&table[i]) Entry();
+            }
+            return table;
+        }
+
+        static void deallocate_table(Entry* table) noexcept
+        {
+            if (!table) return;
+            Header* h = reinterpret_cast<Header*>(reinterpret_cast<char*>(table) - HeaderOffset);
+            uint32_t capacity = h->capacity;
+            for (uint32_t i = 0; i < capacity; ++i) {
+                table[i].~Entry();
+            }
+            void* raw = reinterpret_cast<char*>(table) - HeaderOffset;
+            detail::aligned_free_helper(raw, Alignment);
+        }
+
+        void rehash(size_t new_capacity)
+        {
+            Header* old_h = get_header();
+            uint32_t old_cap = old_h ? old_h->capacity : 0;
+            Entry* old_table = m_table;
+
+            m_table = allocate_table(static_cast<uint32_t>(new_capacity));
+
+            if (old_table) {
+                for (uint32_t i = 0; i < old_cap; ++i) {
+                    if (old_table[i].state == State::FILLED) {
+                        insert(old_table[i].first, std::move(old_table[i].second));
+                    }
+                }
+                deallocate_table(old_table);
             }
         }
-    }
 
-public:
-    // --- 普通迭代器 ---
-    struct Iterator {
-        using iterator_category = std::forward_iterator_tag;
-        using value_type = Entry;
-        using difference_type = std::ptrdiff_t;
-        using pointer = Entry*;
-        using reference = Entry&;
+    public:
+        struct Iterator {
+            using iterator_category = std::forward_iterator_tag;
+            using value_type = Entry;
+            using difference_type = std::ptrdiff_t;
+            using pointer = Entry*;
+            using reference = Entry&;
 
-        pointer ptr;
-        pointer end_ptr;
+            pointer ptr;
+            pointer end_ptr;
 
-        Iterator(pointer p, pointer end) : ptr(p), end_ptr(end) {
-            if (ptr != end_ptr && ptr->state != State::FILLED) { ++(*this); }
+            Iterator(pointer p, pointer end) noexcept : ptr(p), end_ptr(end) {
+                if (ptr != end_ptr && ptr->state != State::FILLED) { ++(*this); }
+            }
+            reference operator*() const noexcept { return *ptr; }
+            pointer operator->() const noexcept { return ptr; }
+            Iterator& operator++() noexcept {
+                do { ptr++; } while (ptr != end_ptr && ptr->state != State::FILLED);
+                return *this;
+            }
+            Iterator operator++(int) noexcept { Iterator tmp = *this; ++(*this); return tmp; }
+            bool operator==(const Iterator& other) const noexcept { return ptr == other.ptr; }
+            bool operator!=(const Iterator& other) const noexcept { return ptr != other.ptr; }
+        };
+
+        struct ConstIterator {
+            using iterator_category = std::forward_iterator_tag;
+            using value_type = const Entry;
+            using difference_type = std::ptrdiff_t;
+            using pointer = const Entry*;
+            using reference = const Entry&; // 🚀 修复：修正引用别名为正确的 const Entry&
+
+            pointer ptr;
+            pointer end_ptr;
+
+            ConstIterator(pointer p, pointer end) noexcept : ptr(p), end_ptr(end) {
+                if (ptr != end_ptr && ptr->state != State::FILLED) { ++(*this); }
+            }
+            reference operator*() const noexcept { return *ptr; }
+            pointer operator->() const noexcept { return ptr; }
+            ConstIterator& operator++() noexcept {
+                do { ptr++; } while (ptr != end_ptr && ptr->state != State::FILLED);
+                return *this;
+            }
+            ConstIterator operator++(int) noexcept { ConstIterator tmp = *this; ++(*this); return tmp; }
+            bool operator==(const ConstIterator& other) const noexcept { return ptr == other.ptr; }
+            bool operator!=(const ConstIterator& other) const noexcept { return ptr != other.ptr; }
+        };
+
+        // 🚀 修复：将 std 容器标准的迭代器别名指向正确的自定义包装类，而非裸指针
+        using iterator = Iterator;
+        using const_iterator = ConstIterator;
+
+        FlatMap(size_t initial_capacity = 16)
+        {
+            size_t cap = 1;
+            while (cap < initial_capacity) cap <<= 1;
+            m_table = allocate_table(static_cast<uint32_t>(cap));
         }
-        reference operator*() const { return *ptr; }
-        pointer operator->() const { return ptr; }
-        Iterator& operator++() {
-            do { ptr++; } while (ptr != end_ptr && ptr->state != State::FILLED);
+
+        ~FlatMap() noexcept { if (m_table) deallocate_table(m_table); }
+
+        FlatMap(FlatMap&& other) noexcept : m_table(other.m_table) { other.m_table = nullptr; }
+
+        FlatMap& operator=(FlatMap&& other) noexcept
+        {
+            if (this != &other) {
+                if (m_table) deallocate_table(m_table);
+                m_table = other.m_table;
+                other.m_table = nullptr;
+            }
             return *this;
         }
-        Iterator operator++(int) { Iterator tmp = *this; ++(*this); return tmp; }
-        bool operator==(const Iterator& other) const { return ptr == other.ptr; }
-        bool operator!=(const Iterator& other) const { return ptr != other.ptr; }
+
+        FlatMap(const FlatMap&) = delete;
+        FlatMap& operator=(const FlatMap&) = delete;
+
+        iterator begin() noexcept {
+            auto* h = get_header();
+            uint32_t cap = h ? h->capacity : 0;
+            return iterator(m_table, m_table + cap);
+        }
+        iterator end() noexcept {
+            auto* h = get_header();
+            uint32_t cap = h ? h->capacity : 0;
+            return iterator(m_table + cap, m_table + cap);
+        }
+
+        const_iterator begin() const noexcept {
+            auto* h = get_header();
+            uint32_t cap = h ? h->capacity : 0;
+            return const_iterator(m_table, m_table + cap);
+        }
+        const_iterator end() const noexcept {
+            auto* h = get_header();
+            uint32_t cap = h ? h->capacity : 0;
+            return const_iterator(m_table + cap, m_table + cap);
+        }
+
+        const_iterator cbegin() const noexcept { return begin(); }
+        const_iterator cend() const noexcept { return end(); }
+
+        void insert(K key, V value)
+        {
+            Header* h = get_header();
+            uint32_t capacity = h ? h->capacity : 0;
+            uint32_t size = h ? h->size : 0;
+
+            if (capacity == 0) {
+                rehash(16);
+                h = get_header();
+                capacity = h->capacity;
+            } else if (size * 10 > capacity * 7) {
+                rehash(capacity * 2);
+                h = get_header();
+                capacity = h->capacity;
+            }
+
+            size_t mask = capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            while (m_table[slot].state == State::FILLED) {
+                if (m_table[slot].first == key) {
+                    m_table[slot].second = std::move(value);
+                    return;
+                }
+                slot = (slot + 1) & mask;
+            }
+            m_table[slot].first = key;
+            m_table[slot].second = std::move(value);
+            m_table[slot].state = State::FILLED;
+            h->size++;
+        }
+
+        iterator find(K key) noexcept
+        {
+            if (!m_table) return end();
+            Header* h = get_header();
+            size_t mask = h->capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            size_t start = slot;
+            while (m_table[slot].state != State::EMPTY) {
+                if (m_table[slot].state == State::FILLED && m_table[slot].first == key) {
+                    return iterator(&m_table[slot], m_table + h->capacity);
+                }
+                slot = (slot + 1) & mask;
+                if (slot == start) [[unlikely]] break;
+            }
+            return end();
+        }
+
+        const_iterator find(K key) const noexcept
+        {
+            if (!m_table) return end();
+            Header* h = get_header();
+            size_t mask = h->capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            size_t start = slot;
+            while (m_table[slot].state != State::EMPTY) {
+                if (m_table[slot].state == State::FILLED && m_table[slot].first == key) {
+                    return const_iterator(&m_table[slot], m_table + h->capacity);
+                }
+                slot = (slot + 1) & mask;
+                if (slot == start) [[unlikely]] break;
+            }
+            return end();
+        }
+
+        bool contains(K key) const noexcept
+        {
+            if (!m_table) return false;
+            Header* h = get_header();
+            size_t mask = h->capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            size_t start = slot;
+            while (m_table[slot].state != State::EMPTY) {
+                if (m_table[slot].state == State::FILLED && m_table[slot].first == key) {
+                    return true;
+                }
+                slot = (slot + 1) & mask;
+                if (slot == start) [[unlikely]] break;
+            }
+            return false;
+        }
+
+        bool erase(K key) noexcept
+        {
+            if (!m_table) return false;
+            Header* h = get_header();
+            size_t mask = h->capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            while (m_table[slot].state != State::EMPTY) {
+                if (m_table[slot].state == State::FILLED && m_table[slot].first == key) {
+                    m_table[slot].state = State::DELETED;
+                    m_table[slot].second.~V();
+                    new (&m_table[slot].second) V();
+                    h->size--;
+                    return true;
+                }
+                slot = (slot + 1) & mask;
+            }
+            return false;
+        }
+
+        // 🚀 新增：支持通过迭代器快速擦除，并返回下一个有效槽迭代器
+        iterator erase(const_iterator pos) noexcept
+        {
+            if (pos.ptr == nullptr || !m_table) return end();
+            Header* h = get_header();
+            Entry* end_ptr = m_table + h->capacity;
+            if (pos.ptr >= end_ptr || pos.ptr < m_table) return end();
+
+            Entry* p = const_cast<Entry*>(pos.ptr);
+            if (p->state == State::FILLED) {
+                p->state = State::DELETED;
+                p->second.~V();
+                new (&p->second) V();
+                h->size--;
+            }
+
+            // 顺延寻找下一个非空槽并返回
+            do {
+                p++;
+            } while (p != end_ptr && p->state != State::FILLED);
+            return iterator(p, end_ptr);
+        }
+
+        [[nodiscard]] size_t size() const noexcept
+        {
+            auto* h = get_header();
+            return h ? h->size : 0;
+        }
+        [[nodiscard]] bool empty() const noexcept { return size() == 0; }
+
+        void clear() noexcept {
+            if (m_table) {
+                Header* h = get_header();
+                uint32_t capacity = h->capacity;
+                for (uint32_t i = 0; i < capacity; ++i) {
+                    m_table[i].~Entry();
+                    new (&m_table[i]) Entry();
+                }
+                h->size = 0;
+            }
+        }
+
+        V& operator[](const K& key)
+        {
+            Header* h = get_header();
+            uint32_t capacity = h ? h->capacity : 0;
+            uint32_t size = h ? h->size : 0;
+
+            if (capacity == 0) {
+                rehash(16);
+                h = get_header();
+                capacity = h->capacity;
+            } else if (size * 10 > capacity * 7) {
+                rehash(capacity * 2);
+                h = get_header();
+                capacity = h->capacity;
+            }
+
+            size_t mask = capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            int first_deleted = -1;
+            while (m_table[slot].state != State::EMPTY) {
+                if (m_table[slot].state == State::FILLED) {
+                    if (m_table[slot].first == key) return m_table[slot].second;
+                } else if (m_table[slot].state == State::DELETED) {
+                    if (first_deleted == -1) first_deleted = static_cast<int>(slot);
+                }
+                slot = (slot + 1) & mask;
+            }
+            size_t insert_pos = (first_deleted != -1) ? static_cast<size_t>(first_deleted) : slot;
+            m_table[insert_pos].first = key;
+            new (&m_table[insert_pos].second) V();
+            m_table[insert_pos].state = State::FILLED;
+            h->size++;
+            return m_table[insert_pos].second;
+        }
     };
 
-    // --- 新增：常量迭代器 (ConstIterator) ---
-    struct ConstIterator {
-        using iterator_category = std::forward_iterator_tag;
-        using value_type = const Entry;
-        using difference_type = std::ptrdiff_t;
-        using pointer = const Entry*;
-        using reference = const Entry&;
+    // ─────────────────────────────────────────────────────────────────────────
+    // 2. C++23 针对指针类型键（K = Pointer）的特化实现（真·哨兵压缩极速版）
+    // ─────────────────────────────────────────────────────────────────────────
+    template <typename K, typename V>
+    requires std::is_pointer_v<K>
+    class FlatMap<K, V>
+    {
+    public:
+        struct Entry {
+            K first = nullptr;
+            V second{};
+        };
 
-        pointer ptr;
-        pointer end_ptr;
+    private:
+        struct Header {
+            uint32_t capacity;
+            uint32_t size;
+        };
 
-        ConstIterator(pointer p, pointer end) : ptr(p), end_ptr(end) {
-            if (ptr != end_ptr && ptr->state != State::FILLED) { ++(*this); }
+        static inline const K Tombstone = reinterpret_cast<K>(static_cast<uintptr_t>(1));
+
+        static constexpr size_t Alignment = alignof(Entry) > alignof(std::max_align_t)
+                                            ? alignof(Entry)
+                                            : alignof(std::max_align_t);
+        static constexpr size_t HeaderOffset = (sizeof(Header) + Alignment - 1) & ~(Alignment - 1);
+
+        Entry* m_table = nullptr;
+
+        static size_t hash_key(K key) noexcept {
+            uint64_t x = reinterpret_cast<uint64_t>(key);
+            x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+            x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+            x = x ^ (x >> 31);
+            return static_cast<size_t>(x);
         }
-        reference operator*() const { return *ptr; }
-        pointer operator->() const { return ptr; }
-        ConstIterator& operator++() {
-            do { ptr++; } while (ptr != end_ptr && ptr->state != State::FILLED);
+
+        [[nodiscard]] inline Header* get_header() const noexcept
+        {
+            if (!m_table) return nullptr;
+            return reinterpret_cast<Header*>(reinterpret_cast<char*>(m_table) - HeaderOffset);
+        }
+
+        static Entry* allocate_table(uint32_t capacity)
+        {
+            size_t total_size = HeaderOffset + static_cast<size_t>(capacity) * sizeof(Entry);
+            void* raw = detail::aligned_alloc_helper(total_size, Alignment);
+
+            Header* h = reinterpret_cast<Header*>(raw);
+            h->capacity = capacity;
+            h->size = 0;
+
+            Entry* table = reinterpret_cast<Entry*>(reinterpret_cast<char*>(raw) + HeaderOffset);
+            for (uint32_t i = 0; i < capacity; ++i) {
+                new (&table[i]) Entry();
+            }
+            return table;
+        }
+
+        static void deallocate_table(Entry* table) noexcept
+        {
+            if (!table) return;
+            Header* h = reinterpret_cast<Header*>(reinterpret_cast<char*>(table) - HeaderOffset);
+            uint32_t capacity = h->capacity;
+            for (uint32_t i = 0; i < capacity; ++i) {
+                table[i].~Entry();
+            }
+            void* raw = reinterpret_cast<char*>(table) - HeaderOffset;
+            detail::aligned_free_helper(raw, Alignment);
+        }
+
+        void rehash(size_t new_capacity)
+        {
+            Header* old_h = get_header();
+            uint32_t old_cap = old_h ? old_h->capacity : 0;
+            Entry* old_table = m_table;
+
+            m_table = allocate_table(static_cast<uint32_t>(new_capacity));
+
+            if (old_table) {
+                for (uint32_t i = 0; i < old_cap; ++i) {
+                    K k = old_table[i].first;
+                    if (k != nullptr && k != Tombstone) {
+                        insert(k, std::move(old_table[i].second));
+                    }
+                }
+                deallocate_table(old_table);
+            }
+        }
+
+    public:
+        struct Iterator {
+            using iterator_category = std::forward_iterator_tag;
+            using value_type = Entry;
+            using difference_type = std::ptrdiff_t;
+            using pointer = Entry*;
+            using reference = Entry&;
+
+            pointer ptr;
+            pointer end_ptr;
+
+            Iterator(pointer p, pointer end) noexcept : ptr(p), end_ptr(end) {
+                if (ptr != end_ptr && (ptr->first == nullptr || ptr->first == Tombstone)) { ++(*this); }
+            }
+            reference operator*() const noexcept { return *ptr; }
+            pointer operator->() const noexcept { return ptr; }
+            Iterator& operator++() noexcept {
+                do { ptr++; } while (ptr != end_ptr && (ptr->first == nullptr || ptr->first == Tombstone));
+                return *this;
+            }
+            Iterator operator++(int) noexcept { Iterator tmp = *this; ++(*this); return tmp; }
+            bool operator==(const Iterator& other) const noexcept { return ptr == other.ptr; }
+            bool operator!=(const Iterator& other) const noexcept { return ptr != other.ptr; }
+        };
+
+        struct ConstIterator {
+            using iterator_category = std::forward_iterator_tag;
+            using value_type = const Entry;
+            using difference_type = std::ptrdiff_t;
+            using pointer = const Entry*;
+            using reference = const Entry&; // 🚀 修复：修正引用别名为正确的 const Entry&
+
+            pointer ptr;
+            pointer end_ptr;
+
+            ConstIterator(pointer p, pointer end) noexcept : ptr(p), end_ptr(end) {
+                if (ptr != end_ptr && (ptr->first == nullptr || ptr->first == Tombstone)) { ++(*this); }
+            }
+            reference operator*() const noexcept { return *ptr; }
+            pointer operator->() const noexcept { return ptr; }
+            ConstIterator& operator++() noexcept {
+                do { ptr++; } while (ptr != end_ptr && (ptr->first == nullptr || ptr->first == Tombstone));
+                return *this;
+            }
+            ConstIterator operator++(int) noexcept { ConstIterator tmp = *this; ++(*this); return tmp; }
+            bool operator==(const ConstIterator& other) const noexcept { return ptr == other.ptr; }
+            bool operator!=(const ConstIterator& other) const noexcept { return ptr != other.ptr; }
+        };
+
+        // 🚀 修复：将 std 容器标准的迭代器别名指向正确的自定义包装类，而非裸指针
+        using iterator = Iterator;
+        using const_iterator = ConstIterator;
+
+        FlatMap(size_t initial_capacity = 16)
+        {
+            size_t cap = 1;
+            while (cap < initial_capacity) cap <<= 1;
+            m_table = allocate_table(static_cast<uint32_t>(cap));
+        }
+
+        ~FlatMap() noexcept { if (m_table) deallocate_table(m_table); }
+
+        FlatMap(FlatMap&& other) noexcept : m_table(other.m_table) { other.m_table = nullptr; }
+
+        FlatMap& operator=(FlatMap&& other) noexcept
+        {
+            if (this != &other) {
+                if (m_table) deallocate_table(m_table);
+                m_table = other.m_table;
+                other.m_table = nullptr;
+            }
             return *this;
         }
-        ConstIterator operator++(int) { ConstIterator tmp = *this; ++(*this); return tmp; }
-        bool operator==(const ConstIterator& other) const { return ptr == other.ptr; }
-        bool operator!=(const ConstIterator& other) const { return ptr != other.ptr; }
+
+        FlatMap(const FlatMap&) = delete;
+        FlatMap& operator=(const FlatMap&) = delete;
+
+        iterator begin() noexcept {
+            auto* h = get_header();
+            uint32_t cap = h ? h->capacity : 0;
+            return iterator(m_table, m_table + cap);
+        }
+        iterator end() noexcept {
+            auto* h = get_header();
+            uint32_t cap = h ? h->capacity : 0;
+            return iterator(m_table + cap, m_table + cap);
+        }
+
+        const_iterator begin() const noexcept {
+            auto* h = get_header();
+            uint32_t cap = h ? h->capacity : 0;
+            return const_iterator(m_table, m_table + cap);
+        }
+        const_iterator end() const noexcept {
+            auto* h = get_header();
+            uint32_t cap = h ? h->capacity : 0;
+            return const_iterator(m_table + cap, m_table + cap);
+        }
+
+        const_iterator cbegin() const noexcept { return begin(); }
+        const_iterator cend() const noexcept { return end(); }
+
+        void insert(K key, V value)
+        {
+            Header* h = get_header();
+            uint32_t capacity = h ? h->capacity : 0;
+            uint32_t size = h ? h->size : 0;
+
+            if (capacity == 0) {
+                rehash(16);
+                h = get_header();
+                capacity = h->capacity;
+            } else if (size * 10 > capacity * 7) {
+                rehash(capacity * 2);
+                h = get_header();
+                capacity = h->capacity;
+            }
+
+            size_t mask = capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            while (m_table[slot].first != nullptr && m_table[slot].first != Tombstone) {
+                if (m_table[slot].first == key) {
+                    m_table[slot].second = std::move(value);
+                    return;
+                }
+                slot = (slot + 1) & mask;
+            }
+            m_table[slot].first = key;
+            m_table[slot].second = std::move(value);
+            h->size++;
+        }
+
+        iterator find(K key) noexcept
+        {
+            if (!m_table) return end();
+            Header* h = get_header();
+            size_t mask = h->capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            size_t start = slot;
+            while (m_table[slot].first != nullptr) {
+                if (m_table[slot].first == key) {
+                    return iterator(&m_table[slot], m_table + h->capacity);
+                }
+                slot = (slot + 1) & mask;
+                if (slot == start) [[unlikely]] break;
+            }
+            return end();
+        }
+
+        const_iterator find(K key) const noexcept
+        {
+            if (!m_table) return end();
+            Header* h = get_header();
+            size_t mask = h->capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            size_t start = slot;
+            while (m_table[slot].first != nullptr) {
+                if (m_table[slot].first == key) {
+                    return const_iterator(&m_table[slot], m_table + h->capacity);
+                }
+                slot = (slot + 1) & mask;
+                if (slot == start) [[unlikely]] break;
+            }
+            return end();
+        }
+
+        bool contains(K key) const noexcept
+        {
+            if (!m_table) return false;
+            Header* h = get_header();
+            size_t mask = h->capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            size_t start = slot;
+            while (m_table[slot].first != nullptr) {
+                if (m_table[slot].first == key) {
+                    return true;
+                }
+                slot = (slot + 1) & mask;
+                if (slot == start) [[unlikely]] break;
+            }
+            return false;
+        }
+
+        bool erase(K key) noexcept
+        {
+            if (!m_table) return false;
+            Header* h = get_header();
+            size_t mask = h->capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            size_t start = slot;
+            while (m_table[slot].first != nullptr) {
+                if (m_table[slot].first == key) {
+                    m_table[slot].first = Tombstone;
+                    m_table[slot].second.~V();
+                    new (&m_table[slot].second) V();
+                    h->size--;
+                    return true;
+                }
+                slot = (slot + 1) & mask;
+                if (slot == start) [[unlikely]] break;
+            }
+            return false;
+        }
+
+        // 🚀 新增：支持通过迭代器快速擦除，并返回下一个有效槽迭代器
+        iterator erase(const_iterator pos) noexcept
+        {
+            if (pos.ptr == nullptr || !m_table) return end();
+            Header* h = get_header();
+            Entry* end_ptr = m_table + h->capacity;
+            if (pos.ptr >= end_ptr || pos.ptr < m_table) return end();
+
+            Entry* p = const_cast<Entry*>(pos.ptr);
+            if (p->first != nullptr && p->first != Tombstone) {
+                p->first = Tombstone;
+                p->second.~V();
+                new (&p->second) V();
+                h->size--;
+            }
+
+            // 顺延寻找下一个非空槽并返回
+            do {
+                p++;
+            } while (p != end_ptr && (p->first == nullptr || p->first == Tombstone));
+            return iterator(p, end_ptr);
+        }
+
+        [[nodiscard]] size_t size() const noexcept
+        {
+            auto* h = get_header();
+            return h ? h->size : 0;
+        }
+        [[nodiscard]] bool empty() const noexcept { return size() == 0; }
+
+        void clear() noexcept {
+            if (m_table) {
+                Header* h = get_header();
+                uint32_t capacity = h->capacity;
+                for (uint32_t i = 0; i < capacity; ++i) {
+                    m_table[i].~Entry();
+                    new (&m_table[i]) Entry();
+                }
+                h->size = 0;
+            }
+        }
+
+        V& operator[](K key)
+        {
+            Header* h = get_header();
+            uint32_t capacity = h ? h->capacity : 0;
+            uint32_t size = h ? h->size : 0;
+
+            if (capacity == 0) {
+                rehash(16);
+                h = get_header();
+                capacity = h->capacity;
+            } else if (size * 10 > capacity * 7) {
+                rehash(capacity * 2);
+                h = get_header();
+                capacity = h->capacity;
+            }
+
+            size_t mask = capacity - 1;
+            size_t slot = hash_key(key) & mask;
+            int first_deleted = -1;
+            while (m_table[slot].first != nullptr) {
+                if (m_table[slot].first == Tombstone) {
+                    if (first_deleted == -1) first_deleted = static_cast<int>(slot);
+                } else if (m_table[slot].first == key) {
+                    return m_table[slot].second;
+                }
+                slot = (slot + 1) & mask;
+            }
+            size_t insert_pos = (first_deleted != -1) ? static_cast<size_t>(first_deleted) : slot;
+            m_table[insert_pos].first = key;
+            new (&m_table[insert_pos].second) V();
+            h->size++;
+            return m_table[insert_pos].second;
+        }
     };
-
-    // --- 容器接口 ---
-    FlatMap(size_t initial_capacity = 16) {
-        size_t cap = 1;
-        while (cap < initial_capacity) cap <<= 1;
-        table_.resize(cap);
-        mask_ = cap - 1;
-    }
-
-    Iterator begin() { return Iterator(table_.data(), table_.data() + table_.size()); }
-    Iterator end() { return Iterator(table_.data() + table_.size(), table_.data() + table_.size()); }
-
-    // 新增：const 版本的迭代器接口
-    ConstIterator begin() const { return ConstIterator(table_.data(), table_.data() + table_.size()); }
-    ConstIterator end() const { return ConstIterator(table_.data() + table_.size(), table_.data() + table_.size()); }
-    ConstIterator cbegin() const { return begin(); }
-    ConstIterator cend() const { return end(); }
-
-    void insert(K key, V value) {
-        if (size_ * 10 > table_.size() * 7) rehash(table_.size() * 2);
-        size_t h = hash_key(key) & mask_;
-        while (table_[h].state == State::FILLED) {
-            if (table_[h].first == key) {
-                table_[h].second = value;
-                return;
-            }
-            h = (h + 1) & mask_;
-        }
-        table_[h].first = key;
-        table_[h].second = value;
-        table_[h].state = State::FILLED;
-        size_++;
-    }
-
-    // 普通 find
-    Iterator find(K key) {
-        size_t h = hash_key(key) & mask_;
-        size_t start = h;
-        while (table_[h].state != State::EMPTY) {
-            if (table_[h].state == State::FILLED && table_[h].first == key) {
-                return Iterator(&table_[h], table_.data() + table_.size());
-            }
-            h = (h + 1) & mask_;
-            if (h == start) break;
-        }
-        return end();
-    }
-
-    // --- 新增：标记为 const 的 find ---
-    ConstIterator find(K key) const {
-        size_t h = hash_key(key) & mask_;
-        size_t start = h;
-        while (table_[h].state != State::EMPTY) {
-            if (table_[h].state == State::FILLED && table_[h].first == key) {
-                return ConstIterator(&table_[h], table_.data() + table_.size());
-            }
-            h = (h + 1) & mask_;
-            if (h == start) break;
-        }
-        return end();
-    }
-
-    // 在 public 区域，紧随 find 函数之后添加
-    bool contains(K key) const {
-        size_t h = hash_key(key) & mask_;
-        size_t start = h;
-        while (table_[h].state != State::EMPTY) {
-            if (table_[h].state == State::FILLED && table_[h].first == key) {
-                return true;
-            }
-            h = (h + 1) & mask_;
-            if (h == start) break;
-        }
-        return false;
-    }
-
-    bool erase(K key) {
-        size_t h = hash_key(key) & mask_;
-        while (table_[h].state != State::EMPTY) {
-            if (table_[h].state == State::FILLED && table_[h].first == key) {
-                table_[h].state = State::DELETED;
-                size_--;
-                return true;
-            }
-            h = (h + 1) & mask_;
-        }
-        return false;
-    }
-
-    size_t size() const { return size_; }
-    bool empty() const { return size_ == 0; }
-    void clear() { table_.assign(table_.size(), Entry{}); size_ = 0; }
-
-    V& operator[](const K& key) {
-        if (size_ * 10 > table_.size() * 7) rehash(table_.size() * 2);
-        size_t h = hash_key(key) & mask_;
-        int first_deleted = -1;
-        while (table_[h].state != State::EMPTY) {
-            if (table_[h].state == State::FILLED) {
-                if (table_[h].first == key) return table_[h].second;
-            } else if (table_[h].state == State::DELETED) {
-                if (first_deleted == -1) first_deleted = static_cast<int>(h);
-            }
-            h = (h + 1) & mask_;
-        }
-        size_t insert_pos = (first_deleted != -1) ? static_cast<size_t>(first_deleted) : h;
-        table_[insert_pos].first = key;
-        table_[insert_pos].second = V{};
-        table_[insert_pos].state = State::FILLED;
-        size_++;
-        return table_[insert_pos].second;
-    }
-};
-
 } // namespace StuCanvas::utils

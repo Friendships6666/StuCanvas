@@ -9,10 +9,10 @@
 #include "../types/cpu/cpu_types.hpp"
 #include "sobject_types.hpp"
 #include "sobject_data.hpp"
+#include "ptr_block_deque.hpp"
 namespace StuCanvas
 {
-    template <typename T>
-    struct SObject;
+
     template <typename T>
     struct SObjectGraph;
 
@@ -36,8 +36,8 @@ namespace StuCanvas
         std::string name;
         uint64_t id{};
 
-        utils::BlockDeque<const SObject*, 4> parents;
-        utils::BlockDeque<const SObject*, 16> children;
+        utils::PtrBlockDeque<const SObject*, 4> parents;
+        utils::PtrBlockDeque<const SObject*, 16> children;
 
 
 

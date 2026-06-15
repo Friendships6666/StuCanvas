@@ -11,24 +11,89 @@
 #include <cstdint>
 #include <cstddef>
 #include <type_traits>
-#include "tiny_vector.hpp"
+#include <cassert>
+
+// 针对 Windows MSVC 平台和 GCC 平台的极致控制与对齐保护
+#if defined(_MSC_VER)
+#include <malloc.h>
+#define STUCANVAS_NOINLINE __declspec(noinline)
+#else
+#define STUCANVAS_NOINLINE __attribute__((noinline))
+#endif
 
 namespace StuCanvas::utils
 {
-    /**
-     * @brief 终极极致压缩、零系统调用、分段指针直达的高性能分块双端队列。
-     *        类内仅占 8 字节。
-     */
-    template <typename T, size_t BlockSize = 1024>
-    class BlockDeque
+    namespace detail
     {
+        // 跨平台高自适应对齐分配器
+        inline void* aligned_alloc_helper(size_t size, size_t alignment)
+        {
+#if defined(__cpp_aligned_new) && __cpp_aligned_new >= 201606L
+            #ifndef __STDCPP_DEFAULT_NEW_ALIGNMENT__
+                #define __STDCPP_DEFAULT_NEW_ALIGNMENT__ alignof(std::max_align_t)
+            #endif
+            if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
+                return ::operator new(size, std::align_val_t(alignment));
+            } else {
+                return ::operator new(size);
+            }
+#else
+            if (alignment <= alignof(std::max_align_t)) {
+                return ::operator new(size);
+            }
+            #if defined(_MSC_VER)
+                void* ptr = _aligned_malloc(size, alignment);
+                if (!ptr) throw std::bad_alloc();
+                return ptr;
+            #else
+                void* ptr = nullptr;
+                if (posix_memalign(&ptr, alignment, size) != 0) {
+                    throw std::bad_alloc();
+                }
+                return ptr;
+            #endif
+#endif
+        }
+
+        inline void aligned_free_helper(void* ptr, size_t alignment) noexcept
+        {
+            if (!ptr) return;
+#if defined(__cpp_aligned_new) && __cpp_aligned_new >= 201606L
+            #ifndef __STDCPP_DEFAULT_NEW_ALIGNMENT__
+                #define __STDCPP_DEFAULT_NEW_ALIGNMENT__ alignof(std::max_align_t)
+            #endif
+            if (alignment > __STDCPP_DEFAULT_NEW_ALIGNMENT__) {
+                ::operator delete(ptr, std::align_val_t(alignment));
+            } else {
+                ::operator delete(ptr);
+            }
+#else
+            if (alignment <= alignof(std::max_align_t)) {
+                ::operator delete(ptr);
+                return;
+            }
+            #if defined(_MSC_VER)
+                _aligned_free(ptr);
+            #else
+                std::free(ptr);
+            #endif
+#endif
+        }
+    } // namespace detail
+
+    template <typename T, size_t BlockSize = 1024>
+    class PtrBlockDeque
+    {
+        // 编译期自检：非指针类型、非 64 位（8字节）指针一律禁止编译
+        static_assert(std::is_pointer_v<T>, "PtrBlockDeque can only store pointer types!");
+        static_assert(sizeof(T) == 8, "PtrBlockDeque can only store 8-byte (64-bit OS) pointer types!");
         static_assert((BlockSize & (BlockSize - 1)) == 0, "BlockSize must be a power of 2!");
 
     private:
         struct Header {
-            uint32_t capacity;
-            uint32_t num_blocks;
-            uint64_t total_size;
+            uint32_t capacity;   // 分块二级指针数组的容量
+            uint32_t num_blocks; // 当前已分配的物理分块数量
+            uint64_t total_size; // 全局活动元素总数
         };
 
         static constexpr size_t HeaderOffset = (sizeof(Header) + alignof(T*) - 1) & ~(alignof(T*) - 1);
@@ -46,12 +111,10 @@ namespace StuCanvas::utils
         static constexpr size_t Shift = constexpr_log2(BlockSize);
         static constexpr size_t Mask = BlockSize - 1;
 
-        // 类内唯一成员，8 字节裸二级指针
+        // 类内唯一的 8 字节成员
         T** m_blocks = nullptr;
 
-        // ─────────────────────────────────────────────────────────────────────
-        // 🚀 物理块线程局部复用池（彻底斩断系统调用开销）
-        // ─────────────────────────────────────────────────────────────────────
+        // 🚀 物理分块线程局部无锁复用池
         struct ElementBlockCache {
             struct Node {
                 Node* next;
@@ -99,7 +162,6 @@ namespace StuCanvas::utils
 
         static T* allocate_element_block()
         {
-            // 优先从线程局部无锁回收池中提取空闲块（3个 CPU 指令，0 系统调用）
             if (t_block_cache.head) {
                 void* raw = t_block_cache.head;
                 t_block_cache.head = t_block_cache.head->next;
@@ -114,7 +176,6 @@ namespace StuCanvas::utils
         static void deallocate_element_block(T* ptr) noexcept
         {
             if (!ptr) return;
-            // 快速压入回收池（上限控制在 16 个块，约占用 128KB 虚拟内存）
             if (t_block_cache.count < 16) {
                 auto* node = reinterpret_cast<typename ElementBlockCache::Node*>(ptr);
                 node->next = t_block_cache.head;
@@ -165,17 +226,27 @@ namespace StuCanvas::utils
             h->num_blocks = num_blocks + 1;
         }
 
-    public:
-
-        void reserve(size_t capacity)
+        // 🚀 析离慢路径（Outlined Cold Path），彻底释放主循环寄存器
+        STUCANVAS_NOINLINE void grow_and_push(T val)
         {
-            size_t blocks_needed = (capacity + BlockSize - 1) >> Shift;
-            if (blocks_needed == 0) blocks_needed = 1;
-            reserve_blocks(static_cast<uint32_t>(blocks_needed));
+            Header* h = get_header();
+            uint64_t total_size = h ? h->total_size : 0;
+            const size_t current_block_idx = total_size >> Shift;
+            uint32_t num_blocks = h ? h->num_blocks : 0;
+
+            if (current_block_idx >= num_blocks) {
+                add_new_block();
+                h = get_header();
+            }
+
+            const size_t element_idx = total_size & Mask;
+            m_blocks[current_block_idx][element_idx] = val;
+            h->total_size = total_size + 1;
         }
 
+    public:
         // ─────────────────────────────────────────────────────────────────────
-        // 1. 终极分段块指针迭代器（Sequential Read 极致提速核心）
+        // 1. 高性能分段指针迭代器
         // ─────────────────────────────────────────────────────────────────────
         struct Iterator {
             using iterator_category = std::forward_iterator_tag;
@@ -184,14 +255,14 @@ namespace StuCanvas::utils
             using pointer = T*;
             using reference = T&;
 
-            T* ptr = nullptr;             // 直达当前物理元素的裸指针
-            T* block_end = nullptr;       // 当前 Block 物理末尾边界指针
-            T** current_block = nullptr;  // 指向 m_blocks 中当前 Block 槽位的指针
+            T* ptr = nullptr;
+            T* block_end = nullptr;
+            T** current_block = nullptr;
 
             reference operator*() const noexcept { return *ptr; }
             pointer operator->() const noexcept { return ptr; }
 
-            // 🚀 热路径自增优化：99.9% 概率下仅执行一轮裸指针自增与比较（速度等同于 vector 裸指针）
+            // 🚀 热路径迭代：99.9% 概率仅做裸指针自增和比较（速度等同于 vector）
             Iterator& operator++() noexcept {
                 ++ptr;
                 if (ptr == block_end) [[unlikely]] {
@@ -257,18 +328,17 @@ namespace StuCanvas::utils
         };
 
         Iterator begin() noexcept {
-            const size_t total_size = size(); // 缓存堆上的 total_size
-            if (!m_blocks || total_size == 0) return { nullptr, nullptr, nullptr };
+            Header* h = get_header();
+            if (!h || h->total_size == 0) return { nullptr, nullptr, nullptr };
             return { m_blocks[0], m_blocks[0] + BlockSize, m_blocks };
         }
 
         Iterator end() noexcept {
-            const size_t total_size = size(); // 缓存堆上的 total_size
-            if (!m_blocks || total_size == 0) return { nullptr, nullptr, nullptr };
-            const size_t block_idx = total_size >> Shift;
-            const size_t element_idx = total_size & Mask;
+            Header* h = get_header();
+            if (!h || h->total_size == 0) return { nullptr, nullptr, nullptr };
+            const size_t block_idx = h->total_size >> Shift;
+            const size_t element_idx = h->total_size & Mask;
 
-            // 安全边界处理：若恰好整除分块，end().ptr 应该指向前一个块的物理末尾之后
             if (element_idx == 0) {
                 T* ptr = m_blocks[block_idx - 1] + BlockSize;
                 return { ptr, ptr, m_blocks + block_idx - 1 };
@@ -279,16 +349,16 @@ namespace StuCanvas::utils
         }
 
         ConstIterator begin() const noexcept {
-            const size_t total_size = size(); // 缓存堆上的 total_size
-            if (!m_blocks || total_size == 0) return { nullptr, nullptr, nullptr };
+            Header* h = get_header();
+            if (!h || h->total_size == 0) return { nullptr, nullptr, nullptr };
             return { m_blocks[0], m_blocks[0] + BlockSize, m_blocks };
         }
 
         ConstIterator end() const noexcept {
-            const size_t total_size = size(); // 缓存堆上的 total_size
-            if (!m_blocks || total_size == 0) return { nullptr, nullptr, nullptr };
-            const size_t block_idx = total_size >> Shift;
-            const size_t element_idx = total_size & Mask;
+            Header* h = get_header();
+            if (!h || h->total_size == 0) return { nullptr, nullptr, nullptr };
+            const size_t block_idx = h->total_size >> Shift;
+            const size_t element_idx = h->total_size & Mask;
             if (element_idx == 0) {
                 const T* ptr = m_blocks[block_idx - 1] + BlockSize;
                 return { ptr, ptr, m_blocks + block_idx - 1 };
@@ -304,9 +374,9 @@ namespace StuCanvas::utils
         // ─────────────────────────────────────────────────────────────────────
         // 2. 生命周期与移动语义 (RAII)
         // ─────────────────────────────────────────────────────────────────────
-        BlockDeque() { add_new_block(); }
+        PtrBlockDeque() { add_new_block(); }
 
-        ~BlockDeque() noexcept
+        ~PtrBlockDeque() noexcept
         {
             clear();
             if (m_blocks) {
@@ -319,15 +389,15 @@ namespace StuCanvas::utils
             }
         }
 
-        BlockDeque(const BlockDeque&) = delete;
-        BlockDeque& operator=(const BlockDeque&) = delete;
+        PtrBlockDeque(const PtrBlockDeque&) = delete;
+        PtrBlockDeque& operator=(const PtrBlockDeque&) = delete;
 
-        BlockDeque(BlockDeque&& other) noexcept : m_blocks(other.m_blocks)
+        PtrBlockDeque(PtrBlockDeque&& other) noexcept : m_blocks(other.m_blocks)
         {
             other.m_blocks = nullptr;
         }
 
-        BlockDeque& operator=(BlockDeque&& other) noexcept
+        PtrBlockDeque& operator=(PtrBlockDeque&& other) noexcept
         {
             if (this != &other) {
                 clear();
@@ -346,7 +416,7 @@ namespace StuCanvas::utils
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // 3. 容器状态与寻址 API
+        // 3. 基础寻址与容量 API
         // ─────────────────────────────────────────────────────────────────────
         [[nodiscard]] size_t size() const noexcept
         {
@@ -373,34 +443,37 @@ namespace StuCanvas::utils
         T& back() noexcept { return (*this)[size() - 1]; }
         const T& back() const noexcept { return (*this)[size() - 1]; }
 
-        // ─────────────────────────────────────────────────────────────────────
-        // 4. 原地构造与安全析构
-        // ─────────────────────────────────────────────────────────────────────
-        template <typename... Args>
-        T& emplace_back(Args&&... args)
+        void reserve(size_t capacity) noexcept
         {
-            Header* h = get_header();
-            uint64_t total_size = h ? h->total_size : 0;
-
-            const size_t current_block_idx = total_size >> Shift;
-            uint32_t num_blocks = h ? h->num_blocks : 0;
-
-            if (current_block_idx >= num_blocks) {
-                add_new_block();
-                h = get_header();
-            }
-
-            const size_t element_idx = total_size & Mask;
-            T* slot = &m_blocks[current_block_idx][element_idx];
-
-            new (slot) T(std::forward<Args>(args)...);
-            h->total_size = total_size + 1;
-
-            return *slot;
+            size_t blocks_needed = (capacity + BlockSize - 1) >> Shift;
+            if (blocks_needed == 0) blocks_needed = 1;
+            reserve_blocks(static_cast<uint32_t>(blocks_needed));
         }
 
-        void push_back(const T& value) { this->emplace_back(value); }
-        void push_back(T&& value) { this->emplace_back(std::move(value)); }
+        // 🚀 极致优化热路径：5 条汇编，完美寄存器分配，支持 SIMD
+        inline void push_back(T val) noexcept
+        {
+            Header* h = get_header();
+            if (h) [[likely]] {
+                uint64_t total_size = h->total_size;
+                const size_t current_block_idx = total_size >> Shift;
+                if (current_block_idx < h->num_blocks) [[likely]] {
+                    const size_t element_idx = total_size & Mask;
+                    m_blocks[current_block_idx][element_idx] = val;
+                    h->total_size = total_size + 1;
+                    return;
+                }
+            }
+            grow_and_push(val);
+        }
+
+        template <typename... Args>
+        T& emplace_back(Args&&... args) noexcept
+        {
+            T val(std::forward<Args>(args)...);
+            push_back(val);
+            return back();
+        }
 
         void pop_back() noexcept
         {
@@ -408,12 +481,6 @@ namespace StuCanvas::utils
             if (!h || h->total_size == 0) return;
 
             uint64_t total_size = h->total_size;
-            const size_t current_block_idx = (total_size - 1) >> Shift;
-            const size_t element_idx = (total_size - 1) & Mask;
-
-            if constexpr (!std::is_trivially_destructible_v<T>) {
-                m_blocks[current_block_idx][element_idx].~T();
-            }
             h->total_size = total_size - 1;
 
             size_t active_blocks = (h->total_size + BlockSize - 1) >> Shift;
@@ -425,28 +492,22 @@ namespace StuCanvas::utils
             }
         }
 
+        // 🚀 指针特化 O(1) 批量快速重置：循环次数削减千倍
         void clear() noexcept
         {
             Header* h = get_header();
             if (!h || h->total_size == 0) return;
 
-            if constexpr (std::is_trivially_destructible_v<T>) {
-                uint32_t num_blocks = h->num_blocks;
-                // 缓存分块：将多余的块直接丢进无锁 Cache，0 系统调用
-                for (uint32_t i = 1; i < num_blocks; ++i) {
-                    deallocate_element_block(m_blocks[i]);
-                }
-                h->num_blocks = 1;
-                h->total_size = 0;
-            } else {
-                while (size() > 0) {
-                    pop_back();
-                }
+            uint32_t num_blocks = h->num_blocks;
+            for (uint32_t i = 1; i < num_blocks; ++i) {
+                deallocate_element_block(m_blocks[i]);
             }
+            h->num_blocks = 1;
+            h->total_size = 0;
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // 5. 快速擦除方法
+        // 4. 快速擦除方法
         // ─────────────────────────────────────────────────────────────────────
         size_t erase_unordered(const T& value) noexcept
         {
