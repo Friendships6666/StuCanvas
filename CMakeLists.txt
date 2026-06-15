@@ -201,6 +201,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/family.hpp
         stucanvas/sobject/visual.hpp
         stucanvas/utils/tiny_vector.hpp
+        stucanvas/sobject/layout.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 

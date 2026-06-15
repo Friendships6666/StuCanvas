@@ -24,7 +24,7 @@ namespace StuCanvas
         RECALCULATED = 1ULL << 2, // 用于自底向上重算时的状态传导标记
         QUERIED = 1ULL << 3
     };
-
+    struct VisualConfig;
 
 
 
@@ -38,6 +38,8 @@ namespace StuCanvas
 
         utils::BlockDeque<const SObject*, 4> parents;
         utils::BlockDeque<const SObject*, 16> children;
+
+        const VisualConfig* visual = nullptr;
 
 
 

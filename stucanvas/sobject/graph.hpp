@@ -44,6 +44,7 @@ namespace StuCanvas
 
 
 
+
     template <typename T>
     struct SObjectGraph
     {
@@ -51,6 +52,7 @@ namespace StuCanvas
 
 
         utils::BlockDeque<SObjectFamily<T>, 64> family_pool;
+
 
 
         // 接口：创建一个高能几何家族，返回只读指针
