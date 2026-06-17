@@ -27,6 +27,10 @@ namespace StuCanvas
     struct VisualConfig;
 
 
+    template <typename T>
+    struct SObjectInstance;
+
+
 
     template <typename T>
     struct SObject
@@ -49,6 +53,7 @@ namespace StuCanvas
 
         const SObjectVTable<T>* vptr = nullptr;
         SObjectGraph<T>* graph = nullptr; // 反向指针
+        const SObjectInstance<T>* instance = nullptr;
 
 
         // ① 默认构造函数
