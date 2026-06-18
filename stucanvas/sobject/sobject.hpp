@@ -22,9 +22,15 @@ namespace StuCanvas
         DIRTY = 1ULL << 0, // 标记该节点本身被直接修改（数值或样式）
         VISITED = 1ULL << 1, // 用于堆递归中 DFS 的访问标记
         RECALCULATED = 1ULL << 2, // 用于自底向上重算时的状态传导标记
-        QUERIED = 1ULL << 3
+        QUERIED = 1ULL << 3,
+        TRIANGLES_REQUIRED = 1ULL << 4,
+        TRIANGLES_GENERATOR = 1ULL << 5,
+        STRIPS_REQUIRED = 1ULL << 6,
+        STRIPS_GENERATOR = 1ULL << 7,
+        POINTS_REQUIRED = 1ULL << 8,
+        POINTS_GENERATOR = 1ULL << 9,
     };
-    struct VisualConfig;
+
 
 
     template <typename T>
@@ -39,28 +45,18 @@ namespace StuCanvas
         mutable uint64_t mask = 0;
         std::string name;
         uint64_t id{};
-
         utils::BlockDeque<const SObject*, 4> parents;
         utils::BlockDeque<const SObject*, 16> children;
-
-        const VisualConfig* visual = nullptr;
-
-
-
         SObjectData<T> data;
 
-
-
         const SObjectVTable<T>* vptr = nullptr;
+
         SObjectGraph<T>* graph = nullptr; // 反向指针
+
         const SObjectInstance<T>* instance = nullptr;
 
-
-        // ① 默认构造函数
         SObject() noexcept = default;
 
-        // ② 析构函数：由于 std::string name, 以及 BlockDeque 内部自己拥有完善的 RAII 释放，
-        // 默认析构函数会自动、安全地释放它们，无需我们在此手动释放内存。
         ~SObject() noexcept = default;
 
         // ③ 极其关键：显式删除拷贝构造与拷贝赋值，防止图拓扑结构发生不可逆的野指针崩塌

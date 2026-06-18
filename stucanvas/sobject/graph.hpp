@@ -81,6 +81,9 @@ namespace StuCanvas
 
         // 脏节点收集列表
         utils::TinyVector<SObject<T>*> dirty_list;
+        utils::TinyVector<SObject<T>*> triangles_required_list;
+        utils::TinyVector<SObject<T>*> points_required_list;
+        utils::TinyVector<SObject<T>*> strips_required_list;
 
         // 侧边属性并行数组 (SoA)，彻底免去 SObject 内置索引的空间开销
         utils::TinyVector<uint32_t> topo_indices;
@@ -138,6 +141,9 @@ namespace StuCanvas
         // ─── 3. 修改函数与拓扑关系动态重组 ───
 
         void markDirty(SObject<T>* node) noexcept;
+        void markRequireTriangles(SObject<T>* node) noexcept;
+        void markRequirePoints(SObject<T>* node) noexcept;
+        void markRequireStips(SObject<T>* node) noexcept;
         // 修改 2D 点数值，支持通过参数包同时可选更改名称或拓扑
         void modifyPoint2D(const SObject<T>* model_ptr, T new_x, T new_y);
 
@@ -157,6 +163,12 @@ namespace StuCanvas
 
             // 1. 稀疏自适应向下脏化
             PropagateDirtyFlags();
+
+            if (!triangles_required_list.empty()) PropagateTrianglesRequiredFlags();
+
+            if (!points_required_list.empty()) PropagatePointsRequiredFlags();
+
+            if (!strips_required_list.empty()) PropagateStripsRequiredFlags();
 
             // 2. 若拓扑改变，重新编译层级并填充侧边属性
             if (topology_changed)
@@ -241,6 +253,56 @@ namespace StuCanvas
                 }
             }
         }
+
+        void PropagateTrianglesRequiredFlags()
+        {
+            size_t head = 0;
+            while (head < triangles_required_list.size())
+            {
+                SObject<T>* curr = triangles_required_list[head];
+                head++;
+
+                for (auto* parent : curr->parents)
+                {
+                    parent->set_mask(NodeMask::TRIANGLES_GENERATOR);
+                }
+            }
+            triangles_required_list.clear();
+        }
+
+        void PropagateStripsRequiredFlags()
+        {
+            size_t head = 0;
+            while (head < strips_required_list.size())
+            {
+                SObject<T>* curr = strips_required_list[head];
+                head++;
+
+                for (auto* parent : curr->parents)
+                {
+                    parent->set_mask(NodeMask::STRIPS_GENERATOR);
+                }
+            }
+            strips_required_list.clear();
+        }
+
+        void PropagatePointsRequiredFlags()
+        {
+            size_t head = 0;
+            while (head < points_required_list.size())
+            {
+                SObject<T>* curr = points_required_list[head];
+                head++;
+
+                for (auto* parent : curr->parents)
+                {
+                    parent->set_mask(NodeMask::POINTS_GENERATOR);
+                }
+            }
+            points_required_list.clear();
+        }
+
+        
 
         void CompileLeveledOrder()
         {

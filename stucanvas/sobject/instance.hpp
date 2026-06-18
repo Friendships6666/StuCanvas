@@ -25,12 +25,13 @@ namespace StuCanvas
     // SObjectInstance 享元空间实例 (100% 纯裸指针，数据导向设计，零 CPU 锁开销)
     // 🚀 已完美契合 64 字节（CPU 缓存行）对齐边界。
     // ========================================================================
+    struct VisualConfig;
     template <typename T>
     struct SObjectInstance
     {
         // 1. 物理几何源：指向一整块“完整刚性铁板”的家族包装器只读指针（8 字节）
         const SObjectFamily<T>* source_family = nullptr;
-
+        const VisualConfig* visual = nullptr;
         // 2. 空间摆放状态 (TRS 刚性物理通道) —— 使用高能 Eigen 库
         Eigen::Matrix<T, 3, 1> world_position = Eigen::Matrix<T, 3, 1>::Zero();    // 世界坐标 (T) (12 字节)
         Eigen::Quaternion<T>   world_rotation = Eigen::Quaternion<T>::Identity();  // 四元数旋转 (R) (16 字节)
@@ -38,8 +39,8 @@ namespace StuCanvas
 
         // 3. 🚀 拓扑依赖树：采用极致优化的 8 字节 BlockDeque 存储父子实例指针
         // 数据类型为指针类型，100% 触发 C++23 特化免析构批量释放与物理块无锁 Cache 拦截
-        utils::BlockDeque<const SObjectInstance<T>*, 4> parents;  // (8 字节)
-        utils::BlockDeque<const SObjectInstance<T>*, 4> children; // (8 字节)
+        utils::BlockDeque<const SObjectInstance*, 4> parents;  // (8 字节)
+        utils::BlockDeque<const SObjectInstance*, 4> children; // (8 字节)
 
         // ─────────────────────────────────────────────────────────────────────
         // 4. 拓扑安全生命周期（移动时自动打补丁，析构自动断开，杜绝野指针崩溃）

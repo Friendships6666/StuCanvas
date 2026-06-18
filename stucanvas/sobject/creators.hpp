@@ -4,6 +4,49 @@
 
 namespace StuCanvas
 {
+
+    template <typename T>
+    inline void SObjectGraph<T>::markDirty(SObject<T>* node) noexcept
+    {
+        // 极致去重：仅在节点尚未变脏时，标记并推入脏列表
+        if (!node->has_mask(NodeMask::DIRTY))
+        {
+            node->set_mask(NodeMask::DIRTY);
+            dirty_list.push_back(node);
+        }
+    }
+
+
+    template <typename T>
+    inline void SObjectGraph<T>::markRequireTriangles(SObject<T>* node) noexcept
+    {
+        if (!node->has_mask(NodeMask::TRIANGLES_REQUIRED))
+        {
+            node->set_mask(NodeMask::TRIANGLES_REQUIRED);
+            triangles_required_list.push_back(node);
+        }
+    }
+    template <typename T>
+inline void SObjectGraph<T>::markRequirePoints(SObject<T>* node) noexcept
+    {
+        if (!node->has_mask(NodeMask::POINTS_REQUIRED))
+        {
+            node->set_mask(NodeMask::POINTS_REQUIRED);
+            points_required_list.push_back(node);
+        }
+    }
+
+    template <typename T>
+inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
+    {
+        if (!node->has_mask(NodeMask::STRIPS_REQUIRED))
+        {
+            node->set_mask(NodeMask::STRIPS_REQUIRED);
+            strips_required_list.push_back(node);
+        }
+    }
+
+
     template <typename T>
     SObject<T>* SObjectGraph<T>::AllocateModel(NodeType type, std::string_view name, bool is_dirty)
     {
