@@ -14,6 +14,7 @@
 #include "eigen3/Eigen/Dense"
 #include "instance.hpp"
 #include "tiny_vector.hpp"
+
 namespace StuCanvas
 {
     // ========================================================================
@@ -35,14 +36,10 @@ namespace StuCanvas
     };
 
 
-
-
     // ========================================================================
     // 核心对象图谱 (SObjectGraph) —— 100% 稀疏级 O(M) 推送计算图
     // ========================================================================
     enum class AlignBoundary : uint8_t { Min, Center, Max };
-
-
 
 
     template <typename T>
@@ -54,7 +51,6 @@ namespace StuCanvas
         utils::BlockDeque<SObjectFamily<T>, 64> family_pool;
 
 
-
         // 接口：创建一个高能几何家族，返回只读指针
         const SObjectFamily<T>* createFamily(const SObject<T>* start_node)
         {
@@ -62,10 +58,6 @@ namespace StuCanvas
             auto& fam = family_pool.emplace_back(*this, start_node);
             return &fam;
         }
-
-
-
-
 
 
         utils::FlatMap<const SObject<T>*, Outline> fonts_2d;
@@ -302,7 +294,6 @@ namespace StuCanvas
             points_required_list.clear();
         }
 
-        
 
         void CompileLeveledOrder()
         {
