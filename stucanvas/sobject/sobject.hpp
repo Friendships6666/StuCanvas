@@ -47,7 +47,6 @@ namespace StuCanvas
         uint64_t id{};
 
 
-
         utils::BlockDeque<const SObject*, 4> parents;
         utils::BlockDeque<const SObject*, 16> children;
         T discretization_step_points{};
