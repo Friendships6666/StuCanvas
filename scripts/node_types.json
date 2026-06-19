@@ -77,13 +77,13 @@
     {
       "name": "CIRCLE_2D",
       "world": "WORLD_2D",
-      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "categories": ["CAT_CURVE"],
       "id": 1
     },
     {
       "name": "CIRCLE_2D_THREE_POINTS",
       "world": "WORLD_2D",
-      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "categories": ["CAT_CURVE"],
       "id": 2
     },
     {
@@ -95,25 +95,25 @@
     {
       "name": "ELLIPSE_2D",
       "world": "WORLD_2D",
-      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "categories": ["CAT_CURVE"],
       "id": 3
     },
     {
       "name": "HYPERBOLA_2D",
       "world": "WORLD_2D",
-      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "categories": ["CAT_CURVE"],
       "id": 4
     },
     {
       "name": "PARABOLA_2D",
       "world": "WORLD_2D",
-      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "categories": ["CAT_CURVE"],
       "id": 5
     },
     {
       "name": "POLY_2D_GENERATIVE",
       "world": "WORLD_2D",
-      "categories": ["CAT_POINT", "CAT_LINEAR", "CAT_CURVE"],
+      "categories": ["CAT_LINEAR", "CAT_CURVE"],
       "id": 6
     },
     {
@@ -197,8 +197,14 @@
     {
       "name": "SPHERE_3D",
       "world": "WORLD_3D",
-      "categories": ["CAT_POINT", "CAT_SURFACE"],
+      "categories": ["CAT_SURFACE"],
       "id": 4
+    },
+    {
+      "name": "SPHERE_3D_FOUR_POINTS",
+      "world": "WORLD_3D",
+      "categories": ["CAT_SURFACE"],
+      "id": 9
     },
     {
       "name": "CYLINDER_3D",
@@ -227,7 +233,7 @@
     {
       "name": "CIRCLE_3D",
       "world": "WORLD_3D",
-      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "categories": ["CAT_CURVE"],
       "id": 1
     },
     {
@@ -239,25 +245,25 @@
     {
       "name": "ELLIPSE_3D",
       "world": "WORLD_3D",
-      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "categories": ["CAT_CURVE"],
       "id": 3
     },
     {
       "name": "HYPERBOLA_3D",
       "world": "WORLD_3D",
-      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "categories": ["CAT_CURVE"],
       "id": 4
     },
     {
       "name": "PARABOLA_3D",
       "world": "WORLD_3D",
-      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "categories": ["CAT_CURVE"],
       "id": 5
     },
     {
       "name": "POLY_3D_GENERATIVE",
       "world": "WORLD_3D",
-      "categories": ["CAT_POINT", "CAT_LINEAR", "CAT_CURVE"],
+      "categories": ["CAT_LINEAR", "CAT_CURVE"],
       "id": 6
     },
     {

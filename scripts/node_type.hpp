@@ -41,8 +41,8 @@ namespace StuCanvas {
         LINE_2D_RAY           = 0x0100020000000003ULL,
         LINE_2D_PERPENDICULAR = 0x0100020000000004ULL,
         LINE_2D_PARALLEL      = 0x0100020000000005ULL,
-        CIRCLE_2D             = 0x0100050000000001ULL,
-        CIRCLE_2D_THREE_POINTS = 0x0100050000000002ULL,
+        CIRCLE_2D             = 0x0100040000000001ULL,
+        CIRCLE_2D_THREE_POINTS = 0x0100040000000002ULL,
         ARC_2D                = 0x0100040000000002ULL,
         ELLIPSE_2D            = 0x0100050000000003ULL,
         HYPERBOLA_2D          = 0x0100050000000004ULL,
@@ -62,6 +62,7 @@ namespace StuCanvas {
         PLANE_3D_PARALLEL     = 0x02000A0000000002ULL,
         PLANE_3D_PERPENDICULAR = 0x02000A0000000003ULL,
         SPHERE_3D             = 0x0200090000000004ULL,
+        SPHERE_3D_FOUR_POINTS = 0x0200080000000009ULL,
         CYLINDER_3D           = 0x0200080000000005ULL,
         CONE_3D               = 0x0200080000000006ULL,
         CUBOID_3D             = 0x0200080000000007ULL,
@@ -137,17 +138,20 @@ namespace StuCanvas {
     };
 
     // ---- 物理存在的解算与离散化模板函数前向声明 ----
-    template <typename T> void SolveCircle2D(SObjectGraph<T>&, SObject<T>&);
-    template <typename T> void SolveCircle2DThreePoints(SObjectGraph<T>&, SObject<T>&);
-    template <typename T> void SolveLine2DRay(SObjectGraph<T>&, SObject<T>&);
-    template <typename T> void SolveLine2DSegment(SObjectGraph<T>&, SObject<T>&);
-    template <typename T> void SolveLine2DStraight(SObjectGraph<T>&, SObject<T>&);
-    template <typename T> void SolveLine3DRay(SObjectGraph<T>&, SObject<T>&);
-    template <typename T> void SolveLine3DSegment(SObjectGraph<T>&, SObject<T>&);
-    template <typename T> void SolveLine3DStraight(SObjectGraph<T>&, SObject<T>&);
-    template <typename T> void SolvePlane3D(SObjectGraph<T>&, SObject<T>&);
-    template <typename T> void SolvePoint2DMid(SObjectGraph<T>&, SObject<T>&);
-    template <typename T> void SolvePoint3DMid(SObjectGraph<T>&, SObject<T>&);
+    template <typename T> void SolveCircle2D(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveCircle2DThreePoints(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveCylinder3D(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveLine2DRay(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveLine2DSegment(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveLine2DStraight(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveLine3DRay(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveLine3DSegment(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveLine3DStraight(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolvePlane3D(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolvePoint2DMid(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolvePoint3DMid(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveSphere3D(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveSphere3DFourPoints(SObjectGraph<T>&, SObject<T>&) noexcept;
 
     // ---- 自动拼装完毕的 C++17 内联全局虚表定义 (声明与定义合一) ----
     template <typename T>
@@ -422,7 +426,16 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Sphere3D_VTable = {
-        .solver = nullptr,
+        .solver = &SolveSphere3D<T>,
+        .discretize_to_points = nullptr,
+        .discretize_to_strips = nullptr,
+        .discretize_to_triangles = nullptr,
+        .discretize_to_paths = nullptr
+    };
+
+    template <typename T>
+    inline const SObjectVTable<T> Sphere3DFourPoints_VTable = {
+        .solver = &SolveSphere3DFourPoints<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
@@ -431,7 +444,7 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Cylinder3D_VTable = {
-        .solver = nullptr,
+        .solver = &SolveCylinder3D<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,

@@ -40,6 +40,77 @@ namespace StuCanvas
     }
 
     // ========================================================================
+    // 💡 3D 体解算器
+    // ========================================================================
+
+    template <typename T>
+    void SolveSphere3D(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* center = self.parents[0];
+        const SObject<T>* radius = self.parents[1];
+        self.data.sphere_3d.cx = center->data.point_3d.x;
+        self.data.sphere_3d.cy = center->data.point_3d.y;
+        self.data.sphere_3d.cz = center->data.point_3d.z;
+        self.data.sphere_3d.r  = radius->data.scalar.value;
+    }
+
+    template <typename T>
+    void SolveSphere3DFourPoints(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* p0 = self.parents[0];
+        const SObject<T>* p1 = self.parents[1];
+        const SObject<T>* p2 = self.parents[2];
+        const SObject<T>* p3 = self.parents[3];
+
+        T ax = p0->data.point_3d.x, ay = p0->data.point_3d.y, az = p0->data.point_3d.z;
+        T bx = p1->data.point_3d.x, by = p1->data.point_3d.y, bz = p1->data.point_3d.z;
+        T cx = p2->data.point_3d.x, cy = p2->data.point_3d.y, cz = p2->data.point_3d.z;
+        T dx = p3->data.point_3d.x, dy = p3->data.point_3d.y, dz = p3->data.point_3d.z;
+
+        T ux = bx - ax, uy = by - ay, uz = bz - az;
+        T vx = cx - ax, vy = cy - ay, vz = cz - az;
+        T wx = dx - ax, wy = dy - ay, wz = dz - az;
+
+        T uv = ux*vx + uy*vy + uz*vz;
+        T uw = ux*wx + uy*wy + uz*wz;
+        T vw = vx*wx + vy*wy + vz*wz;
+
+        T nu = ux*ux + uy*uy + uz*uz;
+        T nv = vx*vx + vy*vy + vz*vz;
+        T nw = wx*wx + wy*wy + wz*wz;
+
+        T det = nu*(nv*nw - vw*vw) - uv*(uv*nw - uw*vw) + uw*(uv*vw - uw*nv);
+
+        T a_s = (nv*nw - vw*vw) / det;
+        T b_s = (uv*nw - uw*vw) / det;
+        T c_s = (uv*vw - uw*nv) / det;
+
+        T cx_ = static_cast<T>(0.5) * (a_s*nu + b_s*uv + c_s*uw);
+        T cy_ = static_cast<T>(0.5) * (a_s*uv + b_s*nv + c_s*vw);
+        T cz_ = static_cast<T>(0.5) * (a_s*uw + b_s*vw + c_s*nw);
+
+        self.data.sphere_3d.cx = ax + cx_;
+        self.data.sphere_3d.cy = ay + cy_;
+        self.data.sphere_3d.cz = az + cz_;
+        self.data.sphere_3d.r  = static_cast<T>(sqrt(cx_*cx_ + cy_*cy_ + cz_*cz_));
+    }
+
+    template <typename T>
+    void SolveCylinder3D(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* p0 = self.parents[0];
+        const SObject<T>* p1 = self.parents[1];
+        const SObject<T>* pr = self.parents[2];
+        self.data.cylinder_3d.x0 = p0->data.point_3d.x;
+        self.data.cylinder_3d.y0 = p0->data.point_3d.y;
+        self.data.cylinder_3d.z0 = p0->data.point_3d.z;
+        self.data.cylinder_3d.x1 = p1->data.point_3d.x;
+        self.data.cylinder_3d.y1 = p1->data.point_3d.y;
+        self.data.cylinder_3d.z1 = p1->data.point_3d.z;
+        self.data.cylinder_3d.r  = pr->data.scalar.value;
+    }
+
+    // ========================================================================
     // 💡 圆解算器
     // ========================================================================
 

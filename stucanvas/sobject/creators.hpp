@@ -75,7 +75,12 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
         node->data.point_2d.y = y;
         node->vptr = &Point2DFree_VTable<T>;
 
-        linkParents(node, info.parents);
+        for (const auto* parent : info.parents) {
+            if (parent) {
+                node->parents.push_back(parent);
+                const_cast<SObject<T>*>(parent)->children.push_back(node);
+            }
+        }
         return node;
     }
 
@@ -98,7 +103,7 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     {
         SObject<T>* node = AllocateModel(NodeType::LINE_2D_SEGMENT, name);
         node->vptr = &Line2DSegment_VTable<T>;
-        linkParents(node, p1, p2);
+        linkParents(node, {p1, p2});
         return node;
     }
 
@@ -108,7 +113,7 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     {
         SObject<T>* node = AllocateModel(NodeType::LINE_2D_STRAIGHT, name);
         node->vptr = &Line2DStraight_VTable<T>;
-        linkParents(node, p1, p2);
+        linkParents(node, {p1, p2});
         return node;
     }
 
@@ -117,7 +122,7 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     {
         SObject<T>* node = AllocateModel(NodeType::LINE_2D_RAY, name);
         node->vptr = &Line2DRay_VTable<T>;
-        linkParents(node, p1, p2);
+        linkParents(node, {p1, p2});
         return node;
     }
 
@@ -127,7 +132,7 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     {
         SObject<T>* node = AllocateModel(NodeType::LINE_3D_SEGMENT, name);
         node->vptr = &Line3DSegment_VTable<T>;
-        linkParents(node, p1, p2);
+        linkParents(node, {p1, p2});
         return node;
     }
 
@@ -137,7 +142,7 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     {
         SObject<T>* node = AllocateModel(NodeType::LINE_3D_STRAIGHT, name);
         node->vptr = &Line3DStraight_VTable<T>;
-        linkParents(node, p1, p2);
+        linkParents(node, {p1, p2});
         return node;
     }
 
@@ -156,7 +161,7 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     {
         SObject<T>* node = AllocateModel(NodeType::PLANE_3D, name);
         node->vptr = &Plane3D_VTable<T>;
-        linkParents(node, p1, p2, p3);
+        linkParents(node, {p1, p2, p3});
         return node;
     }
 
@@ -166,7 +171,7 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     {
         SObject<T>* node = AllocateModel(NodeType::POINT_2D_MID, name);
         node->vptr = &Point2DMid_VTable<T>;
-        linkParents(node, p1, p2);
+        linkParents(node, {p1, p2});
         return node;
     }
 
@@ -176,7 +181,7 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     {
         SObject<T>* node = AllocateModel(NodeType::POINT_3D_MID, name);
         node->vptr = &Point3DMid_VTable<T>;
-        linkParents(node, p1, p2);
+        linkParents(node, {p1, p2});
         return node;
     }
 
@@ -187,7 +192,7 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     {
         SObject<T>* node = AllocateModel(NodeType::CIRCLE_2D, name);
         node->vptr = &Circle2D_VTable<T>;
-        linkParents(node, center, radius);
+        linkParents(node, {center, radius});
         return node;
     }
 
@@ -197,7 +202,38 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     {
         SObject<T>* node = AllocateModel(NodeType::CIRCLE_2D_THREE_POINTS, name);
         node->vptr = &Circle2DThreePoints_VTable<T>;
-        linkParents(node, p1, p2, p3);
+        linkParents(node, {p1, p2, p3});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createSphere3D(const SObject<T>* center, const SObject<T>* radius,
+                                                      std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::SPHERE_3D, name);
+        node->vptr = &Sphere3D_VTable<T>;
+        linkParents(node, {center, radius});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createSphere3DFourPoints(const SObject<T>* p1, const SObject<T>* p2,
+                                                                const SObject<T>* p3, const SObject<T>* p4,
+                                                                std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::SPHERE_3D_FOUR_POINTS, name);
+        node->vptr = &Sphere3DFourPoints_VTable<T>;
+        linkParents(node, {p1, p2, p3, p4});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createCylinder3D(const SObject<T>* p1, const SObject<T>* p2,
+                                                        const SObject<T>* radius, std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::CYLINDER_3D, name);
+        node->vptr = &Cylinder3D_VTable<T>;
+        linkParents(node, {p1, p2, radius});
         return node;
     }
 

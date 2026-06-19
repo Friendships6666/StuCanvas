@@ -39,5 +39,15 @@ namespace StuCanvas
         {
             T cx, cy, r;
         } circle_2d;
+
+        struct
+        {
+            T cx, cy, cz, r;
+        } sphere_3d;
+
+        struct
+        {
+            T x0, y0, z0, x1, y1, z1, r;
+        } cylinder_3d;
     };
 }

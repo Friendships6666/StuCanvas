@@ -94,31 +94,13 @@ namespace StuCanvas
 
         SObject<T>* AllocateModel(NodeType type, std::string_view name, bool is_dirty = true);
 
-        // 双向父-子关系绑定辅助函数
-        void linkParents(SObject<T>* node, const SObject<T>* parent)
+        // 双向父-子关系绑定辅助函数（单一函数，initializer_list 接受任意数量的父节点）
+        void linkParents(SObject<T>* node, std::initializer_list<const SObject<T>*> parents)
         {
-            node->parents.push_back(parent);
-            const_cast<SObject<T>*>(parent)->children.push_back(node);
-        }
-
-        void linkParents(SObject<T>* node, const SObject<T>* p1, const SObject<T>* p2)
-        {
-            linkParents(node, p1);
-            linkParents(node, p2);
-        }
-
-        void linkParents(SObject<T>* node, const SObject<T>* p1, const SObject<T>* p2, const SObject<T>* p3)
-        {
-            linkParents(node, p1);
-            linkParents(node, p2);
-            linkParents(node, p3);
-        }
-
-        void linkParents(SObject<T>* node, const std::vector<const SObject<T>*>& parents)
-        {
-            for (const auto* parent : parents)
+            for (auto* parent : parents)
             {
-                if (parent) linkParents(node, parent);
+                node->parents.push_back(parent);
+                const_cast<SObject<T>*>(parent)->children.push_back(node);
             }
         }
 
@@ -162,6 +144,14 @@ namespace StuCanvas
                                          std::string_view name = "Circle2D");
         const SObject<T>* createCircle2DThreePoints(const SObject<T>* p1, const SObject<T>* p2, const SObject<T>* p3,
                                                     std::string_view name = "Circle2DThreePoints");
+
+        const SObject<T>* createSphere3D(const SObject<T>* center, const SObject<T>* radius,
+                                         std::string_view name = "Sphere3D");
+        const SObject<T>* createSphere3DFourPoints(const SObject<T>* p1, const SObject<T>* p2,
+                                                   const SObject<T>* p3, const SObject<T>* p4,
+                                                   std::string_view name = "Sphere3DFourPoints");
+        const SObject<T>* createCylinder3D(const SObject<T>* p1, const SObject<T>* p2, const SObject<T>* radius,
+                                           std::string_view name = "Cylinder3D");
 
         // ─── 3. 修改函数与拓扑关系动态重组 ───
 

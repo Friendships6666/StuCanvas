@@ -194,7 +194,7 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
 
             # 【物理检测】：检查该 C++ 符号是否存在
             if check_symbol_exists(cpp_source, func_name):
-                found_declarations.append(f"    template <typename T> void {func_name}(SObjectGraph<T>&, SObject<T>&);")
+                found_declarations.append(f"    template <typename T> void {func_name}(SObjectGraph<T>&, SObject<T>&) noexcept;")
                 assignments.append(f"        .{field} = &{func_name}<T>")
             else:
                 assignments.append(f"        .{field} = nullptr")
