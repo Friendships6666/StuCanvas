@@ -42,6 +42,7 @@ namespace StuCanvas {
         LINE_2D_PERPENDICULAR = 0x0100020000000004ULL,
         LINE_2D_PARALLEL      = 0x0100020000000005ULL,
         CIRCLE_2D             = 0x0100050000000001ULL,
+        CIRCLE_2D_THREE_POINTS = 0x0100050000000002ULL,
         ARC_2D                = 0x0100040000000002ULL,
         ELLIPSE_2D            = 0x0100050000000003ULL,
         HYPERBOLA_2D          = 0x0100050000000004ULL,
@@ -136,6 +137,8 @@ namespace StuCanvas {
     };
 
     // ---- 物理存在的解算与离散化模板函数前向声明 ----
+    template <typename T> void SolveCircle2D(SObjectGraph<T>&, SObject<T>&);
+    template <typename T> void SolveCircle2DThreePoints(SObjectGraph<T>&, SObject<T>&);
     template <typename T> void SolveLine2DRay(SObjectGraph<T>&, SObject<T>&);
     template <typename T> void SolveLine2DSegment(SObjectGraph<T>&, SObject<T>&);
     template <typename T> void SolveLine2DStraight(SObjectGraph<T>&, SObject<T>&);
@@ -239,7 +242,16 @@ namespace StuCanvas {
 
     template <typename T>
     inline const SObjectVTable<T> Circle2D_VTable = {
-        .solver = nullptr,
+        .solver = &SolveCircle2D<T>,
+        .discretize_to_points = nullptr,
+        .discretize_to_strips = nullptr,
+        .discretize_to_triangles = nullptr,
+        .discretize_to_paths = nullptr
+    };
+
+    template <typename T>
+    inline const SObjectVTable<T> Circle2DThreePoints_VTable = {
+        .solver = &SolveCircle2DThreePoints<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,

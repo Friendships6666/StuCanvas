@@ -81,6 +81,12 @@
       "id": 1
     },
     {
+      "name": "CIRCLE_2D_THREE_POINTS",
+      "world": "WORLD_2D",
+      "categories": ["CAT_POINT", "CAT_CURVE"],
+      "id": 2
+    },
+    {
       "name": "ARC_2D",
       "world": "WORLD_2D",
       "categories": ["CAT_CURVE"],

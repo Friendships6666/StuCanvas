@@ -34,10 +34,7 @@ namespace StuCanvas
 
 
     template <typename T>
-    struct SObjectTransformation;
-
-
-    struct SObjectAppearance;
+    struct SObjectInstance;
 
 
 
@@ -51,8 +48,7 @@ namespace StuCanvas
         utils::BlockDeque<const SObject*, 4> parents;
         utils::BlockDeque<const SObject*, 16> children;
 
-        utils::BlockDeque<const SObjectTransformation<T>*, 16> transformation;
-        utils::BlockDeque<const SObjectAppearance*, 16> appearance;
+        utils::BlockDeque<const SObjectInstance<T>*, 16> instances;
         SObjectData<T> data;
 
         const SObjectVTable<T>* vptr = nullptr;

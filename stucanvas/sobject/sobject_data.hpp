@@ -34,5 +34,10 @@ namespace StuCanvas
         {
             T value;
         } scalar;
+
+        struct
+        {
+            T cx, cy, r;
+        } circle_2d;
     };
 }

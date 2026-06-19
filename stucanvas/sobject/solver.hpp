@@ -40,6 +40,43 @@ namespace StuCanvas
     }
 
     // ========================================================================
+    // 💡 圆解算器
+    // ========================================================================
+
+    template <typename T>
+    void SolveCircle2D(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* center = self.parents[0];
+        const SObject<T>* radius = self.parents[1];
+        self.data.circle_2d.cx = center->data.point_2d.x;
+        self.data.circle_2d.cy = center->data.point_2d.y;
+        self.data.circle_2d.r  = radius->data.scalar.value;
+    }
+
+    template <typename T>
+    void SolveCircle2DThreePoints(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* p0 = self.parents[0];
+        const SObject<T>* p1 = self.parents[1];
+        const SObject<T>* p2 = self.parents[2];
+
+        T ax = p0->data.point_2d.x, ay = p0->data.point_2d.y;
+        T bx = p1->data.point_2d.x, by = p1->data.point_2d.y;
+        T cx = p2->data.point_2d.x, cy = p2->data.point_2d.y;
+
+        T d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+        T ux = ((ax*ax + ay*ay) * (by - cy) + (bx*bx + by*by) * (cy - ay) + (cx*cx + cy*cy) * (ay - by)) / d;
+        T uy = ((ax*ax + ay*ay) * (cx - bx) + (bx*bx + by*by) * (ax - cx) + (cx*cx + cy*cy) * (bx - ax)) / d;
+
+        T dx = ax - ux, dy = ay - uy;
+        T r = static_cast<T>(sqrt(dx*dx + dy*dy));
+
+        self.data.circle_2d.cx = ux;
+        self.data.circle_2d.cy = uy;
+        self.data.circle_2d.r  = r;
+    }
+
+    // ========================================================================
     // 💡 6 个公开解算器实现 (100% 代码复用)
     // ========================================================================
 

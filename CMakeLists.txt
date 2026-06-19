@@ -197,7 +197,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/creators.hpp
         stucanvas/sobject/modifiers.hpp
         stucanvas/sobject/getters.hpp
-        stucanvas/sobject/transformation.hpp
+        stucanvas/sobject/instance.hpp
         stucanvas/sobject/family.hpp
         stucanvas/sobject/appearance.hpp
         stucanvas/utils/tiny_vector.hpp

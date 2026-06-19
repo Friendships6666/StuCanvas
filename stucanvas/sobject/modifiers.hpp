@@ -35,6 +35,14 @@ namespace StuCanvas
     // 2. 独立属性修改器（冷路径：改名字、改关系，不污染高频数值修改）
     // ========================================================================
 
+    template <typename T>
+    void SObjectGraph<T>::modifyCircle2DRadius(const SObject<T>* model_ptr, T new_radius)
+    {
+        auto* node = const_cast<SObject<T>*>(model_ptr);
+        node->data.circle_2d.r = new_radius;
+        markDirty(node);
+    }
+
     // 极致优化：改名字只涉及描述性元数据，不影响任何几何代数计算，因此无需脏化图谱和重解算！
     template <typename T>
     void SObjectGraph<T>::modifyName(const SObject<T>* model_ptr, std::string_view new_name)
