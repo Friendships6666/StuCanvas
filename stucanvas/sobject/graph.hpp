@@ -47,6 +47,31 @@ namespace StuCanvas
     struct CameraConfig;
 
 
+
+    template <typename T>
+    struct Parametric_Curve_2D
+    {
+        utils::FfiFunction<T(T)> function_x;
+        utils::FfiFunction<T(T)> function_y;
+    };
+
+    template <typename T>
+    struct Parametric_Curve_3D
+    {
+        utils::FfiFunction<T(T)> function_x;
+        utils::FfiFunction<T(T)> function_y;
+        utils::FfiFunction<T(T)> function_z;
+    };
+
+    template <typename T>
+    struct Parametric_Surface_3D
+    {
+        utils::FfiFunction<T(T,T)> function_x;
+        utils::FfiFunction<T(T,T)> function_y;
+        utils::FfiFunction<T(T,T)> function_z;
+    };
+
+
     template <typename T>
     struct SObjectGraph
     {
