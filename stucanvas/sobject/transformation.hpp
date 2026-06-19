@@ -6,7 +6,7 @@
 * The full license is in the file LICENSE, distributed with this software. *
 ***************************************************************************/
 
-// stucanvas/object/sobject_instance.hpp
+// stucanvas/object/sobject_Transformation.hpp
 #pragma once
 #include <eigen3/Eigen/Dense>
 #include <stdexcept>
@@ -15,23 +15,19 @@
 
 namespace StuCanvas
 {
-    template <typename T>
-    class SObjectFamily;
 
     template <typename T>
     struct AABB3D;
 
     // ========================================================================
-    // SObjectInstance 享元空间实例 (100% 纯裸指针，数据导向设计，零 CPU 锁开销)
+    // SObjectTransformation 享元空间实例 (100% 纯裸指针，数据导向设计，零 CPU 锁开销)
     // 🚀 已完美契合 64 字节（CPU 缓存行）对齐边界。
     // ========================================================================
     struct VisualConfig;
     template <typename T>
-    struct SObjectInstance
+    struct SObjectTransformation
     {
-        // 1. 物理几何源：指向一整块“完整刚性铁板”的家族包装器只读指针（8 字节）
-        const SObjectFamily<T>* source_family = nullptr;
-        const VisualConfig* visual = nullptr;
+        const SObject<T>* source = nullptr;
         // 2. 空间摆放状态 (TRS 刚性物理通道) —— 使用高能 Eigen 库
         Eigen::Matrix<T, 3, 1> world_position = Eigen::Matrix<T, 3, 1>::Zero();    // 世界坐标 (T) (12 字节)
         Eigen::Quaternion<T>   world_rotation = Eigen::Quaternion<T>::Identity();  // 四元数旋转 (R) (16 字节)
@@ -39,26 +35,26 @@ namespace StuCanvas
 
         // 3. 🚀 拓扑依赖树：采用极致优化的 8 字节 BlockDeque 存储父子实例指针
         // 数据类型为指针类型，100% 触发 C++23 特化免析构批量释放与物理块无锁 Cache 拦截
-        utils::BlockDeque<const SObjectInstance*, 4> parents;  // (8 字节)
-        utils::BlockDeque<const SObjectInstance*, 4> children; // (8 字节)
+        utils::BlockDeque<const SObjectTransformation*, 4> parents;  // (8 字节)
+        utils::BlockDeque<const SObjectTransformation*, 4> children; // (8 字节)
 
         // ─────────────────────────────────────────────────────────────────────
         // 4. 拓扑安全生命周期（移动时自动打补丁，析构自动断开，杜绝野指针崩溃）
         // ─────────────────────────────────────────────────────────────────────
-        SObjectInstance() noexcept = default;
+        SObjectTransformation() noexcept = default;
 
-        ~SObjectInstance() noexcept
+        ~SObjectTransformation() noexcept
         {
             disconnect_self();
         }
 
         // 禁止拷贝，保障图谱唯一性
-        SObjectInstance(const SObjectInstance&) = delete;
-        SObjectInstance& operator=(const SObjectInstance&) = delete;
+        SObjectTransformation(const SObjectTransformation&) = delete;
+        SObjectTransformation& operator=(const SObjectTransformation&) = delete;
 
         // 移动构造
-        SObjectInstance(SObjectInstance&& other) noexcept
-            : source_family(other.source_family),
+        SObjectTransformation(SObjectTransformation&& other) noexcept
+            : 
               world_position(std::move(other.world_position)),
               world_rotation(std::move(other.world_rotation)),
               world_scales(std::move(other.world_scales)),
@@ -66,17 +62,17 @@ namespace StuCanvas
               children(std::move(other.children))
         {
             patch_connections(&other, this);
-            other.source_family = nullptr;
+            other.source = nullptr;
         }
 
         // 移动赋值
-        SObjectInstance& operator=(SObjectInstance&& other) noexcept
+        SObjectTransformation& operator=(SObjectTransformation&& other) noexcept
         {
             if (this != &other)
             {
                 disconnect_self();
 
-                source_family = other.source_family;
+                source = other.source;
                 world_position = std::move(other.world_position);
                 world_rotation = std::move(other.world_rotation);
                 world_scales = std::move(other.world_scales);
@@ -84,7 +80,7 @@ namespace StuCanvas
                 children = std::move(other.children);
 
                 patch_connections(&other, this);
-                other.source_family = nullptr;
+                other.source = nullptr;
             }
             return *this;
         }
@@ -94,9 +90,9 @@ namespace StuCanvas
         // 核心：直接拉取整门家族合并后的局部包围盒 (Local AABB)
         AABB3D<T> GetLocalAABB() const
         {
-            if (source_family) [[likely]]
+            if (source) [[likely]]
             {
-                return source_family->GetLocalAABB();
+                return source->GetLocalAABB();
             }
 
             AABB3D<T> box;
@@ -109,7 +105,7 @@ namespace StuCanvas
         AABB3D<T> GetWorldAABB() const
         {
             AABB3D<T> world_box;
-            if (!source_family) [[unlikely]] return world_box;
+            if (!source) [[unlikely]] return world_box;
 
             AABB3D<T> local_box = GetLocalAABB();
 
@@ -160,10 +156,10 @@ namespace StuCanvas
 
     private:
         // 🚀 核心连接打补丁：让所有父子关系中的旧地址指针自动复写为 this 新地址
-        void patch_connections(SObjectInstance* old_addr, SObjectInstance* new_addr) noexcept
+        void patch_connections(SObjectTransformation* old_addr, SObjectTransformation* new_addr) noexcept
         {
             for (size_t i = 0; i < parents.size(); ++i) {
-                auto* parent = const_cast<SObjectInstance*>(parents[i]);
+                auto* parent = const_cast<SObjectTransformation*>(parents[i]);
                 if (parent) {
                     for (size_t j = 0; j < parent->children.size(); ++j) {
                         if (parent->children[j] == old_addr) {
@@ -173,7 +169,7 @@ namespace StuCanvas
                 }
             }
             for (size_t i = 0; i < children.size(); ++i) {
-                auto* child = const_cast<SObjectInstance*>(children[i]);
+                auto* child = const_cast<SObjectTransformation*>(children[i]);
                 if (child) {
                     for (size_t j = 0; j < child->parents.size(); ++j) {
                         if (child->parents[j] == old_addr) {
@@ -188,13 +184,13 @@ namespace StuCanvas
         void disconnect_self() noexcept
         {
             for (size_t i = 0; i < parents.size(); ++i) {
-                auto* parent = const_cast<SObjectInstance*>(parents[i]);
+                auto* parent = const_cast<SObjectTransformation*>(parents[i]);
                 if (parent) {
                     parent->children.erase_unordered(this);
                 }
             }
             for (size_t i = 0; i < children.size(); ++i) {
-                auto* child = const_cast<SObjectInstance*>(children[i]);
+                auto* child = const_cast<SObjectTransformation*>(children[i]);
                 if (child) {
                     child->parents.erase_unordered(this);
                 }

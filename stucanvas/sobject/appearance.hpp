@@ -97,20 +97,20 @@ namespace StuCanvas
     };
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 4. VisualConfig 享元控制类（强制堆分配版，无任何编译警告）
+    // 4. SObjectAppearance 享元控制类（强制堆分配版，无任何编译警告）
     // ─────────────────────────────────────────────────────────────────────────
-    class VisualConfig
+    class SObjectAppearance
     {
     private:
         // 🚀 核心限制 1：将构造与析构私有化，彻底斩断栈分配的物理通道
-        VisualConfig() noexcept = default;
-        ~VisualConfig() noexcept = default;
+        SObjectAppearance() noexcept = default;
+        ~SObjectAppearance() noexcept = default;
 
         // 🚀 核心限制 2：删除所有拷贝、移动构造与赋值，防止在栈上产生任何中途拷贝复制
-        VisualConfig(const VisualConfig&) = delete;
-        VisualConfig& operator=(const VisualConfig&) = delete;
-        VisualConfig(VisualConfig&&) = delete;
-        VisualConfig& operator=(VisualConfig&&) = delete;
+        SObjectAppearance(const SObjectAppearance&) = delete;
+        SObjectAppearance& operator=(const SObjectAppearance&) = delete;
+        SObjectAppearance(SObjectAppearance&&) = delete;
+        SObjectAppearance& operator=(SObjectAppearance&&) = delete;
 
     public:
         // 极致对齐：锁定为 16 字节
@@ -131,31 +131,31 @@ namespace StuCanvas
         // ─────────────────────────────────────────────────────────────────────
 
         /**
-         * @brief 在堆上分配并就地构造一个 VisualConfig 对象（唯一的创建方式）
+         * @brief 在堆上分配并就地构造一个 SObjectAppearance 对象（唯一的创建方式）
          */
-        [[nodiscard]] static VisualConfig* Create()
+        [[nodiscard]] static SObjectAppearance* Create()
         {
             // 通过自适应分配器在堆上分配物理空间，并增加 NOLINT 抑制分析器误报
-            void* raw = ::StuCanvas::utils::detail::aligned_alloc_helper(sizeof(VisualConfig), Alignment); // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
-            return new (raw) VisualConfig();
+            void* raw = ::StuCanvas::utils::detail::aligned_alloc_helper(sizeof(SObjectAppearance), Alignment); // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
+            return new (raw) SObjectAppearance();
         }
 
         /**
-         * @brief 手动释放并销毁一个堆上的 VisualConfig 对象（唯一的销毁方式）
+         * @brief 手动释放并销毁一个堆上的 SObjectAppearance 对象（唯一的销毁方式）
          */
-        static void Destroy(VisualConfig* ptr) noexcept
+        static void Destroy(SObjectAppearance* ptr) noexcept
         {
             if (!ptr) return;
-            ptr->~VisualConfig(); // 手动唤醒析构（安全释放 std::unique_ptr）
+            ptr->~SObjectAppearance(); // 手动唤醒析构（安全释放 std::unique_ptr）
             ::StuCanvas::utils::detail::aligned_free_helper(ptr, Alignment);
         }
 
         /**
          * @brief 显式克隆方法（生成一个全新的堆对象）
          */
-        [[nodiscard]] VisualConfig* Clone() const
+        [[nodiscard]] SObjectAppearance* Clone() const
         {
-            VisualConfig* clone = Create();
+            SObjectAppearance* clone = Create();
             clone->id = id;
             clone->rendering_path = rendering_path;
             clone->cad_style = cad_style;

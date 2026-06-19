@@ -12,7 +12,7 @@
 #include "sobject.hpp"
 #include "../types/cpu/cpu_types.hpp"
 #include "eigen3/Eigen/Dense"
-#include "instance.hpp"
+#include "transformation.hpp"
 #include "tiny_vector.hpp"
 
 namespace StuCanvas

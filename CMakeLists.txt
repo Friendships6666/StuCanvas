@@ -197,11 +197,10 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/creators.hpp
         stucanvas/sobject/modifiers.hpp
         stucanvas/sobject/getters.hpp
-        stucanvas/sobject/instance.hpp
+        stucanvas/sobject/transformation.hpp
         stucanvas/sobject/family.hpp
-        stucanvas/sobject/visual.hpp
+        stucanvas/sobject/appearance.hpp
         stucanvas/utils/tiny_vector.hpp
-        stucanvas/sobject/layout.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
@@ -315,3 +314,11 @@ add_executable(llvm_tiny_vector_test tests/performance/llvm_tiny_vector_test.cpp
 )
 target_link_libraries(llvm_tiny_vector_test PRIVATE StuCanvasCore)
 configure_stucanvas_target(llvm_tiny_vector_test)
+
+
+
+add_executable(deque_vs_vector tests/performance/deque_vs_vector.cpp
+
+)
+target_link_libraries(deque_vs_vector PRIVATE StuCanvasCore)
+configure_stucanvas_target(deque_vs_vector)
