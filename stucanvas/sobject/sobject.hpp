@@ -45,6 +45,9 @@ namespace StuCanvas
         mutable uint64_t mask = 0;
         std::string name;
         uint64_t id{};
+
+
+
         utils::BlockDeque<const SObject*, 4> parents;
         utils::BlockDeque<const SObject*, 16> children;
         T discretization_step_points{};

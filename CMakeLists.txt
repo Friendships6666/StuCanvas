@@ -284,7 +284,8 @@ configure_stucanvas_target(tiny_vector_test)
 
 
 add_executable(deque_test tests/performance/deque_test.cpp
-        
+        tests/performance/pNext_test.cpp
+
 
 )
 target_link_libraries(deque_test PRIVATE StuCanvasCore)
@@ -327,3 +328,11 @@ add_executable(deque_vs_vector tests/performance/deque_vs_vector.cpp
 )
 target_link_libraries(deque_vs_vector PRIVATE StuCanvasCore)
 configure_stucanvas_target(deque_vs_vector)
+
+
+
+add_executable(pNext_test tests/performance/pNext_test.cpp
+
+)
+target_link_libraries(pNext_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(pNext_test)
