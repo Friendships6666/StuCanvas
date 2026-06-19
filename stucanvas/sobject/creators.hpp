@@ -298,6 +298,54 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     }
 
     template <typename T>
+    const SObject<T>* SObjectGraph<T>::createSnapPoint2D(const SObject<T>* target, T guess_x, T guess_y,
+                                                         std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::POINT_2D_SNAP, name);
+        node->data.snap_2d.x = guess_x;
+        node->data.snap_2d.y = guess_y;
+        node->data.snap_2d.lock = static_cast<T>(-1);
+        node->vptr = &Point2DSnap_VTable<T>;
+        linkParents(node, {target});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createSnapPoint3D(const SObject<T>* target, T guess_x, T guess_y, T guess_z,
+                                                         std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::POINT_3D_SNAP, name);
+        node->data.snap_3d.x = guess_x;
+        node->data.snap_3d.y = guess_y;
+        node->data.snap_3d.z = guess_z;
+        node->data.snap_3d.a = static_cast<T>(-1);
+        node->data.snap_3d.b = static_cast<T>(-1);
+        node->vptr = &Point3DSnap_VTable<T>;
+        linkParents(node, {target});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createTangent2D(const SObject<T>* curve, const SObject<T>* point,
+                                                       std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::TANGENT_2D, name);
+        node->vptr = &Tangent2D_VTable<T>;
+        linkParents(node, {curve, point});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createTangent3D(const SObject<T>* curve, const SObject<T>* point,
+                                                       std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::TANGENT_3D, name);
+        node->vptr = &Tangent3D_VTable<T>;
+        linkParents(node, {curve, point});
+        return node;
+    }
+
+    template <typename T>
 
     const SObject<T>* SObjectGraph<T>::createScalar(T value, std::string_view name)
     {

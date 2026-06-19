@@ -49,5 +49,17 @@ namespace StuCanvas
         {
             T x0, y0, z0, x1, y1, z1, r;
         } cylinder_3d;
+
+        struct
+        {
+            T x, y;
+            T lock;
+        } snap_2d;
+
+        struct
+        {
+            T x, y, z;
+            T a, b;
+        } snap_3d;
     };
 }

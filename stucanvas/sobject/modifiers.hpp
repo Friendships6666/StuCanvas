@@ -67,6 +67,28 @@ namespace StuCanvas
         markDirty(node);
     }
 
+    template <typename T>
+    void SObjectGraph<T>::modifySnapGuess2D(const SObject<T>* model_ptr, T guess_x, T guess_y)
+    {
+        auto* node = const_cast<SObject<T>*>(model_ptr);
+        node->data.snap_2d.x = guess_x;
+        node->data.snap_2d.y = guess_y;
+        node->data.snap_2d.lock = static_cast<T>(-1);
+        markDirty(node);
+    }
+
+    template <typename T>
+    void SObjectGraph<T>::modifySnapGuess3D(const SObject<T>* model_ptr, T guess_x, T guess_y, T guess_z)
+    {
+        auto* node = const_cast<SObject<T>*>(model_ptr);
+        node->data.snap_3d.x = guess_x;
+        node->data.snap_3d.y = guess_y;
+        node->data.snap_3d.z = guess_z;
+        node->data.snap_3d.a = static_cast<T>(-1);
+        node->data.snap_3d.b = static_cast<T>(-1);
+        markDirty(node);
+    }
+
     // 极致优化：改名字只涉及描述性元数据，不影响任何几何代数计算，因此无需脏化图谱和重解算！
     template <typename T>
     void SObjectGraph<T>::modifyName(const SObject<T>* model_ptr, std::string_view new_name)

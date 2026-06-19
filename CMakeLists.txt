@@ -202,7 +202,8 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/appearance.hpp
         stucanvas/utils/tiny_vector.hpp
         stucanvas/camera/camera.hpp
-        stucanvas/sobject/discretizers.hpp
+        stucanvas/sobject/snap_solver.hpp
+        stucanvas/sobject/tangent_solver.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 

@@ -166,6 +166,13 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
     content.append("    void (*discretize_to_points_visual)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
     content.append("    void (*discretize_to_strips_visual)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
     content.append("    void (*discretize_to_triangles_visual)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*integral)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*derivative)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*interval_arithmetic)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*func_1d)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*func_2d)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*func_3d)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*vector_func)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
     content.append("    };")
     content.append("")
 
@@ -178,6 +185,13 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
         ("discretize_to_points_visual", "Discretize{base}_Points_Visual"),
         ("discretize_to_strips_visual", "Discretize{base}_Strips_Visual"),
         ("discretize_to_triangles_visual", "Discretize{base}_Triangles_Visual"),
+        ("integral", "Integral{base}"),
+        ("derivative", "Derivative{base}"),
+        ("interval_arithmetic", "IntervalArithmetic{base}"),
+        ("func_1d", "Func1D{base}"),
+        ("func_2d", "Func2D{base}"),
+        ("func_3d", "Func3D{base}"),
+        ("vector_func", "VectorFunc{base}"),
     ]
 
     processed_bases = set()

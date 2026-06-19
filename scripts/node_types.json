@@ -75,6 +75,18 @@
       "id": 5
     },
     {
+      "name": "TANGENT_2D",
+      "world": "WORLD_2D",
+      "categories": ["CAT_LINEAR", "CAT_CURVE"],
+      "id": 6
+    },
+    {
+      "name": "TANGENT_3D",
+      "world": "WORLD_3D",
+      "categories": ["CAT_LINEAR", "CAT_CURVE"],
+      "id": 7
+    },
+    {
       "name": "CIRCLE_2D",
       "world": "WORLD_2D",
       "categories": ["CAT_CURVE"],

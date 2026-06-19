@@ -182,6 +182,15 @@ namespace StuCanvas
         const SObject<T>* createPerpendicularPlane3D(const SObject<T>* plane, const SObject<T>* point,
                                                      std::string_view name = "PerpendicularPlane3D");
 
+        const SObject<T>* createSnapPoint2D(const SObject<T>* target, T guess_x, T guess_y,
+                                            std::string_view name = "SnapPoint2D");
+        const SObject<T>* createSnapPoint3D(const SObject<T>* target, T guess_x, T guess_y, T guess_z,
+                                            std::string_view name = "SnapPoint3D");
+        const SObject<T>* createTangent2D(const SObject<T>* curve, const SObject<T>* point,
+                                          std::string_view name = "Tangent2D");
+        const SObject<T>* createTangent3D(const SObject<T>* curve, const SObject<T>* point,
+                                          std::string_view name = "Tangent3D");
+
         // ─── 3. 修改函数与拓扑关系动态重组 ───
 
         void markDirty(SObject<T>* node) noexcept;
@@ -196,6 +205,8 @@ namespace StuCanvas
         void modifyDiscretizationStepPoints(const SObject<T>* model_ptr, T step);
         void modifyDiscretizationStepStrips(const SObject<T>* model_ptr, T step);
         void modifyDiscretizationStepTriangles(const SObject<T>* model_ptr, T step);
+        void modifySnapGuess2D(const SObject<T>* model_ptr, T guess_x, T guess_y);
+        void modifySnapGuess3D(const SObject<T>* model_ptr, T guess_x, T guess_y, T guess_z);
         void modifyName(const SObject<T>* model_ptr, std::string_view new_name);
         // 核心亮点：允许在运行期，动态拆除旧连线并重组新的父子依赖（无缝应对 CAD 撤销、动态拼装等需求）
         void modifyParents(const SObject<T>* model_ptr, const std::vector<const SObject<T>*>& new_parents);
