@@ -14,7 +14,8 @@
 #include "eigen3/Eigen/Dense"
 #include "instance.hpp"
 #include "tiny_vector.hpp"
-
+#include "function.hpp"
+#include "interval.hpp"
 namespace StuCanvas
 {
     // ========================================================================
@@ -79,10 +80,33 @@ namespace StuCanvas
         utils::FlatMap<const SObject<T>*, SegmentStrips3D_CPU<T>> segment_stips_3d;
         utils::FlatMap<const SObject<T>*, Triangles2D_CPU<T>> triangles_2d;
         utils::FlatMap<const SObject<T>*, Triangles3D_CPU<T>> triangles_3d;
+        utils::FlatMap<const SObject<T>*, std::vector<Point2D_CPU<T>>> visual_points;
+        utils::FlatMap<const SObject<T>*, SegmentStrips2D_CPU<T>> visual_segments;
+        utils::FlatMap<const SObject<T>*, std::vector<Point3D_CPU<T>>> visual_triangles;
 
-        utils::FlatMap<const SObject<T>*, std::vector<Point_GPU>> visual_points;
-        utils::FlatMap<const SObject<T>*, std::vector<SegmentGPU>> visual_segments;
-        utils::FlatMap<const SObject<T>*, std::vector<Point_GPU>> visual_triangles;
+
+
+        // 1. 标量函数 (Scalar Functions)
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T)>>       scalar_unary_funcs;
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T)>>    scalar_binary_funcs;
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T,T)>> scalar_ternary_funcs;
+
+        // 2. 积分函数 (Integral Functions)
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T)>>       integral_unary_funcs;
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T)>>    integral_binary_funcs;
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T,T)>> integral_ternary_funcs;
+
+        // 3. 导数/微分函数 (Derivative Functions)
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T)>>       derivative_unary_funcs;
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T)>>    derivative_binary_funcs;
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T,T)>> derivative_ternary_funcs;
+
+        // 4. 区间函数 (Interval Functions)
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<IntervalSet<T>(Interval<T>)>>       interval_unary_funcs;
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<IntervalSet<T>(Interval<T>,Interval<T>)>>    interval_binary_funcs;
+        utils::FlatMap<const SObject<T>*, utils::FfiFunction<IntervalSet<T>(Interval<T>,Interval<T>,Interval<T>)>> interval_ternary_funcs;
+        
+
 
         // 内存连续、极其紧凑的对象分配大池（确保 Object* 物理寻址的绝对地址稳定性）
         utils::BlockDeque<SObject<T>, 256> node_pool;

@@ -202,6 +202,9 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
         ("integral_1d", "Integral1D{base}"),
         ("integral_2d", "Integral2D{base}"),
         ("integral_3d", "Integral3D{base}"),
+        ("interval_1d", "Interval1D{base}"),
+        ("interval_2d", "Interval2D{base}"),
+        ("interval_3d", "Interval3D{base}"),
     ]
 
     processed_bases = set()
