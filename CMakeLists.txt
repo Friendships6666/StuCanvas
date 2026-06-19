@@ -204,6 +204,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/camera/camera.hpp
         stucanvas/sobject/snap_solver.hpp
         stucanvas/sobject/tangent_solver.hpp
+        stucanvas/utils/function.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
