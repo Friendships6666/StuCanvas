@@ -4,6 +4,7 @@
 #pragma once
 #include <cstdint>
 #include <type_traits>
+#include "../utils/interval.hpp"
 
 namespace StuCanvas {
 
@@ -139,23 +140,26 @@ namespace StuCanvas {
     void (*discretize_to_points_visual)(SObjectGraph<T>&, SObject<T>&) = nullptr;
     void (*discretize_to_strips_visual)(SObjectGraph<T>&, SObject<T>&) = nullptr;
     void (*discretize_to_triangles_visual)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*integral)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*derivative)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*interval_arithmetic)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*func_1d)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*func_2d)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*func_3d)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*vector_func)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    T (*func_1d)(T) = nullptr;
+    T (*func_2d)(T, T) = nullptr;
+    T (*func_3d)(T, T, T) = nullptr;
+    T (*derivative_1d)(T) = nullptr;
+    T (*derivative_2d)(T, T) = nullptr;
+    T (*derivative_3d)(T, T, T) = nullptr;
+    T (*integral_1d)(T) = nullptr;
+    T (*integral_2d)(T, T) = nullptr;
+    T (*integral_3d)(T, T, T) = nullptr;
+    utils::IntervalSet<T> (*interval_1d)(const utils::Interval<T>&) = nullptr;
+    utils::IntervalSet<T> (*interval_2d)(const utils::Interval<T>&, const utils::Interval<T>&) = nullptr;
+    utils::IntervalSet<T> (*interval_3d)(const utils::Interval<T>&, const utils::Interval<T>&, const utils::Interval<T>&) = nullptr;
     };
 
     // ---- 物理存在的解算与离散化模板函数前向声明 ----
     template <typename T> void DiscretizeLine2DRay_Points(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void DiscretizeLine2DSegment_Points(SObjectGraph<T>&, SObject<T>&) noexcept;
-    template <typename T> void DiscretizeLine2DSegment_Strips(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void DiscretizeLine2DStraight_Points(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void DiscretizeLine3DRay_Points(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void DiscretizeLine3DSegment_Points(SObjectGraph<T>&, SObject<T>&) noexcept;
-    template <typename T> void DiscretizeLine3DSegment_Strips(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void DiscretizeLine3DStraight_Points(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveCircle2D(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveCircle2DThreePoints(SObjectGraph<T>&, SObject<T>&) noexcept;
@@ -192,13 +196,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -210,13 +219,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -228,13 +242,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -246,13 +265,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -264,31 +288,41 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
     inline const SObjectVTable<T> Line2DSegment_VTable = {
         .solver = &SolveLine2DSegment<T>,
         .discretize_to_points = &DiscretizeLine2DSegment_Points<T>,
-        .discretize_to_strips = &DiscretizeLine2DSegment_Strips<T>,
+        .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -300,13 +334,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -318,13 +357,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -336,13 +380,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -354,13 +403,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -372,13 +426,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -390,13 +449,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -408,13 +472,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -426,13 +495,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -444,13 +518,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -462,13 +541,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -480,13 +564,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -498,13 +587,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -516,13 +610,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -534,13 +633,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -552,13 +656,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -570,13 +679,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -588,13 +702,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -606,31 +725,41 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
     inline const SObjectVTable<T> Line3DSegment_VTable = {
         .solver = &SolveLine3DSegment<T>,
         .discretize_to_points = &DiscretizeLine3DSegment_Points<T>,
-        .discretize_to_strips = &DiscretizeLine3DSegment_Strips<T>,
+        .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -642,13 +771,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -660,13 +794,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -678,13 +817,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -696,13 +840,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -714,13 +863,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -732,13 +886,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -750,13 +909,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -768,13 +932,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -786,13 +955,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -804,13 +978,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -822,13 +1001,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -840,13 +1024,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -858,13 +1047,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -876,13 +1070,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -894,13 +1093,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -912,13 +1116,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -930,13 +1139,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -948,13 +1162,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -966,13 +1185,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -984,13 +1208,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -1002,13 +1231,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -1020,13 +1254,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -1038,13 +1277,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -1056,13 +1300,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -1074,13 +1323,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -1092,13 +1346,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
     template <typename T>
@@ -1110,13 +1369,18 @@ namespace StuCanvas {
         .discretize_to_points_visual = nullptr,
         .discretize_to_strips_visual = nullptr,
         .discretize_to_triangles_visual = nullptr,
-        .integral = nullptr,
-        .derivative = nullptr,
-        .interval_arithmetic = nullptr,
         .func_1d = nullptr,
         .func_2d = nullptr,
         .func_3d = nullptr,
-        .vector_func = nullptr
+        .derivative_1d = nullptr,
+        .derivative_2d = nullptr,
+        .derivative_3d = nullptr,
+        .integral_1d = nullptr,
+        .integral_2d = nullptr,
+        .integral_3d = nullptr,
+        .interval_1d = nullptr,
+        .interval_2d = nullptr,
+        .interval_3d = nullptr
     };
 
 } // namespace StuCanvas

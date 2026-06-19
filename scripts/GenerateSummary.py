@@ -10,11 +10,11 @@ def create_combined_output(output_filename="project_summary.txt", items_to_scan=
 
     # 如果未指定，则使用默认的扫描列表
     if items_to_scan is None:
-        items_to_scan = ["../stucanvas/sobject"]
+        items_to_scan = ["../stucanvas/"]
 
     # 💡 新增：需要排除的目录列表
     if exclude_dirs is None:
-        exclude_dirs = ["../stucanvas/assets","../stucanvas/rust_bridge/typst_c/target","../stucanvas/rust_bridge/typst_c/Cargo.lock","../stucanvas/rust_bridge/typst_c/Cargo.toml"]
+        exclude_dirs = ["../stucanvas/assets","../stucanvas/rust_bridge/","../stucanvas/rust_bridge/typst_c/Cargo.lock","../stucanvas/rust_bridge/typst_c/Cargo.toml"]
 
     all_file_paths = []
 

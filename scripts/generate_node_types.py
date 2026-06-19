@@ -45,6 +45,8 @@ def scan_cpp_source_code(root_dir="stucanvas"):
         dirnames[:] = [d for d in dirnames if not d.startswith((".", "build", "target", "cmake-build"))]
         for filename in filenames:
             if filename.endswith((".cpp", ".hpp", ".h", ".cc", ".hh")):
+                if filename == "sobject_types.hpp":  # 💡 跳过自动生成文件，防止误检测
+                    continue
                 filepath = os.path.join(dirpath, filename)
                 try:
                     with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
@@ -77,6 +79,7 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
     content.append("#pragma once")
     content.append("#include <cstdint>")
     content.append("#include <type_traits>")
+    content.append("#include \"../utils/interval.hpp\"")
     content.append("")
     content.append("namespace StuCanvas {")
     content.append("")
@@ -166,13 +169,18 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
     content.append("    void (*discretize_to_points_visual)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
     content.append("    void (*discretize_to_strips_visual)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
     content.append("    void (*discretize_to_triangles_visual)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*integral)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*derivative)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*interval_arithmetic)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*func_1d)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*func_2d)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*func_3d)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*vector_func)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    T (*func_1d)(T) = nullptr;")
+    content.append("    T (*func_2d)(T, T) = nullptr;")
+    content.append("    T (*func_3d)(T, T, T) = nullptr;")
+    content.append("    T (*derivative_1d)(T) = nullptr;")
+    content.append("    T (*derivative_2d)(T, T) = nullptr;")
+    content.append("    T (*derivative_3d)(T, T, T) = nullptr;")
+    content.append("    T (*integral_1d)(T) = nullptr;")
+    content.append("    T (*integral_2d)(T, T) = nullptr;")
+    content.append("    T (*integral_3d)(T, T, T) = nullptr;")
+    content.append("    utils::IntervalSet<T> (*interval_1d)(const utils::Interval<T>&) = nullptr;")
+    content.append("    utils::IntervalSet<T> (*interval_2d)(const utils::Interval<T>&, const utils::Interval<T>&) = nullptr;")
+    content.append("    utils::IntervalSet<T> (*interval_3d)(const utils::Interval<T>&, const utils::Interval<T>&, const utils::Interval<T>&) = nullptr;")
     content.append("    };")
     content.append("")
 
@@ -185,13 +193,18 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
         ("discretize_to_points_visual", "Discretize{base}_Points_Visual"),
         ("discretize_to_strips_visual", "Discretize{base}_Strips_Visual"),
         ("discretize_to_triangles_visual", "Discretize{base}_Triangles_Visual"),
-        ("integral", "Integral{base}"),
-        ("derivative", "Derivative{base}"),
-        ("interval_arithmetic", "IntervalArithmetic{base}"),
         ("func_1d", "Func1D{base}"),
         ("func_2d", "Func2D{base}"),
         ("func_3d", "Func3D{base}"),
-        ("vector_func", "VectorFunc{base}"),
+        ("derivative_1d", "Derivative1D{base}"),
+        ("derivative_2d", "Derivative2D{base}"),
+        ("derivative_3d", "Derivative3D{base}"),
+        ("integral_1d", "Integral1D{base}"),
+        ("integral_2d", "Integral2D{base}"),
+        ("integral_3d", "Integral3D{base}"),
+        ("interval_1d", "Interval1D{base}"),
+        ("interval_2d", "Interval2D{base}"),
+        ("interval_3d", "Interval3D{base}"),
     ]
 
     processed_bases = set()
@@ -212,7 +225,23 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
 
             # 【物理检测】：检查该 C++ 符号是否存在
             if check_symbol_exists(cpp_source, func_name):
-                found_declarations.append(f"    template <typename T> void {func_name}(SObjectGraph<T>&, SObject<T>&) noexcept;")
+                sig = None
+                fname = field
+                if fname == "func_1d" or fname == "derivative_1d" or fname == "integral_1d":
+                    sig = "(T) noexcept"
+                elif fname == "func_2d" or fname == "derivative_2d" or fname == "integral_2d":
+                    sig = "(T, T) noexcept"
+                elif fname == "func_3d" or fname == "derivative_3d" or fname == "integral_3d":
+                    sig = "(T, T, T) noexcept"
+                elif fname == "interval_1d":
+                    sig = "(const utils::Interval<T>&) noexcept"
+                elif fname == "interval_2d":
+                    sig = "(const utils::Interval<T>&, const utils::Interval<T>&) noexcept"
+                elif fname == "interval_3d":
+                    sig = "(const utils::Interval<T>&, const utils::Interval<T>&, const utils::Interval<T>&) noexcept"
+                else:
+                    sig = "(SObjectGraph<T>&, SObject<T>&) noexcept"
+                found_declarations.append(f"    template <typename T> void {func_name}{sig};")
                 assignments.append(f"        .{field} = &{func_name}<T>")
             else:
                 assignments.append(f"        .{field} = nullptr")
