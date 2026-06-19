@@ -204,10 +204,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -227,10 +224,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -250,10 +244,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -273,10 +264,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -296,10 +284,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -319,10 +304,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -342,10 +324,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -365,10 +344,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -388,10 +364,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -411,10 +384,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -434,10 +404,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -457,10 +424,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -480,10 +444,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -503,10 +464,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -526,10 +484,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -549,10 +504,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -572,10 +524,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -595,10 +544,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -618,10 +564,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -641,10 +584,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -664,10 +604,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -687,10 +624,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -710,10 +644,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -733,10 +664,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -756,10 +684,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -779,10 +704,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -802,10 +724,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -825,10 +744,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -848,10 +764,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -871,10 +784,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -894,10 +804,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -917,10 +824,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -940,10 +844,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -963,10 +864,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -986,10 +884,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1009,10 +904,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1032,10 +924,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1055,10 +944,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1078,10 +964,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1101,10 +984,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1124,10 +1004,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1147,10 +1024,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1170,10 +1044,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1193,10 +1064,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1216,10 +1084,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1239,10 +1104,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1262,10 +1124,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1285,10 +1144,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1308,10 +1164,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1331,10 +1184,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1354,10 +1204,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
     template <typename T>
@@ -1377,10 +1224,7 @@ namespace StuCanvas {
         .derivative_3d = nullptr,
         .integral_1d = nullptr,
         .integral_2d = nullptr,
-        .integral_3d = nullptr,
-        .interval_1d = nullptr,
-        .interval_2d = nullptr,
-        .interval_3d = nullptr
+        .integral_3d = nullptr
     };
 
 } // namespace StuCanvas
