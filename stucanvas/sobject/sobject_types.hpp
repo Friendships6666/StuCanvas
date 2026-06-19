@@ -44,10 +44,10 @@ namespace StuCanvas {
         CIRCLE_2D             = 0x0100040000000001ULL,
         CIRCLE_2D_THREE_POINTS = 0x0100040000000002ULL,
         ARC_2D                = 0x0100040000000002ULL,
-        ELLIPSE_2D            = 0x0100050000000003ULL,
-        HYPERBOLA_2D          = 0x0100050000000004ULL,
-        PARABOLA_2D           = 0x0100050000000005ULL,
-        POLY_2D_GENERATIVE    = 0x0100070000000006ULL,
+        ELLIPSE_2D            = 0x0100040000000003ULL,
+        HYPERBOLA_2D          = 0x0100040000000004ULL,
+        PARABOLA_2D           = 0x0100040000000005ULL,
+        POLY_2D_GENERATIVE    = 0x0100060000000006ULL,
         POINT_3D_FREE         = 0x0200010000000001ULL,
         POINT_3D_MID          = 0x0200010000000002ULL,
         POINT_3D_SNAP         = 0x0200010000000003ULL,
@@ -61,18 +61,18 @@ namespace StuCanvas {
         PLANE_3D              = 0x02000A0000000001ULL,
         PLANE_3D_PARALLEL     = 0x02000A0000000002ULL,
         PLANE_3D_PERPENDICULAR = 0x02000A0000000003ULL,
-        SPHERE_3D             = 0x0200090000000004ULL,
+        SPHERE_3D             = 0x0200080000000004ULL,
         SPHERE_3D_FOUR_POINTS = 0x0200080000000009ULL,
         CYLINDER_3D           = 0x0200080000000005ULL,
         CONE_3D               = 0x0200080000000006ULL,
         CUBOID_3D             = 0x0200080000000007ULL,
         PLATONIC_SOLID_3D     = 0x0200080000000008ULL,
-        CIRCLE_3D             = 0x0200050000000001ULL,
+        CIRCLE_3D             = 0x0200040000000001ULL,
         ARC_3D                = 0x0200040000000002ULL,
-        ELLIPSE_3D            = 0x0200050000000003ULL,
-        HYPERBOLA_3D          = 0x0200050000000004ULL,
-        PARABOLA_3D           = 0x0200050000000005ULL,
-        POLY_3D_GENERATIVE    = 0x0200070000000006ULL,
+        ELLIPSE_3D            = 0x0200040000000003ULL,
+        HYPERBOLA_3D          = 0x0200040000000004ULL,
+        PARABOLA_3D           = 0x0200040000000005ULL,
+        POLY_3D_GENERATIVE    = 0x0200060000000006ULL,
         SCALAR                = 0x0400200000000001ULL,
         FUNC_EXPLICIT_2D      = 0x0400100000000001ULL,
         FUNC_EXPLICIT_3D      = 0x0400100000000002ULL,
@@ -131,23 +131,29 @@ namespace StuCanvas {
     struct SObjectVTable
     {
     void (*solver)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*discretize_to_points)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*discretize_to_strips)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*discretize_to_paths)(SObjectGraph<T>&, SObject<T>&) = nullptr;
-    void (*discretize_to_triangles)(SObjectGraph<T>&, SObject<T>&) = nullptr;
+    void (*discretize_to_points)(SObjectGraph<T>&, SObject<T>&, double) = nullptr;
+    void (*discretize_to_strips)(SObjectGraph<T>&, SObject<T>&, double) = nullptr;
+    void (*discretize_to_triangles)(SObjectGraph<T>&, SObject<T>&, double) = nullptr;
+    void (*render)(SObjectGraph<T>&, SObject<T>&) = nullptr;
     };
 
     // ---- 物理存在的解算与离散化模板函数前向声明 ----
     template <typename T> void SolveCircle2D(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveCircle2DThreePoints(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveCylinder3D(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveLine2DParallel(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveLine2DPerpendicular(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveLine2DRay(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveLine2DSegment(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveLine2DStraight(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveLine3DParallel(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolveLine3DPerpendicular(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveLine3DRay(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveLine3DSegment(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveLine3DStraight(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolvePlane3D(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolvePlane3DParallel(SObjectGraph<T>&, SObject<T>&) noexcept;
+    template <typename T> void SolvePlane3DPerpendicular(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolvePoint2DMid(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolvePoint3DMid(SObjectGraph<T>&, SObject<T>&) noexcept;
     template <typename T> void SolveSphere3D(SObjectGraph<T>&, SObject<T>&) noexcept;
@@ -160,7 +166,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -169,7 +175,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -178,7 +184,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -187,7 +193,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -196,7 +202,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -205,7 +211,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -214,7 +220,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -223,25 +229,25 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
     inline const SObjectVTable<T> Line2DPerpendicular_VTable = {
-        .solver = nullptr,
+        .solver = &SolveLine2DPerpendicular<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
     inline const SObjectVTable<T> Line2DParallel_VTable = {
-        .solver = nullptr,
+        .solver = &SolveLine2DParallel<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -250,7 +256,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -259,7 +265,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -268,7 +274,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -277,7 +283,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -286,7 +292,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -295,7 +301,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -304,7 +310,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -313,7 +319,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -322,7 +328,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -331,7 +337,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -340,7 +346,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -349,7 +355,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -358,7 +364,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -367,7 +373,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -376,25 +382,25 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
     inline const SObjectVTable<T> Line3DPerpendicular_VTable = {
-        .solver = nullptr,
+        .solver = &SolveLine3DPerpendicular<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
     inline const SObjectVTable<T> Line3DParallel_VTable = {
-        .solver = nullptr,
+        .solver = &SolveLine3DParallel<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -403,25 +409,25 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
     inline const SObjectVTable<T> Plane3DParallel_VTable = {
-        .solver = nullptr,
+        .solver = &SolvePlane3DParallel<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
     inline const SObjectVTable<T> Plane3DPerpendicular_VTable = {
-        .solver = nullptr,
+        .solver = &SolvePlane3DPerpendicular<T>,
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -430,7 +436,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -439,7 +445,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -448,7 +454,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -457,7 +463,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -466,7 +472,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -475,7 +481,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -484,7 +490,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -493,7 +499,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -502,7 +508,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -511,7 +517,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -520,7 +526,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -529,7 +535,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -538,7 +544,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -547,7 +553,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -556,7 +562,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -565,7 +571,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -574,7 +580,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -583,7 +589,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -592,7 +598,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
     template <typename T>
@@ -601,7 +607,7 @@ namespace StuCanvas {
         .discretize_to_points = nullptr,
         .discretize_to_strips = nullptr,
         .discretize_to_triangles = nullptr,
-        .discretize_to_paths = nullptr
+        .render = nullptr
     };
 
 } // namespace StuCanvas

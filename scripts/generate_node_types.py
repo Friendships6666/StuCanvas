@@ -160,10 +160,10 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
     content.append("    struct SObjectVTable")
     content.append("    {")
     content.append("    void (*solver)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*discretize_to_points)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*discretize_to_strips)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*discretize_to_paths)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
-    content.append("    void (*discretize_to_triangles)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
+    content.append("    void (*discretize_to_points)(SObjectGraph<T>&, SObject<T>&, double) = nullptr;")
+    content.append("    void (*discretize_to_strips)(SObjectGraph<T>&, SObject<T>&, double) = nullptr;")
+    content.append("    void (*discretize_to_triangles)(SObjectGraph<T>&, SObject<T>&, double) = nullptr;")
+    content.append("    void (*render)(SObjectGraph<T>&, SObject<T>&) = nullptr;")
     content.append("    };")
     content.append("")
 
@@ -173,7 +173,7 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
         ("discretize_to_points", "Discretize{base}_Points"),
         ("discretize_to_strips", "Discretize{base}_Strips"),
         ("discretize_to_triangles", "Discretize{base}_Triangles"),
-        ("discretize_to_paths", "Discretize{base}_Paths")
+        ("render", "Render{base}")
     ]
 
     processed_bases = set()
@@ -194,7 +194,10 @@ def generate_header(json_path="node_types.json", output_path="node_type.hpp"):
 
             # 【物理检测】：检查该 C++ 符号是否存在
             if check_symbol_exists(cpp_source, func_name):
-                found_declarations.append(f"    template <typename T> void {func_name}(SObjectGraph<T>&, SObject<T>&) noexcept;")
+                if field.startswith("discretize_"):
+                    found_declarations.append(f"    template <typename T> void {func_name}(SObjectGraph<T>&, SObject<T>&, double) noexcept;")
+                else:
+                    found_declarations.append(f"    template <typename T> void {func_name}(SObjectGraph<T>&, SObject<T>&) noexcept;")
                 assignments.append(f"        .{field} = &{func_name}<T>")
             else:
                 assignments.append(f"        .{field} = nullptr")

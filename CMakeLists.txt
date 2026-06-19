@@ -201,6 +201,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/family.hpp
         stucanvas/sobject/appearance.hpp
         stucanvas/utils/tiny_vector.hpp
+        stucanvas/camera/camera.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 

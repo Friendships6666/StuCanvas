@@ -111,6 +111,102 @@ namespace StuCanvas
     }
 
     // ========================================================================
+    // 💡 平行/垂直线与面解算器
+    // ========================================================================
+
+    template <typename T>
+    void SolveLine2DParallel(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* line = self.parents[0];
+        const SObject<T>* pt   = self.parents[1];
+        T dx = line->data.line_2d.x1 - line->data.line_2d.x0;
+        T dy = line->data.line_2d.y1 - line->data.line_2d.y0;
+        self.data.line_2d.x0 = pt->data.point_2d.x;
+        self.data.line_2d.y0 = pt->data.point_2d.y;
+        self.data.line_2d.x1 = pt->data.point_2d.x + dx;
+        self.data.line_2d.y1 = pt->data.point_2d.y + dy;
+    }
+
+    template <typename T>
+    void SolveLine2DPerpendicular(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* line = self.parents[0];
+        const SObject<T>* pt   = self.parents[1];
+        T dx = line->data.line_2d.x1 - line->data.line_2d.x0;
+        T dy = line->data.line_2d.y1 - line->data.line_2d.y0;
+        self.data.line_2d.x0 = pt->data.point_2d.x;
+        self.data.line_2d.y0 = pt->data.point_2d.y;
+        self.data.line_2d.x1 = pt->data.point_2d.x - dy;
+        self.data.line_2d.y1 = pt->data.point_2d.y + dx;
+    }
+
+    template <typename T>
+    void SolveLine3DParallel(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* line = self.parents[0];
+        const SObject<T>* pt   = self.parents[1];
+        T dx = line->data.line_3d.x1 - line->data.line_3d.x0;
+        T dy = line->data.line_3d.y1 - line->data.line_3d.y0;
+        T dz = line->data.line_3d.z1 - line->data.line_3d.z0;
+        self.data.line_3d.x0 = pt->data.point_3d.x;
+        self.data.line_3d.y0 = pt->data.point_3d.y;
+        self.data.line_3d.z0 = pt->data.point_3d.z;
+        self.data.line_3d.x1 = pt->data.point_3d.x + dx;
+        self.data.line_3d.y1 = pt->data.point_3d.y + dy;
+        self.data.line_3d.z1 = pt->data.point_3d.z + dz;
+    }
+
+    template <typename T>
+    void SolveLine3DPerpendicular(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* line = self.parents[0];
+        const SObject<T>* pt   = self.parents[1];
+        T ax = line->data.line_3d.x0, ay = line->data.line_3d.y0, az = line->data.line_3d.z0;
+        T dx = line->data.line_3d.x1 - ax, dy = line->data.line_3d.y1 - ay, dz = line->data.line_3d.z1 - az;
+        T px = pt->data.point_3d.x, py = pt->data.point_3d.y, pz = pt->data.point_3d.z;
+        T nd = dx*dx + dy*dy + dz*dz;
+        T t  = ((px-ax)*dx + (py-ay)*dy + (pz-az)*dz) / nd;
+        self.data.line_3d.x0 = px;
+        self.data.line_3d.y0 = py;
+        self.data.line_3d.z0 = pz;
+        self.data.line_3d.x1 = ax + t*dx;
+        self.data.line_3d.y1 = ay + t*dy;
+        self.data.line_3d.z1 = az + t*dz;
+    }
+
+    template <typename T>
+    void SolvePlane3DParallel(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* plane = self.parents[0];
+        const SObject<T>* pt    = self.parents[1];
+        T a = plane->data.plane_3d.a, b = plane->data.plane_3d.b, c = plane->data.plane_3d.c;
+        self.data.plane_3d.a = a;
+        self.data.plane_3d.b = b;
+        self.data.plane_3d.c = c;
+        self.data.plane_3d.d = -(a*pt->data.point_3d.x + b*pt->data.point_3d.y + c*pt->data.point_3d.z);
+    }
+
+    template <typename T>
+    void SolvePlane3DPerpendicular(SObjectGraph<T>&, SObject<T>& self) noexcept
+    {
+        const SObject<T>* plane = self.parents[0];
+        const SObject<T>* pt    = self.parents[1];
+        T a = plane->data.plane_3d.a, b = plane->data.plane_3d.b, c = plane->data.plane_3d.c;
+
+        T nx, ny, nz;
+        if (a*a + b*b > c*c) {
+            nx = -b; ny = a; nz = 0;
+        } else {
+            nx = 0; ny = -c; nz = b;
+        }
+
+        self.data.plane_3d.a = nx;
+        self.data.plane_3d.b = ny;
+        self.data.plane_3d.c = nz;
+        self.data.plane_3d.d = -(nx*pt->data.point_3d.x + ny*pt->data.point_3d.y + nz*pt->data.point_3d.z);
+    }
+
+    // ========================================================================
     // 💡 圆解算器
     // ========================================================================
 

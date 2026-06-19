@@ -238,6 +238,66 @@ inline void SObjectGraph<T>::markRequireStips(SObject<T>* node) noexcept
     }
 
     template <typename T>
+    const SObject<T>* SObjectGraph<T>::createParallelLine2D(const SObject<T>* line, const SObject<T>* point,
+                                                            std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::LINE_2D_PARALLEL, name);
+        node->vptr = &Line2DParallel_VTable<T>;
+        linkParents(node, {line, point});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createPerpendicularLine2D(const SObject<T>* line, const SObject<T>* point,
+                                                                 std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::LINE_2D_PERPENDICULAR, name);
+        node->vptr = &Line2DPerpendicular_VTable<T>;
+        linkParents(node, {line, point});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createParallelLine3D(const SObject<T>* line, const SObject<T>* point,
+                                                            std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::LINE_3D_PARALLEL, name);
+        node->vptr = &Line3DParallel_VTable<T>;
+        linkParents(node, {line, point});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createPerpendicularLine3D(const SObject<T>* line, const SObject<T>* point,
+                                                                 std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::LINE_3D_PERPENDICULAR, name);
+        node->vptr = &Line3DPerpendicular_VTable<T>;
+        linkParents(node, {line, point});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createParallelPlane3D(const SObject<T>* plane, const SObject<T>* point,
+                                                             std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::PLANE_3D_PARALLEL, name);
+        node->vptr = &Plane3DParallel_VTable<T>;
+        linkParents(node, {plane, point});
+        return node;
+    }
+
+    template <typename T>
+    const SObject<T>* SObjectGraph<T>::createPerpendicularPlane3D(const SObject<T>* plane, const SObject<T>* point,
+                                                                  std::string_view name)
+    {
+        SObject<T>* node = AllocateModel(NodeType::PLANE_3D_PERPENDICULAR, name);
+        node->vptr = &Plane3DPerpendicular_VTable<T>;
+        linkParents(node, {plane, point});
+        return node;
+    }
+
+    template <typename T>
 
     const SObject<T>* SObjectGraph<T>::createScalar(T value, std::string_view name)
     {

@@ -43,12 +43,19 @@ namespace StuCanvas
 
 
     template <typename T>
+    struct CameraConfig;
+
+
+    template <typename T>
     struct SObjectGraph
     {
         using value_type = T;
 
 
         utils::BlockDeque<SObjectFamily<T>, 64> family_pool;
+
+
+        const CameraConfig<T>* camera_config = nullptr;
 
 
         // 接口：创建一个高能几何家族，返回只读指针
@@ -152,6 +159,19 @@ namespace StuCanvas
                                                    std::string_view name = "Sphere3DFourPoints");
         const SObject<T>* createCylinder3D(const SObject<T>* p1, const SObject<T>* p2, const SObject<T>* radius,
                                            std::string_view name = "Cylinder3D");
+
+        const SObject<T>* createParallelLine2D(const SObject<T>* line, const SObject<T>* point,
+                                               std::string_view name = "ParallelLine2D");
+        const SObject<T>* createPerpendicularLine2D(const SObject<T>* line, const SObject<T>* point,
+                                                    std::string_view name = "PerpendicularLine2D");
+        const SObject<T>* createParallelLine3D(const SObject<T>* line, const SObject<T>* point,
+                                               std::string_view name = "ParallelLine3D");
+        const SObject<T>* createPerpendicularLine3D(const SObject<T>* line, const SObject<T>* point,
+                                                    std::string_view name = "PerpendicularLine3D");
+        const SObject<T>* createParallelPlane3D(const SObject<T>* plane, const SObject<T>* point,
+                                                std::string_view name = "ParallelPlane3D");
+        const SObject<T>* createPerpendicularPlane3D(const SObject<T>* plane, const SObject<T>* point,
+                                                     std::string_view name = "PerpendicularPlane3D");
 
         // ─── 3. 修改函数与拓扑关系动态重组 ───
 
