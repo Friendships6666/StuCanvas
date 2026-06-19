@@ -57,6 +57,11 @@ namespace StuCanvas
 
         const CameraConfig<T>* camera_config = nullptr;
 
+        // 世界总范围限制（3D；2D 默认映射到 xOy 平面）
+        T world_xmin = static_cast<T>(-1000), world_xmax = static_cast<T>(1000);
+        T world_ymin = static_cast<T>(-1000), world_ymax = static_cast<T>(1000);
+        T world_zmin = static_cast<T>(-1000), world_zmax = static_cast<T>(1000);
+
 
         // 接口：创建一个高能几何家族，返回只读指针
         const SObjectFamily<T>* createFamily(const SObject<T>* start_node)
@@ -68,12 +73,16 @@ namespace StuCanvas
 
 
         utils::FlatMap<const SObject<T>*, Outline> fonts_2d;
-        utils::FlatMap<const SObject<T>*, Point2D_CPU<T>> points_2d;
-        utils::FlatMap<const SObject<T>*, Point3D_CPU<T>> points_3d;
+        utils::FlatMap<const SObject<T>*, std::vector<Point2D_CPU<T>>> points_2d;
+        utils::FlatMap<const SObject<T>*, std::vector<Point3D_CPU<T>>> points_3d;
         utils::FlatMap<const SObject<T>*, SegmentStrips2D_CPU<T>> segment_stips_2d;
         utils::FlatMap<const SObject<T>*, SegmentStrips3D_CPU<T>> segment_stips_3d;
         utils::FlatMap<const SObject<T>*, Triangles2D_CPU<T>> triangles_2d;
         utils::FlatMap<const SObject<T>*, Triangles3D_CPU<T>> triangles_3d;
+
+        utils::FlatMap<const SObject<T>*, std::vector<Point_GPU>> visual_points;
+        utils::FlatMap<const SObject<T>*, std::vector<SegmentGPU>> visual_segments;
+        utils::FlatMap<const SObject<T>*, std::vector<Point_GPU>> visual_triangles;
 
         // 内存连续、极其紧凑的对象分配大池（确保 Object* 物理寻址的绝对地址稳定性）
         utils::BlockDeque<SObject<T>, 256> node_pool;
@@ -184,6 +193,9 @@ namespace StuCanvas
 
         void modifyScalar(const SObject<T>* model_ptr, T new_value);
         void modifyCircle2DRadius(const SObject<T>* model_ptr, T new_radius);
+        void modifyDiscretizationStepPoints(const SObject<T>* model_ptr, T step);
+        void modifyDiscretizationStepStrips(const SObject<T>* model_ptr, T step);
+        void modifyDiscretizationStepTriangles(const SObject<T>* model_ptr, T step);
         void modifyName(const SObject<T>* model_ptr, std::string_view new_name);
         // 核心亮点：允许在运行期，动态拆除旧连线并重组新的父子依赖（无缝应对 CAD 撤销、动态拼装等需求）
         void modifyParents(const SObject<T>* model_ptr, const std::vector<const SObject<T>*>& new_parents);

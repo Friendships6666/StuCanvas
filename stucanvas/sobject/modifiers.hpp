@@ -43,6 +43,30 @@ namespace StuCanvas
         markDirty(node);
     }
 
+    template <typename T>
+    void SObjectGraph<T>::modifyDiscretizationStepPoints(const SObject<T>* model_ptr, T step)
+    {
+        auto* node = const_cast<SObject<T>*>(model_ptr);
+        node->discretization_step_points = step;
+        markDirty(node);
+    }
+
+    template <typename T>
+    void SObjectGraph<T>::modifyDiscretizationStepStrips(const SObject<T>* model_ptr, T step)
+    {
+        auto* node = const_cast<SObject<T>*>(model_ptr);
+        node->discretization_step_union.discretization_step_strips = step;
+        markDirty(node);
+    }
+
+    template <typename T>
+    void SObjectGraph<T>::modifyDiscretizationStepTriangles(const SObject<T>* model_ptr, T step)
+    {
+        auto* node = const_cast<SObject<T>*>(model_ptr);
+        node->discretization_step_union.discretization_step_triangles = step;
+        markDirty(node);
+    }
+
     // 极致优化：改名字只涉及描述性元数据，不影响任何几何代数计算，因此无需脏化图谱和重解算！
     template <typename T>
     void SObjectGraph<T>::modifyName(const SObject<T>* model_ptr, std::string_view new_name)
