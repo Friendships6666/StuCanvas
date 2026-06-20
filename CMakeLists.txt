@@ -206,6 +206,8 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/tangent_solver.hpp
         stucanvas/utils/function.hpp
         stucanvas/types/cpu/math_vector.hpp
+        stucanvas/sobject/asset.hpp
+        stucanvas/utils/flex_buffer.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
@@ -336,3 +338,24 @@ add_executable(pNext_test tests/performance/pNext_test.cpp
 )
 target_link_libraries(pNext_test PRIVATE StuCanvasCore)
 configure_stucanvas_target(pNext_test)
+
+
+add_executable(cpu_cache_test_1 tests/performance/cpu_cache_test_1.cpp
+
+)
+target_link_libraries(cpu_cache_test_1 PRIVATE StuCanvasCore)
+configure_stucanvas_target(cpu_cache_test_1)
+
+
+add_executable(cpu_cache_test_2 tests/performance/cpu_cache_test_2.cpp
+
+)
+target_link_libraries(cpu_cache_test_2 PRIVATE StuCanvasCore)
+configure_stucanvas_target(cpu_cache_test_2)
+
+
+add_executable(flex_buffer_test tests/performance/flex_buffer_test.cpp
+
+)
+target_link_libraries(flex_buffer_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(flex_buffer_test)
