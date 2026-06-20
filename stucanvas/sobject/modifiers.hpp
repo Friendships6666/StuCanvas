@@ -1,7 +1,7 @@
 // stucanvas/object/graph.ipp
 #pragma once
 #include "graph.hpp"
-#include "asset.hpp"
+#include "assets.hpp"
 namespace StuCanvas
 {
     // ========================================================================

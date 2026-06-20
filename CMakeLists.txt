@@ -206,7 +206,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/tangent_solver.hpp
         stucanvas/utils/function.hpp
         stucanvas/types/cpu/math_vector.hpp
-        stucanvas/sobject/asset.hpp
+        stucanvas/sobject/assets.hpp
         stucanvas/utils/flex_buffer.hpp
         stucanvas/utils/flex_list.hpp
         # 💡 已从这里彻底移除了 test.cpp
