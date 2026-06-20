@@ -114,7 +114,7 @@ struct SObjectInline {
 const size_t NUM_ELEMENTS = 300'00;
 const int RUN_COUNT = 5;
 
-// 定义全局 8 个侧边 FlatMap
+// 定义全局侧边 FlatMap
 FlatMap<const SObjectFlatMap*, AssetA> map_a;
 FlatMap<const SObjectFlatMap*, AssetB> map_b;
 FlatMap<const SObjectFlatMap*, AssetC> map_c;
@@ -122,7 +122,7 @@ FlatMap<const SObjectFlatMap*, AssetC> map_c;
 int main() {
     std::cout << "================================================================================" << std::endl;
     std::cout << "             多态与异构数据存储 —— 终极六路对决 (6-Way Benchmark)              " << std::endl;
-    std::cout << "             测试对象规模: " << NUM_ELEMENTS << " 个，挂载 8 个资产，完全自动类型推导" << std::endl;
+    std::cout << "             测试对象规模: " << NUM_ELEMENTS << " 个，测试各代方案在指定读取下的表现" << std::endl;
     std::cout << "================================================================================" << std::endl;
 
     // =========================================================================
@@ -147,9 +147,9 @@ int main() {
     double alloc_time_a = std::chrono::duration<double, std::milli>(end_alloc_a - start_alloc_a).count();
 
     // =========================================================================
-    // 2. 方案 F 的初始化 (FlexList)
+    // 2. 方案 F 的初始化 (FlexList - 完美转发自动堆构造)
     // =========================================================================
-    std::cout << "[方案 F] 正在初始化 FlexList (全自动推导编译期 ID，0 运行时参数)..." << std::endl;
+    std::cout << "[方案 F] 正在初始化 FlexList (完美转发原位构造)..." << std::endl;
     auto start_alloc_f = std::chrono::high_resolution_clock::now();
     std::vector<SObjectFlexList*> list_flex_list(NUM_ELEMENTS);
     for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
@@ -157,24 +157,13 @@ int main() {
         list_flex_list[i]->id = static_cast<uint32_t>(i);
     }
     for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-        list_flex_list[i]->assets.reserve(8);
+        list_flex_list[i]->assets.reserve(16);
 
-        auto* a = static_cast<AssetA*>(std::malloc(sizeof(AssetA)));
-        a->x = static_cast<double>(i);
-        a->y = 2.0;
-
-        auto* b = static_cast<AssetB*>(std::malloc(sizeof(AssetB)));
-        std::memset(b->data, 0, sizeof(b->data));
-        b->data[0] = 3.0;
-
-        auto* c = static_cast<AssetC*>(std::malloc(sizeof(AssetC)));
-        std::memset(c->data, 0, sizeof(c->data));
-        c->data[0] = 7.0;
-
-        // 🚀 用户完全不需要指定写任何 ID 编号！模板在编译期自动分发
-        list_flex_list[i]->assets.push_back<AssetA>(a);
-        list_flex_list[i]->assets.push_back<AssetB>(b);
-        list_flex_list[i]->assets.push_back<AssetC>(c);
+        // 🚀 终极简化：用户完全不再写任何 malloc/new 过程！
+        // emplace_back 将会自动在外部堆上执行 perfect forwarding 物理原位构造！
+        list_flex_list[i]->assets.emplace_back<AssetA>(0, static_cast<double>(i), 2.0);
+        list_flex_list[i]->assets.emplace_back<AssetB>(1, AssetB{{3.0, 4.0, 5.0, 6.0}});
+        list_flex_list[i]->assets.emplace_back<AssetC>(2, AssetC{{7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0}});
     }
     auto end_alloc_f = std::chrono::high_resolution_clock::now();
     double alloc_time_f = std::chrono::duration<double, std::milli>(end_alloc_f - start_alloc_f).count();
@@ -253,13 +242,13 @@ int main() {
 
     std::cout << "\n----------------------- 初始化分配耗时对比 -----------------------" << std::endl;
     std::cout << std::left << std::setw(35) << "[方案 A] FlexBuffer 耗时:" << std::fixed << std::setprecision(2) << alloc_time_a << " ms" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 F] FlexList 耗时:" << alloc_time_f << " ms (全自动类型映射)" << std::endl;
+    std::cout << std::left << std::setw(35) << "[方案 F] FlexList 耗时:" << alloc_time_f << " ms" << std::endl;
     std::cout << std::left << std::setw(35) << "[方案 B] pNext 指针链 耗时:" << alloc_time_b << " ms" << std::endl;
     std::cout << std::left << std::setw(35) << "[方案 C] FlatMap 侧存储 耗时:" << alloc_time_c << " ms" << std::endl;
     std::cout << std::left << std::setw(35) << "[方案 E] 纯内联结构体 耗时:" << alloc_time_e << " ms" << std::endl;
 
     // =========================================================================
-    // 核心性能读取对决
+    // 核心性能读取对决 —— 目标：获取并累加最深层/最热的那个资产 [AssetA]
     // =========================================================================
     std::cout << "\n开始进行高频遍历读取测试..." << std::endl;
 
@@ -280,16 +269,16 @@ int main() {
     }
     read_time_a /= RUN_COUNT;
 
-    // F. 方案 F 测试 (FlexList)
+    // F. 方案 F 测试 (FlexList - 完美转发 0 分支寻址)
     double read_time_f = 0.0;
     for (int r = 0; r < RUN_COUNT; ++r) {
         auto start = std::chrono::high_resolution_clock::now();
         double sum = 0.0;
         for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-            // 🚀 用户零手写编号，直接把类型作为模板参数，全系统在编译期自增映射，0 运行时匹配！
-            auto* a = list_flex_list[i]->assets.get_unsafe<AssetA>();
-            auto* b = list_flex_list[i]->assets.get_unsafe<AssetB>();
-            auto* c = list_flex_list[i]->assets.get_unsafe<AssetC>();
+            // 🚀 一键直连定位：直接通过 0, 1, 2 一步跳转物理离散指针
+            auto* a = list_flex_list[i]->assets.get_unsafe<AssetA>(0);
+            auto* b = list_flex_list[i]->assets.get_unsafe<AssetB>(1);
+            auto* c = list_flex_list[i]->assets.get_unsafe<AssetC>(2);
             sum += a->x + b->data[0] + c->data[0];
         }
         auto end = std::chrono::high_resolution_clock::now();
@@ -298,7 +287,7 @@ int main() {
     }
     read_time_f /= RUN_COUNT;
 
-    // B. 方案 B 测试 (pNext 指针链)
+    // B. 方案 B 测试 (pNext 指针链 - 8 次寻址跳转)
     double read_time_b = 0.0;
     for (int r = 0; r < RUN_COUNT; ++r) {
         auto start = std::chrono::high_resolution_clock::now();
@@ -356,13 +345,14 @@ int main() {
 
     std::cout << "\n----------------------- 遍历读取耗时对比 -----------------------" << std::endl;
     std::cout << std::left << std::setw(35) << "[方案 A] FlexBuffer 耗时:" << std::fixed << std::setprecision(4) << read_time_a << " ms" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 F] FlexList 耗时:" << read_time_f << " ms (自动编译期 ID，跳跃速度超 pNext!)" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 B] pNext 指针链 耗时:" << read_time_b << " ms (慢了 " << (read_time_b/read_time_f) << " 倍)" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 C] FlatMap 侧存储 耗时:" << read_time_c << " ms (慢了 " << (read_time_c/read_time_f) << " 倍)" << std::endl;
+    std::cout << std::left << std::setw(35) << "[方案 F] FlexList 耗时:" << read_time_f << " ms (新方案，完美转发原位构造!)" << std::endl;
+    std::cout << std::left << std::setw(35) << "[方案 B] pNext 指针链 耗时:" << read_time_b << " ms" << std::endl;
+    std::cout << std::left << std::setw(35) << "[方案 C] FlatMap 侧存储 耗时:" << read_time_c << " ms" << std::endl;
     std::cout << std::left << std::setw(35) << "[方案 E] 纯内联结构体 耗时:" << read_time_e << " ms (最快极限，理论上限)" << std::endl;
     std::cout << "================================================================================" << std::endl;
 
-    // 清理内存
+    // 🚀 4. 清理内存：由于 FlexList 已经是自托管的容器，析构时会自动级联调用每个 T 的物理析构
+    // 我们不需要再手动为 FlexList 里面的资产写任何 free/delete 代码了！
     for (auto* p : list_flex) delete p;
     for (auto* p : list_flex_list) delete p;
     for (auto* p : list_inline) delete p;
