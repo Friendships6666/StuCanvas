@@ -10,6 +10,7 @@
 #include "sobject_types.hpp"
 #include "sobject_data.hpp"
 #include "block_deque.hpp"
+#include "flex_buffer.hpp"
 namespace StuCanvas
 {
 
@@ -63,7 +64,6 @@ namespace StuCanvas
         const SObjectVTable<T>* vptr = nullptr;
 
         SObjectGraph<T>* graph = nullptr; // 反向指针
-
 
 
         SObject() noexcept = default;

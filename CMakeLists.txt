@@ -208,6 +208,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/types/cpu/math_vector.hpp
         stucanvas/sobject/asset.hpp
         stucanvas/utils/flex_buffer.hpp
+        stucanvas/utils/flex_list.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
@@ -359,3 +360,10 @@ add_executable(flex_buffer_test tests/performance/flex_buffer_test.cpp
 )
 target_link_libraries(flex_buffer_test PRIVATE StuCanvasCore)
 configure_stucanvas_target(flex_buffer_test)
+
+
+add_executable(flex_list_test tests/performance/flex_list_test.cpp
+
+)
+target_link_libraries(flex_list_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(flex_list_test)

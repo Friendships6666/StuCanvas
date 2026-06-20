@@ -1,3 +1,11 @@
+/***************************************************************************
+* Copyright (c) 2026 Tian Yuxuan (Friendships666)                          *
+*                                                                          *
+* Distributed under the terms of the MIT License.                          *
+*                                                                          *
+* The full license is in the file LICENSE, distributed with this software. *
+***************************************************************************/
+
 #pragma once
 #include <cstdlib>
 #include <cstring>
@@ -7,14 +15,6 @@
 
 namespace StuCanvas
 {
-    enum class AssetType : uint32_t {
-        APPEARANCE = 0,
-        PHYSICS    = 1,
-        METADATA   = 2,
-        USER_DATA  = 3,
-        COUNT      = 4
-    };
-
     namespace utils
     {
         namespace detail
@@ -92,21 +92,21 @@ namespace StuCanvas
             }
         } // namespace detail
 
+        // =====================================================================
+        // FlexBuffer 弹性双端容器 (修复物理冲突检测与扩容偏置平移 BUG)
+        // =====================================================================
         class FlexBuffer
         {
         private:
-            static constexpr size_t MAX_TYPES = 8;
-
-            // 🚀 优化：元数据与偏置表统一前置（共 24 字节，完美对齐）
+            // 元数据统一升级为 uint32_t，完美对齐 16 字节边界
             struct Header {
-                uint16_t capacity;            // 2 字节
-                uint16_t size;                // 2 字节
-                uint16_t count;               // 2 字节
-                uint16_t align_pad;           // 2 字节 (对齐占位)
-                uint16_t offsets[MAX_TYPES];  // 16 字节 (前置偏置表)
-            }; // sizeof(Header) = 24 字节
+                uint32_t capacity;  // 4 字节: 数据区分配的总容量 (不含此 Header 自身)
+                uint32_t size;      // 4 字节: 顺序向右写入的 Payload 字节大小 (最大支持 4GB 单元素)
+                uint32_t max_id;    // 4 字节: 历史写入的最大 ID 编号 (决定逆向偏置表的最大长度)
+                uint32_t align_pad; // 4 字节: 物理对齐占位
+            }; // sizeof(Header) = 16 字节
 
-            Header* m_ptr = nullptr;
+            Header* m_ptr = nullptr; // 唯一成员变量：8 字节
 
         public:
             FlexBuffer() noexcept = default;
@@ -133,11 +133,12 @@ namespace StuCanvas
                 return *this;
             }
 
-            // 🚀 极其简化：前置后，扩容拷贝时偏移量会自动随 Header 一起搬运，无需任何手动平移！
+            // 🚀 核心修复 2：扩容时必须将原本贴在旧物理末端的偏置表，整体物理平移到新的物理最末端！
             void reserve(size_t capacity_bytes) {
                 uint32_t current_cap = m_ptr ? m_ptr->capacity : 0;
                 if (capacity_bytes <= current_cap) return;
                 uint32_t current_size = m_ptr ? m_ptr->size : 0;
+                uint32_t current_max_id = m_ptr ? m_ptr->max_id : 0;
 
                 size_t old_alloc_size = current_cap == 0 ? 0 : sizeof(Header) + current_cap;
                 size_t new_alloc_size = sizeof(Header) + capacity_bytes;
@@ -150,64 +151,118 @@ namespace StuCanvas
 
                 if (current_size == 0) {
                     m_ptr->size = 0;
-                    m_ptr->count = 0;
+                    m_ptr->max_id = 0;
+                } else {
+                    // 🚀 核心物理平移
+                    uint8_t* byte_ptr = reinterpret_cast<uint8_t*>(m_ptr);
+                    size_t table_bytes = current_max_id * sizeof(uint32_t);
+                    std::memmove(byte_ptr + sizeof(Header) + capacity_bytes - table_bytes,
+                                 byte_ptr + sizeof(Header) + current_cap - table_bytes,
+                                 table_bytes);
                 }
             }
 
+            // 🚀 核心修复 1：碰撞检测必须加上逆向偏置表的最大物理空间！
             template <typename T>
-            T* push_back(const T& val) {
+            T* push_back(uint32_t id, const T& val) {
                 const size_t payload_size = sizeof(T);
                 const size_t alignment = alignof(T);
+
                 const uint32_t current_size = m_ptr ? m_ptr->size : 0;
                 const uint32_t current_cap  = m_ptr ? m_ptr->capacity : 0;
-                const uint32_t current_count = m_ptr ? m_ptr->count : 0;
+                const uint32_t current_max_id = m_ptr ? m_ptr->max_id : 0;
 
+                // 物理边界对齐计算
                 const size_t record_start_offset = sizeof(Header) + current_size;
                 const size_t payload_offset = (record_start_offset + alignment - 1) & ~(alignment - 1);
                 const size_t aligned_size = payload_offset + payload_size - (sizeof(Header) + current_size);
                 const uint32_t new_payload_end = current_size + static_cast<uint32_t>(aligned_size);
-                const uint32_t required_space = new_payload_end;
+
+                const uint32_t target_max_id = (id + 1 > current_max_id) ? (id + 1) : current_max_id;
+
+                // 🚀 物理碰撞检测修正：Payloads 结尾地址 + 逆向偏置表实际物理大小 <= 物理容量
+                const uint32_t required_space = new_payload_end + target_max_id * static_cast<uint32_t>(sizeof(uint32_t));
 
                 if (required_space > current_cap) {
-                    uint32_t new_cap = current_cap == 0 ? 64 : current_cap * 2;
+                    uint32_t new_cap = current_cap == 0 ? 128 : current_cap * 2;
                     while (new_cap < required_space) { new_cap *= 2; }
                     reserve(new_cap);
                 }
 
                 uint8_t* byte_ptr = reinterpret_cast<uint8_t*>(m_ptr);
 
-                // 物理复制
+                // 如果新写入的 ID 大于历史最大 ID，需要将新腾出来的偏置表内存槽位极速清零（0代表未挂载）
+                if (id + 1 > current_max_id) {
+                    auto* table_ptr = reinterpret_cast<uint32_t*>(byte_ptr + sizeof(Header) + m_ptr->capacity);
+                    for (uint32_t i = current_max_id; i < id + 1; ++i) {
+                        table_ptr[-(int)(i + 1)] = 0;
+                    }
+                    m_ptr->max_id = id + 1;
+                }
+
+                // 1. 拷贝物理数据
                 auto* dst_payload = reinterpret_cast<T*>(&byte_ptr[payload_offset]);
                 std::memcpy(dst_payload, &val, payload_size);
 
-                // 写入前置偏置表（极其直观，0 偏移计算）
-                m_ptr->offsets[current_count] = static_cast<uint16_t>(payload_offset);
+                // 2. 逆向偏置表写入该 ID 对应的物理偏置
+                auto* table_ptr = reinterpret_cast<uint32_t*>(byte_ptr + sizeof(Header) + m_ptr->capacity);
+                table_ptr[-(int)(id + 1)] = static_cast<uint32_t>(payload_offset);
 
                 m_ptr->size = new_payload_end;
-                m_ptr->count = current_count + 1;
 
                 return dst_payload;
             }
 
-            // 安全版读取 (保留)
+            // 安全版读取
             template <typename T>
-            [[nodiscard]] inline T* get(size_t index) const noexcept {
-                if (!m_ptr || index >= m_ptr->count) [[unlikely]] return nullptr;
-                const uint16_t offset = m_ptr->offsets[index];
-                return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(m_ptr) + offset);
+            [[nodiscard]] inline T* get(uint32_t id) const noexcept {
+                if (!m_ptr || id >= m_ptr->max_id) [[unlikely]] return nullptr;
+                const auto* table_ptr = reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(m_ptr) + sizeof(Header) + m_ptr->capacity);
+                uint32_t offset = table_ptr[-(int)(id + 1)];
+                if (!offset) [[unlikely]] return nullptr;
+                return reinterpret_cast<T*>(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(m_ptr) + offset));
             }
 
             // =================================================================
-            // 🚀 终极武器：无安全检查的裸读取接口（Unsafe Get）
-            // 编译后在 x86 上仅有两行汇编，彻底消灭分支预测惩罚，支持编译器完美向量化！
+            // 无安全检查的裸读取接口（Unsafe Get）
             // =================================================================
             template <typename T>
-            [[nodiscard]] inline T* get_unsafe(size_t index) const noexcept {
-                const uint16_t offset = m_ptr->offsets[index];
-                return reinterpret_cast<T*>(reinterpret_cast<uint8_t*>(m_ptr) + offset);
+            [[nodiscard]] inline T* get_unsafe(uint32_t id) const noexcept {
+                const auto* table_ptr = reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(m_ptr) + sizeof(Header) + m_ptr->capacity);
+                uint32_t offset = table_ptr[-(int)(id + 1)];
+                return reinterpret_cast<T*>(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(m_ptr) + offset));
             }
 
-            [[nodiscard]] size_t size() const noexcept { return m_ptr ? m_ptr->count : 0; }
+            void clear() noexcept {
+                if (m_ptr) {
+                    m_ptr->size = 0;
+                    m_ptr->max_id = 0;
+                }
+            }
+
+            [[nodiscard]] size_t size() const noexcept { return m_ptr ? m_ptr->max_id : 0; }
+            [[nodiscard]] bool empty() const noexcept { return size() == 0; }
+            [[nodiscard]] size_t size_bytes() const noexcept { return m_ptr ? m_ptr->size : 0; }
+
+            [[nodiscard]] FlexBuffer clone() const
+            {
+                FlexBuffer new_pack;
+                if (m_ptr && m_ptr->max_id > 0) {
+                    size_t alloc_size = sizeof(Header) + m_ptr->capacity;
+                    new_pack.m_ptr = static_cast<Header*>(detail::get_fast_allocator().allocate(alloc_size));
+                    if (new_pack.m_ptr) {
+                        std::memcpy(new_pack.m_ptr, m_ptr, sizeof(Header) + m_ptr->size);
+                        new_pack.m_ptr->capacity = m_ptr->capacity;
+                        new_pack.m_ptr->max_id = m_ptr->max_id;
+                        // 级联复制逆向偏置表
+                        size_t table_bytes = m_ptr->max_id * sizeof(uint32_t);
+                        std::memcpy(reinterpret_cast<uint8_t*>(new_pack.m_ptr) + sizeof(Header) + m_ptr->capacity - table_bytes,
+                                    reinterpret_cast<uint8_t*>(m_ptr) + sizeof(Header) + m_ptr->capacity - table_bytes,
+                                    table_bytes);
+                    }
+                }
+                return new_pack;
+            }
         };
 
         static_assert(sizeof(FlexBuffer) == 8, "FlexBuffer size must be exactly 8 bytes!");
