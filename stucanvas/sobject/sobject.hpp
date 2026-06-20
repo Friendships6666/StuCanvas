@@ -10,7 +10,7 @@
 #include "sobject_types.hpp"
 #include "sobject_data.hpp"
 #include "block_deque.hpp"
-#include "flex_buffer.hpp"
+#include "flex_list.hpp"
 namespace StuCanvas
 {
 
@@ -56,6 +56,9 @@ namespace StuCanvas
             T discretization_step_strips{};
             T discretization_step_triangles;
         } discretization_step_union;
+
+
+        utils::FlexList assets;
 
 
         utils::BlockDeque<const SObjectInstance<T>*, 16> instances;
