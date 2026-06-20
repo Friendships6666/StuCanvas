@@ -19,7 +19,7 @@ namespace StuCanvas
 
     // 1. 点离散化步长资产
     template <typename T>
-    struct StepPointsAsset
+    struct AssetStepPoints
     {
         T value;
 
@@ -27,7 +27,7 @@ namespace StuCanvas
 
     // 2. 连续条带（Strips）离散化步长资产
     template <typename T>
-    struct StepStripsAsset
+    struct AssetStepStrips
     {
         T value;
 
@@ -35,7 +35,7 @@ namespace StuCanvas
 
     // 3. 三角网格（Triangles）离散化步长资产
     template <typename T>
-    struct StepTrianglesAsset
+    struct AssetStepTriangles
     {
         T value;
 

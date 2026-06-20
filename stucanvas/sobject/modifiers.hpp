@@ -49,14 +49,14 @@ namespace StuCanvas
         auto* node = const_cast<SObject<T>*>(model_ptr);
 
         // 🚀 由于无法保证资产是否存在，直接使用内置安全检查的 get()！
-        auto* asset = node->assets.template get<StepPointsAsset<T>>();
+        auto* asset = node->assets.template get<AssetStepPoints<T>>();
 
         if (asset) [[likely]] {
             // 已存在，直接修改数值，0 内存分配开销
             asset->value = step;
         } else {
             // 不存在，自动在堆上原位构造
-            node->assets.template emplace_back<StepPointsAsset<T>>(step);
+            node->assets.template emplace_back<AssetStepPoints<T>>(step);
         }
 
         markDirty(node);
@@ -67,11 +67,11 @@ namespace StuCanvas
     {
         auto* node = const_cast<SObject<T>*>(model_ptr);
 
-        auto* asset = node->assets.template get<StepStripsAsset<T>>();
+        auto* asset = node->assets.template get<AssetStepStrips<T>>();
         if (asset) [[likely]] {
             asset->value = step;
         } else {
-            node->assets.template emplace_back<StepStripsAsset<T>>(step);
+            node->assets.template emplace_back<AssetStepStrips<T>>(step);
         }
 
         markDirty(node);
@@ -82,11 +82,11 @@ namespace StuCanvas
     {
         auto* node = const_cast<SObject<T>*>(model_ptr);
 
-        auto* asset = node->assets.template get<StepTrianglesAsset<T>>();
+        auto* asset = node->assets.template get<AssetStepTriangles<T>>();
         if (asset) [[likely]] {
             asset->value = step;
         } else {
-            node->assets.template emplace_back<StepTrianglesAsset<T>>(step);
+            node->assets.template emplace_back<AssetStepTriangles<T>>(step);
         }
 
         markDirty(node);
