@@ -1,7 +1,7 @@
 // stucanvas/object/graph.ipp
 #pragma once
 #include "graph.hpp"
-
+#include "asset.hpp"
 namespace StuCanvas
 {
     // ========================================================================
@@ -44,10 +44,21 @@ namespace StuCanvas
     }
 
     template <typename T>
-    void SObjectGraph<T>::modifyDiscretizationStepPoints(const SObject<T>* model_ptr, T step)
+        void SObjectGraph<T>::modifyDiscretizationStepPoints(const SObject<T>* model_ptr, T step)
     {
         auto* node = const_cast<SObject<T>*>(model_ptr);
-        node->discretization_step_points = step;
+
+        // 🚀 由于无法保证资产是否存在，直接使用内置安全检查的 get()！
+        auto* asset = node->assets.template get<StepPointsAsset<T>>();
+
+        if (asset) [[likely]] {
+            // 已存在，直接修改数值，0 内存分配开销
+            asset->value = step;
+        } else {
+            // 不存在，自动在堆上原位构造
+            node->assets.template emplace_back<StepPointsAsset<T>>(step);
+        }
+
         markDirty(node);
     }
 
@@ -55,7 +66,14 @@ namespace StuCanvas
     void SObjectGraph<T>::modifyDiscretizationStepStrips(const SObject<T>* model_ptr, T step)
     {
         auto* node = const_cast<SObject<T>*>(model_ptr);
-        node->discretization_step_union.discretization_step_strips = step;
+
+        auto* asset = node->assets.template get<StepStripsAsset<T>>();
+        if (asset) [[likely]] {
+            asset->value = step;
+        } else {
+            node->assets.template emplace_back<StepStripsAsset<T>>(step);
+        }
+
         markDirty(node);
     }
 
@@ -63,7 +81,14 @@ namespace StuCanvas
     void SObjectGraph<T>::modifyDiscretizationStepTriangles(const SObject<T>* model_ptr, T step)
     {
         auto* node = const_cast<SObject<T>*>(model_ptr);
-        node->discretization_step_union.discretization_step_triangles = step;
+
+        auto* asset = node->assets.template get<StepTrianglesAsset<T>>();
+        if (asset) [[likely]] {
+            asset->value = step;
+        } else {
+            node->assets.template emplace_back<StepTrianglesAsset<T>>(step);
+        }
+
         markDirty(node);
     }
 

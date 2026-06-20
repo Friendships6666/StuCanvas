@@ -1,61 +1,45 @@
+/***************************************************************************
+* Copyright (c) 2026 Tian Yuxuan (Friendships666)                          *
+*                                                                          *
+* Distributed under the terms of the MIT License.                          *
+*                                                                          *
+* The full license is in the file LICENSE, distributed with this software. *
+***************************************************************************/
+
 #pragma once
-#include <cstdint>
-#include "tiny_vector.hpp"
-#include "block_deque.hpp"
+#include <type_traits>
 
 namespace StuCanvas
 {
+    // =========================================================================
+    // 🚀 热路径冷分离资产：三个独立的步长包装结构体
+    //    由于它们是独特的 C++ 结构体，它们会在 TypeId<T>::get() 中分配到
+    //    完全不同、互不冲突的编译期物理槽位，保证了 0 运行时分支检索的高性能。
+    // =========================================================================
 
-        // utils::FlatMap<const SObject<T>*, Outline> fonts_2d;
-        // utils::FlatMap<const SObject<T>*, std::vector<Point2D_CPU<T>>> points_2d;
-        // utils::FlatMap<const SObject<T>*, std::vector<Point3D_CPU<T>>> points_3d;
-        // utils::FlatMap<const SObject<T>*, SegmentStrips2D_CPU<T>> segment_stips_2d;
-        // utils::FlatMap<const SObject<T>*, SegmentStrips3D_CPU<T>> segment_stips_3d;
-        // utils::FlatMap<const SObject<T>*, Triangles2D_CPU<T>> triangles_2d;
-        // utils::FlatMap<const SObject<T>*, Triangles3D_CPU<T>> triangles_3d;
-        // utils::FlatMap<const SObject<T>*, std::vector<Point2D_CPU<T>>> visual_points;
-        // utils::FlatMap<const SObject<T>*, SegmentStrips2D_CPU<T>> visual_segments;
-        // utils::FlatMap<const SObject<T>*, std::vector<Point3D_CPU<T>>> visual_triangles;
-        //
-        //
-        //
-        // // 1. 标量函数 (Scalar Functions)
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T)>>       scalar_unary_funcs;
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T)>>    scalar_binary_funcs;
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T,T)>> scalar_ternary_funcs;
-        //
-        // // 2. 积分函数 (Integral Functions)
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T)>>       integral_unary_funcs;
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T)>>    integral_binary_funcs;
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T,T)>> integral_ternary_funcs;
-        //
-        // // 3. 导数/微分函数 (Derivative Functions)
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T)>>       derivative_unary_funcs;
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T)>>    derivative_binary_funcs;
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<T(T,T,T)>> derivative_ternary_funcs;
-        //
-        // // 4. 区间函数 (Interval Functions)
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<IntervalSet<T>(Interval<T>)>>       interval_unary_funcs;
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<IntervalSet<T>(Interval<T>,Interval<T>)>>    interval_binary_funcs;
-        // utils::FlatMap<const SObject<T>*, utils::FfiFunction<IntervalSet<T>(Interval<T>,Interval<T>,Interval<T>)>> interval_ternary_funcs;
-
-
-    enum class SObjectAssetType : uint32_t
+    // 1. 点离散化步长资产
+    template <typename T>
+    struct StepPointsAsset
     {
-        UNKNOWN,
-        TPYST_OUTLINES,
-        POINTS_2D,
-        POINTS_3D,
-        STRIPS_2D,
-        STRIPS_3D,
-        TRIANGLES_2D,
-        TRIANGLES_3D,
+        T value;
+
+    };
+
+    // 2. 连续条带（Strips）离散化步长资产
+    template <typename T>
+    struct StepStripsAsset
+    {
+        T value;
+
+    };
+
+    // 3. 三角网格（Triangles）离散化步长资产
+    template <typename T>
+    struct StepTrianglesAsset
+    {
+        T value;
 
     };
 
 
-    struct SObjectAssetHeader
-    {
-
-    };
-}
+} // namespace StuCanvas
