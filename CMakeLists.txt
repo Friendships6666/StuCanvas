@@ -209,6 +209,9 @@ add_library(StuCanvasCore STATIC
         stucanvas/sobject/assets.hpp
         stucanvas/utils/flex_buffer.hpp
         stucanvas/utils/flex_list.hpp
+        stucanvas/utils/differential_evoluation.hpp
+        stucanvas/utils/l_shade.hpp
+        stucanvas/utils/optimization_common.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
@@ -229,6 +232,8 @@ target_include_directories(StuCanvasCore PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/stucanvas/utils
         ${CMAKE_CURRENT_SOURCE_DIR}/external
 )
+
+
 target_link_libraries(StuCanvasCore PUBLIC
         Vulkan::Vulkan
         Eigen3::Eigen
@@ -238,6 +243,8 @@ target_link_libraries(StuCanvasCore PUBLIC
         "${SDL3_EXTERNAL_LIB}"
         "${SLANG_EXTERNAL_LIB}"
         ${NVENC_LIB_PATH}
+
+        /usr/local/lib/libminion.so
 )
 
 # ============================================================================
@@ -367,3 +374,11 @@ add_executable(flex_list_test tests/performance/flex_list_test.cpp
 )
 target_link_libraries(flex_list_test PRIVATE StuCanvasCore)
 configure_stucanvas_target(flex_list_test)
+
+
+
+add_executable(L-Shade tests/algorithm/L-Shade.cpp
+
+)
+target_link_libraries(L-Shade PRIVATE StuCanvasCore)
+configure_stucanvas_target(L-Shade)
