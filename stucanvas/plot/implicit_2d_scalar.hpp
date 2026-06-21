@@ -50,9 +50,9 @@ namespace StuCanvas::plot {
             params.upper_bounds = {x2, y2};
 
             // 局部细分无需过大种群，30 个体可兼顾速度与精度
-            params.NP_init = 30;
+            params.NP_init = 150;
             params.NP_min = 4;
-            params.max_evaluations = 800; // 限制单块最大评估次数，防止深度陷入
+            params.max_evaluations = 15000; // 限制单块最大评估次数，防止深度陷入
             params.threads = threads;     // 传递核心数，触发嵌套双重并行
             params.seed = 0;              // 自动熵源种子
 

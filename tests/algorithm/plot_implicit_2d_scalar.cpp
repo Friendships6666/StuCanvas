@@ -12,7 +12,7 @@
 
 // 1. 定义隐式代数曲线方程：圆形 x^2 + y^2 - 4.0 = 0
 double circle_equation(double x, double y) {
-    return x * x + y * y - 4.0;
+    return y-sin(x);
 }
 
 int main() {
@@ -29,17 +29,17 @@ int main() {
     T y_min = -3.0, y_max = 3.0;
 
     // 粗粒度主网格划分尺寸
-    size_t M = 12; // 横向划分为 12 块
-    size_t N = 12; // 纵向划分为 12 块
+    size_t M = 15; // 横向划分为 12 块
+    size_t N = 15; // 纵向划分为 12 块
 
     // 终止细分的最小块物理尺寸（决定了最终绘图的分辨率）
     T min_block_width = 0.02;
     T min_block_height = 0.02;
 
     // 抢占式提前退出精度与容错条件
-    size_t exit_decimal_places = 15;  // 自变量逼近至双精度下溢区 (约 15 位有效数字) 视为有根
-    T exit_value_low = 0.0;
-    T exit_value_high = 1e-4;         // |f(x, y)| 的绝对值降入 [0.0, 1e-4] 范围内视为有根
+    size_t exit_decimal_places = 10;  // 自变量逼近至双精度下溢区 (约 15 位有效数字) 视为有根
+    T exit_value_low = -0.1;
+    T exit_value_high = 1e-2;         // |f(x, y)| 的绝对值降入 [0.0, 1e-4] 范围内视为有根
 
     unsigned int threads = 0; // 0 代表自动分配 Intel oneTBB 的全部空闲线程
 

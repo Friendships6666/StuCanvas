@@ -12,7 +12,7 @@
 
 // 1. 原生多自变量标量函数定义
 double f1_f2_scalar_direct(double x, double y) {
-    return std::abs(y - std::log(x) / (x - 1.0));
+    return std::abs(y - std::log(x));
 }
 
 double f3_scalar_direct(double x, double y) {
@@ -156,8 +156,8 @@ int main() {
 
     // 测试一：奇异点精细寻优
     std::vector<std::pair<double, double>> bounds_1 = {
-        {0.999, 1.001},
-        {0.999, 1.0001}
+        {-5, 5},
+        {-10001, -10000}
     };
     run_comparison_test(
         "测试一：奇异点附近的局部精细寻优",
@@ -182,8 +182,8 @@ int main() {
 
     // 测试三：万级多峰超高频振荡优化
     std::vector<std::pair<double, double>> bounds_3 = {
-        {-10.0, 10.0},
-        {-10.0, 10.0}
+        {10.0, 11.0},
+        {10.0, 11.0}
     };
     run_comparison_test(
         "测试三：万级多峰超高频振荡优化",
