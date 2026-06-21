@@ -12,7 +12,7 @@
 
 // 1. 定义隐式代数曲线方程：圆形 x^2 + y^2 - 4.0 = 0
 double circle_equation(double x, double y) {
-    return y-sin(x);
+    return y-sin(99999*x);
 }
 
 int main() {
@@ -26,7 +26,7 @@ int main() {
 
     // 设定 2D 世界搜索边界范围
     T x_min = -3.0, x_max = 3.0;
-    T y_min = -3.0, y_max = 3.0;
+    T y_min = -30.0, y_max = 3.0;
 
     // 粗粒度主网格划分尺寸
     size_t M = 15; // 横向划分为 12 块
@@ -54,7 +54,6 @@ int main() {
         ffi_circle,
         x_min, x_max,
         y_min, y_max,
-        M, N,
         min_block_width, min_block_height,
         exit_decimal_places,
         exit_value_low, exit_value_high,

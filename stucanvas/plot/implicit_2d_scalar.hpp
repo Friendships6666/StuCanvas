@@ -1,6 +1,9 @@
 /*
  * Copyright (c) StuCanvas, 2026
- * Double-parallelized Implicit 2D Scalar Curve Tracer using L-SHADE.
+ * Adaptive Quadtree Implicit 2D Curve Tracer.
+ * Starts with single-core global optimization, branches into quadtree,
+ * and dynamically activates nested TBB parallel_invoke under load.
+ * Added verbose, thread-safe real-time diagnostic logging.
  */
 #pragma once
 
@@ -11,17 +14,16 @@
 #include <cmath>
 #include <algorithm>
 #include <concepts>
+#include <iostream>   // 💡 引入控制台输入输出
+#include <iomanip>    // 💡 引入格式化输出
 
-// 💡 引入 oneTBB 二维范围与任务域头文件
-#include <oneapi/tbb/parallel_for.h>
-#include <oneapi/tbb/blocked_range2d.h>
+// 💡 引入 TBB 并行调用和任务域组件
+#include <oneapi/tbb/parallel_invoke.h>
 #include <oneapi/tbb/task_arena.h>
+#include <oneapi/tbb/info.h>
 
 namespace StuCanvas::plot {
 
-    // =========================================================================
-    // 💡 2D 坐标点结构体定义
-    // =========================================================================
     template <typename T>
     struct Point2D {
         T x;
@@ -31,7 +33,7 @@ namespace StuCanvas::plot {
     namespace detail {
 
         // =========================================================================
-        // 💡 四叉树自适应递归寻根函数
+        // 💡 带有实时线程安全日志的自适应四叉树
         // =========================================================================
         template <typename T, typename Func>
         void subdivide_quadtree(
@@ -40,145 +42,188 @@ namespace StuCanvas::plot {
             T min_w, T min_h,
             size_t decimal_places,
             T val_low, T val_high,
-            unsigned int threads,
+            unsigned int max_threads,
+            size_t depth,
             std::vector<Point2D<T>>* out_points,
             std::mutex& out_mutex) {
 
-            // 1. 在当前局部块 [x1, x2] x [y1, y2] 上运行 L-SHADE 寻找 |f(x,y)| 的最小值
+            // 💡 判定当前任务负载，深度 >= 2（存在大量潜在任务）时，开启 TBB
+            constexpr size_t tbb_depth_threshold = 2;
+            bool enable_tbb = (depth >= tbb_depth_threshold);
+            unsigned int current_threads = enable_tbb ? max_threads : 1;
+
+            // 💡 1. 打印：正在扫描的范围与环境信息
+            {
+                std::scoped_lock lock(out_mutex);
+                std::cout << std::scientific << std::setprecision(6);
+                std::cout << "[Depth " << depth << "] 🔍 正在扫描区间: ["
+                          << x1 << ", " << x2 << "] x [" << y1 << ", " << y2 << "]"
+                          << " (分配线程: " << current_threads << ")" << std::endl;
+            }
+
+            // 配置 L-SHADE 超参数
             utils::optimization::l_shade_parameters<T, 2> params;
             params.lower_bounds = {x1, y1};
             params.upper_bounds = {x2, y2};
 
-            // 局部细分无需过大种群，30 个体可兼顾速度与精度
-            params.NP_init = 150;
-            params.NP_min = 4;
-            params.max_evaluations = 15000; // 限制单块最大评估次数，防止深度陷入
-            params.threads = threads;     // 传递核心数，触发嵌套双重并行
-            params.seed = 0;              // 自动熵源种子
+            // 如果是第一层（对整个大世界范围进行全局扫描），采用大种群与高代数防止漏根
+            if (depth == 0) {
+                params.NP_init = 150;
+                params.max_evaluations = 15000;
+            } else {
+                params.NP_init = 25;
+                params.max_evaluations = 15000;
+            }
+            params.NP_min = 16;
+            params.threads = current_threads;
+            params.seed = 0;
 
-            // 配置抢占式提前退出条件
+            // 开启提前退出
             params.enable_early_exit = true;
             params.early_exit_value_low = val_low;
             params.early_exit_value_high = val_high;
             params.early_exit_decimal_places = decimal_places;
 
-            // 实例化随机发生器（使用 L-SHADE 的自闭环 PRNG）
-            std::random_device rd;
-            std::mt19937 gen(rd());
-
-            // 寻优目标：最小化距离绝对值 |f(x, y)|
+            // 目标函数：|f(x, y)|
             auto cost_func = [&](T x, T y) -> T {
                 return std::abs(f(x, y));
             };
 
-            // 执行 L-SHADE 优化
+            // 2. 运行 L-SHADE 寻找极小值
             std::array<T, 2> best_solution = utils::optimization::l_shade(cost_func, params);
 
             T best_x = best_solution[0];
             T best_y = best_solution[1];
             T final_cost = std::abs(f(best_x, best_y));
 
-            // 💡 诊断指标 1：代价值落入用户终止区间 (存在根)
+            // 判定当前区间是否存在根
             bool has_root = (final_cost >= val_low && final_cost <= val_high);
+            bool is_subnormal_trigger = false;
 
-            // 💡 诊断指标 2：值不在区间，但小数点位数达到临界值 (存在渐近线或奇点，亦视为有根)
+            // 如果不在范围内，检测精度位数是否达到极限（疑似奇异点/渐近线）
             if (!has_root) {
                 T coord_threshold = std::pow(static_cast<T>(10.0), -static_cast<T>(decimal_places));
                 T dist_x = std::min(best_x - x1, x2 - best_x);
                 T dist_y = std::min(best_y - y1, y2 - best_y);
 
-                // 陷入非正规数下溢边界，拉响几何特征判定警报
                 if ((dist_x > static_cast<T>(0.0) && dist_x < coord_threshold) ||
                     (dist_y > static_cast<T>(0.0) && dist_y < coord_threshold)) {
                     has_root = true;
+                    is_subnormal_trigger = true;
                 }
             }
 
-            // 2. 剪枝决策
-            if (!has_root) {
-                return; // 此区域无交点，直接剪枝
+            // 💡 3. 打印：L-SHADE 寻优结果与诊断逻辑
+            {
+                std::scoped_lock lock(out_mutex);
+                std::cout << std::scientific << std::setprecision(10);
+                std::cout << "[Depth " << depth << "] 📊 优化完成 | 范围: ["
+                          << x1 << ", " << x2 << "] x [" << y1 << ", " << y2 << "]\n"
+                          << "        -> 最优自变量坐标 (x, y): (" << best_x << ", " << best_y << ")\n"
+                          << "        -> 绝对值残差 |f(x,y)|:  " << final_cost << "\n";
+
+                if (has_root) {
+                    if (is_subnormal_trigger) {
+                        std::cout << "        -> [判定结果] ⚠️ 存在根 (触发非正规数下溢边界诊断，疑似渐近线或奇点)\n";
+                    } else {
+                        std::cout << "        -> [判定结果] ✅ 存在根 (满足终止区间代价值要求)\n";
+                    }
+
+                    if ((x2 - x1) <= min_w && (y2 - y1) <= min_h) {
+                        std::cout << "        -> [节点状态] 📍 达到叶子分辨率限，在中心处记录物理交点: ("
+                                  << (x1 + x2) / 2.0 << ", " << (y1 + y2) / 2.0 << ")" << std::endl;
+                    } else {
+                        std::cout << "        -> [节点状态] 🌿 正在裂变为 4 个子象限进行更深细分探查..." << std::endl;
+                    }
+                } else {
+                    std::cout << "        -> [判定结果] ❌ 无根，此分支已成功剪枝 (Pruned)" << std::endl;
+                }
+                std::cout << std::defaultfloat; // 恢复默认打印格式
             }
 
-            // 3. 达到用户指定的最小叶子块大小，停止细分，在中心放置点
+            // 4. 剪枝：如果当前范围内没有任何根的迹象，直接丢弃该分支
+            if (!has_root) {
+                return;
+            }
+
+            // 5. 达到最小细分分辨率，将中心位置写入结果并退出
             if ((x2 - x1) <= min_w && (y2 - y1) <= min_h) {
                 std::scoped_lock lock(out_mutex);
                 out_points->push_back(Point2D<T>{ (x1 + x2) / static_cast<T>(2.0), (y1 + y2) / static_cast<T>(2.0) });
                 return;
             }
 
-            // 4. 未达到最小分辨率，继续执行四叉树物理细分
+            // 6. 四叉树分裂
             T cx = (x1 + x2) / static_cast<T>(2.0);
             T cy = (y1 + y2) / static_cast<T>(2.0);
 
-            // 递归细分四个象限
-            subdivide_quadtree(f, x1, cx, y1, cy, min_w, min_h, decimal_places, val_low, val_high, threads, out_points, out_mutex);
-            subdivide_quadtree(f, cx, x2, y1, cy, min_w, min_h, decimal_places, val_low, val_high, threads, out_points, out_mutex);
-            subdivide_quadtree(f, x1, cx, cy, y2, min_w, min_h, decimal_places, val_low, val_high, threads, out_points, out_mutex);
-            subdivide_quadtree(f, cx, x2, cy, y2, min_w, min_h, decimal_places, val_low, val_high, threads, out_points, out_mutex);
+            // 7. 并行策略切换：当深度较深（细分任务极多）时，开启 TBB 双重并行
+            if (enable_tbb) {
+                oneapi::tbb::parallel_invoke(
+                    [&]() { subdivide_quadtree(f, x1, cx, y1, cy, min_w, min_h, decimal_places, val_low, val_high, max_threads, depth + 1, out_points, out_mutex); },
+                    [&]() { subdivide_quadtree(f, cx, x2, y1, cy, min_w, min_h, decimal_places, val_low, val_high, max_threads, depth + 1, out_points, out_mutex); },
+                    [&]() { subdivide_quadtree(f, x1, cx, cy, y2, min_w, min_h, decimal_places, val_low, val_high, max_threads, depth + 1, out_points, out_mutex); },
+                    [&]() { subdivide_quadtree(f, cx, x2, cy, y2, min_w, min_h, decimal_places, val_low, val_high, max_threads, depth + 1, out_points, out_mutex); }
+                );
+            } else {
+                subdivide_quadtree(f, x1, cx, y1, cy, min_w, min_h, decimal_places, val_low, val_high, max_threads, depth + 1, out_points, out_mutex);
+                subdivide_quadtree(f, cx, x2, y1, cy, min_w, min_h, decimal_places, val_low, val_high, max_threads, depth + 1, out_points, out_mutex);
+                subdivide_quadtree(f, x1, cx, cy, y2, min_w, min_h, decimal_places, val_low, val_high, max_threads, depth + 1, out_points, out_mutex);
+                subdivide_quadtree(f, cx, x2, cy, y2, min_w, min_h, decimal_places, val_low, val_high, max_threads, depth + 1, out_points, out_mutex);
+            }
         }
 
     } // namespace detail
 
     // =========================================================================
-    // 💡 4. 外部调用主接口 (双重 TBB 并行化调度)
+    // 💡 外部调用主接口 (彻底移除了外部粗分块 M、N，实现 100% 动态自适应寻优)
     // =========================================================================
     template <typename T, typename Func>
         requires std::floating_point<T>
     void implicit_2d_scalar(
-        const Func& f,                              // 💡 支持您的 FfiFunction 或任何双参可调用对象
-        T x_min, T x_max,                           // 世界 X 范围
-        T y_min, T y_max,                           // 世界 Y 范围
-        size_t M,                                   // 横向网格分块数
-        size_t N,                                   // 纵向网格分块数
-        T min_block_width,                          // 终止细分的最小块宽度
-        T min_block_height,                         // 终止细分的最小块高度
-        size_t exit_decimal_places,                 // 截止小数点判定位数（用于奇点触发）
-        T exit_value_low,                           // 函数优化终止范围下界
-        T exit_value_high,                          // 函数优化终止范围上界
-        unsigned int threads,                       // 启动的核心/线程数量 (0代表全部核心)
-        std::vector<Point2D<T>>* out_points) {      // 💡 通过修改指针（副作用）返回结果
+        const Func& f,
+        T x_min, T x_max,
+        T y_min, T y_max,
+        T min_block_width,
+        T min_block_height,
+        size_t exit_decimal_places,
+        T exit_value_low,
+        T exit_value_high,
+        unsigned int threads,
+        std::vector<Point2D<T>>* out_points) {
 
         if (!out_points) return;
-
-        // 清空输出
         out_points->clear();
         std::mutex out_mutex;
 
-        // 计算粗粒度主网格的长宽
-        T dx = (x_max - x_min) / static_cast<T>(M);
-        T dy = (y_max - y_min) / static_cast<T>(N);
-
-        // 设置外层网格 TBB task_arena 并行度
-        int outer_threads = threads;
-        if (outer_threads == 0) {
-            outer_threads = oneapi::tbb::info::default_concurrency();
+        // 计算最大分配核心
+        unsigned int max_threads = threads;
+        if (max_threads == 0) {
+            max_threads = oneapi::tbb::info::default_concurrency();
         }
-        oneapi::tbb::task_arena outer_arena(outer_threads);
 
-        // 💡 第一重并行：在外层网格之间使用 blocked_range2d 进行并行化调度
-        outer_arena.execute([&]() {
-            oneapi::tbb::parallel_for(oneapi::tbb::blocked_range2d<size_t>(0, M, 0, N), [&](const oneapi::tbb::blocked_range2d<size_t>& range) {
-                for (size_t i = range.rows().begin(); i < range.rows().end(); ++i) {
-                    for (size_t j = range.cols().begin(); j < range.cols().end(); ++j) {
-                        T x1 = x_min + static_cast<T>(i) * dx;
-                        T x2 = x_min + static_cast<T>(i + 1) * dx;
-                        T y1 = y_min + static_cast<T>(j) * dy;
-                        T y2 = y_min + static_cast<T>(j + 1) * dy;
+        std::cout << "\n======================== [StuCanvas 实时几何诊断系统启动] ========================\n" << std::endl;
 
-                        // 在每个主网格内部启动自适应四叉树寻根（内含第二重 L-SHADE 种群并行评估）
-                        detail::subdivide_quadtree(
-                            f, x1, x2, y1, y2,
-                            min_block_width, min_block_height,
-                            exit_decimal_places,
-                            exit_value_low, exit_value_high,
-                            threads,
-                            out_points,
-                            out_mutex
-                        );
-                    }
-                }
-            });
+        oneapi::tbb::task_arena arena(max_threads);
+        arena.execute([&]() {
+            // 初始自举：对整个世界范围（depth = 0）启动单核高精度全局扫描
+            detail::subdivide_quadtree(
+                f,
+                x_min, x_max,
+                y_min, y_max,
+                min_block_width,
+                min_block_height,
+                exit_decimal_places,
+                exit_value_low,
+                exit_value_high,
+                max_threads,
+                0, // 初始深度为 0
+                out_points,
+                out_mutex
+            );
         });
+
+        std::cout << "\n======================== [StuCanvas 实时几何诊断系统结束] ========================\n" << std::endl;
     }
 
 } // namespace StuCanvas::plot

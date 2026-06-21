@@ -156,8 +156,8 @@ int main() {
 
     // 测试一：奇异点精细寻优
     std::vector<std::pair<double, double>> bounds_1 = {
-        {-5, 5},
-        {-10001, -10000}
+        {-1, 0},
+        {2, 3}
     };
     run_comparison_test(
         "测试一：奇异点附近的局部精细寻优",

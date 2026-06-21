@@ -15,9 +15,7 @@ def main():
     # 数据路径
     filename = "/home/friendships666/Projects/StuCanvas/cmake-build-release/points.txt"
     if not os.path.exists(filename):
-        filename = "/home/friendships666/Projects/StuCanvas/cmake-build-debug/points.txt"
-    if not os.path.exists(filename):
-        filename = "/home/friendships666/Projects/StuCanvas/cmake-build-debug/points.ply"
+        filename = "/home/friendships666/Projects/StuCanvas/cmake-build-release/points.txt"
 
     if not os.path.exists(filename):
         print(f"[Error] 找不到任何数据文件。")
