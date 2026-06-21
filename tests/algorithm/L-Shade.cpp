@@ -1,6 +1,6 @@
 #include "../stucanvas/utils/function.hpp"
 #include "../stucanvas/utils/differential_evoluation.hpp"
-#include "../stucanvas/utils/l_shade.hpp" // 💡 引入新实现的 L-SHADE
+#include "../stucanvas/utils/l_shade.hpp"
 #include <minion/minion.h>
 #include <iostream>
 #include <vector>
@@ -36,19 +36,20 @@ std::vector<double> f3_batch_wrapper(const std::vector<std::vector<double>>& X, 
     return out;
 }
 
-// 3. 对比执行逻辑 (增加 L-SHADE 进行三方竞技)
+// 3. 对比执行逻辑
 void run_comparison_test(
     const std::string& test_name,
     minion::MinionFunction minion_batch_func,
     const StuCanvas::utils::FfiFunction<double(double, double)>& ffi_scalar_func,
-    const std::vector<std::pair<double, double>>& bounds) {
+    const std::vector<std::pair<double, double>>& bounds,
+    bool enable_early_exit_test = false) { // 💡 增加了测试参数
 
     std::cout << "\n==================================================================================================" << std::endl;
     std::cout << " 正在测试 (三方横向盲测、完全随机分布): " << test_name << std::endl;
     std::cout << "==================================================================================================" << std::endl;
 
     // ---------------------------------------------------------
-    // A. 运行 Custom TBB DE (经典固定参数 DE)
+    // A. 运行 Custom TBB DE
     // ---------------------------------------------------------
     StuCanvas::utils::optimization::differential_evolution_parameters<double, 2> de_params;
     de_params.lower_bounds = {bounds[0].first, bounds[1].first};
@@ -67,16 +68,24 @@ void run_comparison_test(
     double de_time = std::chrono::duration<double, std::milli>(t2 - t1).count();
 
     // ---------------------------------------------------------
-    // B. 运行 Custom TBB L-SHADE (新实现的 L-SHADE 算法)
+    // B. 运行 Custom TBB L-SHADE
     // ---------------------------------------------------------
     StuCanvas::utils::optimization::l_shade_parameters<double, 2> l_shade_params;
     l_shade_params.lower_bounds = {bounds[0].first, bounds[1].first};
     l_shade_params.upper_bounds = {bounds[0].second, bounds[1].second};
-    l_shade_params.NP_init = 150;           // 初始种群大小
-    l_shade_params.NP_min = 4;              // 种群缩减下限
-    l_shade_params.max_evaluations = 150000; // 统一限制评估 150,000 次
+    l_shade_params.NP_init = 150;
+    l_shade_params.NP_min = 4;
+    l_shade_params.max_evaluations = 150000;
     l_shade_params.threads = 0;
     l_shade_params.seed = 42;
+
+    // 💡 如果是测试二，配置抢占式提前退出条件
+    if (enable_early_exit_test) {
+        l_shade_params.enable_early_exit = false;                  // 开启提前退出
+        l_shade_params.early_exit_value_low = 99200.0;             // 条件 1: 代价值下限
+        l_shade_params.early_exit_value_high = 99300.0;            // 条件 1: 代价值上限
+        l_shade_params.early_exit_decimal_places = 50;             // 条件 2: 坐标距离达到 50 位小数
+    }
 
     auto t3 = std::chrono::high_resolution_clock::now();
     std::array<double, 2> best_custom_l_shade = StuCanvas::utils::optimization::l_shade(
@@ -162,11 +171,13 @@ int main() {
         {0.0, 3.0},
         {100000.0, 100001.0}
     };
+    // 💡 开启提前退出测试
     run_comparison_test(
-        "测试二：双精度下溢极限挑战",
+        "测试二：双精度下溢极限挑战（已激活提前退出机制）",
         f1_f2_batch_wrapper,
         ffi_f1_f2,
-        bounds_2
+        bounds_2,
+        true
     );
 
     // 测试三：万级多峰超高频振荡优化

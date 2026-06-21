@@ -2,6 +2,7 @@
  * Copyright (c) StuCanvas, 2026
  * Fully compile-time templated, strictly zero-heap-allocation.
  * Handcoded high-performance SplitMix64 PRNG replacing STL `<random>`.
+ * Integrated with proactive multi-criteria early exit triggers.
  */
 #pragma once
 
@@ -26,13 +27,12 @@
 #include <oneapi/tbb/info.h>
 #include <oneapi/tbb/global_control.h>
 
-// 引入共享基础组件
 #include "optimization_common.hpp"
 
 namespace StuCanvas::utils::optimization {
 
     // =========================================================================
-    // 💡 全局优化参数结构体
+    // 💡 全局优化参数结构体（集成提前退出配置）
     // =========================================================================
     template <typename Real = double, size_t Dimension = 2>
         requires std::floating_point<Real> && (Dimension > 0)
@@ -48,14 +48,16 @@ namespace StuCanvas::utils::optimization {
         size_t NP = 100;                 // 种群大小
         size_t max_generations = 1000;   // 最大迭代次数
 
-        // 种子参数：0 代表自动在运行时使用硬件物理熵源，其他值代表指定固定随机种子
         uint64_t seed = 0;
-
-        // 线程参数控制：0 代表全部核心，1 代表单核心计算
         unsigned int threads = 0;
+
+        // 💡 提前退出配置
+        bool enable_early_exit = false;
+        Real early_exit_value_low = static_cast<Real>(0.1);
+        Real early_exit_value_high = static_cast<Real>(0.3);
+        size_t early_exit_decimal_places = 100;
     };
 
-    // 校验配置合法性
     template <typename Real, size_t Dimension>
         requires std::floating_point<Real> && (Dimension > 0)
     void validate_differential_evolution_parameters(const differential_evolution_parameters<Real, Dimension>& de_params) {
@@ -81,7 +83,6 @@ namespace StuCanvas::utils::optimization {
         }
     }
 
-    // 基于自定义高性能 PRNG 的随机初始生成
     template <typename Real, size_t Dimension>
         requires std::floating_point<Real> && (Dimension > 0)
     std::vector<std::array<Real, Dimension>> generate_random_population(
@@ -97,9 +98,6 @@ namespace StuCanvas::utils::optimization {
         return pop;
     }
 
-    // =========================================================================
-    // 💡 修正后的主 DE 算法接口（使用 apply_invoke_result_t 进行安全的类型推导）
-    // =========================================================================
     template <typename Real, size_t Dimension, typename Func>
         requires std::floating_point<Real> &&
                  (Dimension > 0) &&
@@ -121,31 +119,32 @@ namespace StuCanvas::utils::optimization {
         validate_differential_evolution_parameters(de_params);
         const size_t NP = de_params.NP;
 
-        // TBB 并行调度准备
         int actual_threads = de_params.threads;
         if (actual_threads == 0) {
             actual_threads = oneapi::tbb::info::default_concurrency();
         }
         oneapi::tbb::task_arena arena(actual_threads);
 
-        // 运行时处理初始随机种子
         uint64_t master_seed = de_params.seed;
         if (master_seed == 0) {
             std::random_device rd;
-            master_seed = (static_cast<uint64_t>(rd()) << 32) | rd(); // 读取两次物理熵
+            master_seed = (static_cast<uint64_t>(rd()) << 32) | rd();
         }
 
-        // 初始化主 PRNG，并自适应推演每个子线程的独立随机发生器
         FastPrng master_prng(master_seed);
         std::vector<FastPrng> thread_generators;
         thread_generators.reserve(static_cast<size_t>(actual_threads));
         for (int j = 0; j < actual_threads; ++j) {
-            thread_generators.emplace_back(master_prng.next()); // 分流种子
+            thread_generators.emplace_back(master_prng.next());
         }
 
-        // 生成初始种群（采用主发生器）
-        auto population = generate_random_population<Real, Dimension>(de_params.lower_bounds, de_params.upper_bounds, NP, master_prng);
+        // 💡 编译期预计算坐标判定阈值：10^(-D)
+        Real coord_threshold = static_cast<Real>(0.0);
+        if (de_params.enable_early_exit) {
+            coord_threshold = std::pow(static_cast<Real>(10.0), -static_cast<Real>(de_params.early_exit_decimal_places));
+        }
 
+        auto population = generate_random_population<Real, Dimension>(de_params.lower_bounds, de_params.upper_bounds, NP, master_prng);
         std::vector<ResultType> cost(NP, std::numeric_limits<ResultType>::quiet_NaN());
         std::atomic<bool> target_attained = false;
         std::mutex mt;
@@ -154,7 +153,31 @@ namespace StuCanvas::utils::optimization {
         arena.execute([&]() {
             oneapi::tbb::parallel_for(oneapi::tbb::blocked_range<size_t>(0, NP), [&](const oneapi::tbb::blocked_range<size_t>& range) {
                 for (size_t i = range.begin(); i < range.end(); ++i) {
+                    if (target_attained) return;
                     cost[i] = std::apply(cost_function, population[i]);
+
+                    // 💡 初始生成时的提前退出检查
+                    bool triggered = false;
+                    if (de_params.enable_early_exit) {
+                        if (cost[i] >= de_params.early_exit_value_low && cost[i] <= de_params.early_exit_value_high) {
+                            triggered = true;
+                        }
+                        if (!triggered) {
+                            for (size_t k = 0; k < Dimension; ++k) {
+                                Real dist_lb = std::abs(population[i][k] - de_params.lower_bounds[k]);
+                                Real dist_ub = std::abs(de_params.upper_bounds[k] - population[i][k]);
+                                if ((dist_lb > static_cast<Real>(0.0) && dist_lb < coord_threshold) ||
+                                    (dist_ub > static_cast<Real>(0.0) && dist_ub < coord_threshold)) {
+                                    triggered = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (triggered) {
+                        target_attained = true;
+                    }
 
                     if (current_minimum_cost) {
                         auto current_val = current_minimum_cost->load();
@@ -215,6 +238,29 @@ namespace StuCanvas::utils::optimization {
                         if (queries) {
                             std::scoped_lock lock(mt);
                             queries->push_back(std::make_pair(trial_vectors[i], trial_cost));
+                        }
+
+                        // 💡 演化过程中的提前退出检测
+                        bool triggered = false;
+                        if (de_params.enable_early_exit) {
+                            if (trial_cost >= de_params.early_exit_value_low && trial_cost <= de_params.early_exit_value_high) {
+                                triggered = true;
+                            }
+                            if (!triggered) {
+                                for (size_t k = 0; k < Dimension; ++k) {
+                                    Real dist_lb = std::abs(trial_vectors[i][k] - de_params.lower_bounds[k]);
+                                    Real dist_ub = std::abs(de_params.upper_bounds[k] - trial_vectors[i][k]);
+                                    if ((dist_lb > static_cast<Real>(0.0) && dist_lb < coord_threshold) ||
+                                        (dist_ub > static_cast<Real>(0.0) && dist_ub < coord_threshold)) {
+                                        triggered = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (triggered) {
+                            target_attained = true;
                         }
 
                         if (trial_cost < cost[i] || isnan(cost[i])) {

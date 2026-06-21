@@ -212,6 +212,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/utils/differential_evoluation.hpp
         stucanvas/utils/l_shade.hpp
         stucanvas/utils/optimization_common.hpp
+        stucanvas/plot/implicit_2d_scalar.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
@@ -382,3 +383,10 @@ add_executable(L-Shade tests/algorithm/L-Shade.cpp
 )
 target_link_libraries(L-Shade PRIVATE StuCanvasCore)
 configure_stucanvas_target(L-Shade)
+
+
+add_executable(plot_implicit_2d_scalar tests/algorithm/plot_implicit_2d_scalar.cpp
+
+)
+target_link_libraries(plot_implicit_2d_scalar PRIVATE StuCanvasCore)
+configure_stucanvas_target(plot_implicit_2d_scalar)

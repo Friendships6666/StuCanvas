@@ -73,6 +73,12 @@ namespace StuCanvas::utils::optimization {
 
         uint64_t seed = 0;
         unsigned int threads = 0;
+
+        // 💡 提前退出配置
+        bool enable_early_exit = false;
+        Real early_exit_value_low = static_cast<Real>(0.1);
+        Real early_exit_value_high = static_cast<Real>(0.3);
+        size_t early_exit_decimal_places = 100;
     };
 
     template <typename Real, size_t Dimension>
@@ -105,7 +111,7 @@ namespace StuCanvas::utils::optimization {
     }
 
     // =========================================================================
-    // 💡 3. 修正后的 L-SHADE 核心算法接口（同步采用 apply_invoke_result_t）
+    // 💡 3. L-SHADE 核心算法接口
     // =========================================================================
     template <typename Real, size_t Dimension, typename Func>
         requires std::floating_point<Real> &&
@@ -148,12 +154,21 @@ namespace StuCanvas::utils::optimization {
             thread_generators.emplace_back(master_prng.next());
         }
 
+        // 💡 编译期预计算坐标判定阈值：10^(-D)
+        Real coord_threshold = static_cast<Real>(0.0);
+        if (de_params.enable_early_exit) {
+            coord_threshold = std::pow(static_cast<Real>(10.0), -static_cast<Real>(de_params.early_exit_decimal_places));
+        }
+
         const size_t H = de_params.H;
         std::vector<Real> M_F(H, static_cast<Real>(0.5));
         std::vector<Real> M_CR(H, static_cast<Real>(0.5));
         size_t memory_index = 0;
 
-        auto population = generate_initial_population<Real, Dimension>(de_params.lower_bounds, de_params.upper_bounds, NP_curr, master_prng);
+        // 💡 显式完整命名空间修饰：生成初始种群
+        auto population = StuCanvas::utils::optimization::generate_initial_population<Real, Dimension>(
+            de_params.lower_bounds, de_params.upper_bounds, NP_curr, master_prng
+        );
         std::vector<ResultType> cost(NP_curr, std::numeric_limits<ResultType>::quiet_NaN());
         std::atomic<bool> target_attained = false;
         std::mutex mt;
@@ -161,7 +176,32 @@ namespace StuCanvas::utils::optimization {
         arena.execute([&]() {
             oneapi::tbb::parallel_for(oneapi::tbb::blocked_range<size_t>(0, NP_curr), [&](const oneapi::tbb::blocked_range<size_t>& range) {
                 for (size_t i = range.begin(); i < range.end(); ++i) {
+                    if (target_attained) return;
                     cost[i] = std::apply(cost_function, population[i]);
+
+                    // 初始生成时的提前退出检查
+                    bool triggered = false;
+                    if (de_params.enable_early_exit) {
+                        if (cost[i] >= de_params.early_exit_value_low && cost[i] <= de_params.early_exit_value_high) {
+                            triggered = true;
+                        }
+                        if (!triggered) {
+                            for (size_t k = 0; k < Dimension; ++k) {
+                                Real dist_lb = std::abs(population[i][k] - de_params.lower_bounds[k]);
+                                Real dist_ub = std::abs(de_params.upper_bounds[k] - population[i][k]);
+                                if ((dist_lb > static_cast<Real>(0.0) && dist_lb < coord_threshold) ||
+                                    (dist_ub > static_cast<Real>(0.0) && dist_ub < coord_threshold)) {
+                                    triggered = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (triggered) {
+                        target_attained = true;
+                    }
+
                     if (current_minimum_cost) {
                         auto current_val = current_minimum_cost->load();
                         while (cost[i] < current_val && !current_minimum_cost->compare_exchange_weak(current_val, cost[i])) {}
@@ -247,13 +287,15 @@ namespace StuCanvas::utils::optimization {
                         if (M_CR[r_i] == -1.0) {
                             CR_i = static_cast<Real>(0.0);
                         } else {
-                            CR_i = sample_normal(tlg, M_CR[r_i], static_cast<Real>(0.1));
+                            // 💡 显式命名空间限定与模板指定：生成正态分布 CR_i
+                            CR_i = StuCanvas::utils::optimization::sample_normal<Real>(tlg, M_CR[r_i], static_cast<Real>(0.1));
                             CR_i = std::clamp(CR_i, static_cast<Real>(0.0), static_cast<Real>(1.0));
                         }
 
                         Real F_i;
                         do {
-                            F_i = sample_cauchy(tlg, M_F[r_i], static_cast<Real>(0.1));
+                            // 💡 显式命名空间限定与模板指定：生成柯西分布 F_i
+                            F_i = StuCanvas::utils::optimization::sample_cauchy<Real>(tlg, M_F[r_i], static_cast<Real>(0.1));
                         } while (F_i <= static_cast<Real>(0.0));
                         if (F_i > static_cast<Real>(1.0)) {
                             F_i = static_cast<Real>(1.0);
@@ -288,6 +330,29 @@ namespace StuCanvas::utils::optimization {
                         if (queries) {
                             std::scoped_lock lock(mt);
                             queries->push_back(std::make_pair(trial_vectors[i], trial_cost));
+                        }
+
+                        // 演化过程中的提前退出检测
+                        bool triggered = false;
+                        if (de_params.enable_early_exit) {
+                            if (trial_cost >= de_params.early_exit_value_low && trial_cost <= de_params.early_exit_value_high) {
+                                triggered = true;
+                            }
+                            if (!triggered) {
+                                for (size_t k = 0; k < Dimension; ++k) {
+                                    Real dist_lb = std::abs(trial_vectors[i][k] - de_params.lower_bounds[k]);
+                                    Real dist_ub = std::abs(de_params.upper_bounds[k] - trial_vectors[i][k]);
+                                    if ((dist_lb > static_cast<Real>(0.0) && dist_lb < coord_threshold) ||
+                                        (dist_ub > static_cast<Real>(0.0) && dist_ub < coord_threshold)) {
+                                        triggered = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (triggered) {
+                            target_attained = true;
                         }
 
                         if (trial_cost < cost[i] || isnan(cost[i])) {
