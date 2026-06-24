@@ -1,9 +1,10 @@
-# StuCanvas
+<div align="center">
+  <h1>StuCanvas</h1>
+  <font size="6"><b>官方网站</b></font><br>
+  <a href="https://stucanvas.org/"><strong>stucanvas.org</strong></a>
+</div>
 
-## 官方网站
-**[stucanvas.org](https://stucanvas.org/)**
-
-> 目前 StuCanvas 正式版的测试与开发工作即将完毕。开发者已倾注了最大时间和精力，致力于为广大用户提供一个强大的可视化工具。
+> 目前 StuCanvas 正式版的测试与开发工作即将完毕。开发者已倾注了最大时间和精力，致力于为广大用户提供一个最强大的可视化工具。
 > 
 > 
 [![Language: Rust](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
@@ -47,25 +48,15 @@
 * **时间轴跳转**：时间轴支持任意帧跳转，便于调试。
 * **显存就地编码**：视频导出时，渲染帧数据直接通过驱动调用显存进行编码，减少 CPU 与 GPU 之间的数据拷贝，支持主流分辨率视频导出，硬件编码，最高支持8192x8192分辨率。
 
-更多功能详情请见StuCanvas官方网站
----
+> 💡 **提示**
+>
+> 更多完整功能、详细参数与技术文档，请参阅 [StuCanvas 官方网站](https://stucanvas.org/)。
+<hr>
 
-##  第三方依赖列表 (Dependencies)
 
-| 徽标 (Logo) | 依赖项 (Dependency) | 许可协议 (License) | 说明与核心用途 (Description) |
-|:---:| :--- | :--- | :--- |
-| <br><img src="./docs/logos/Vulkan_RGB_Dec16.svg" height="70" alt="Vulkan"><br><br> | **Vulkan SDK** | Apache 2.0 | 跨平台的图形与计算 API，用于构建渲染管线。 |
-| <br><img src="./docs/logos/nvidia-logo-vert-wht.png" height="75" alt="NVIDIA"><br><br> | **NVIDIA Driver API** | Proprietary | 配合硬件特性实现显存就地编码与视频导出加速。 |
-| <br><img src="./docs/logos/Intel-logo-nobox.png" height="55" alt="Intel"><br><br> | **Intel CPU Tech & TBB** | Apache 2.0 / MIT | 引入 CPU 并行计算，优化图论几何求解与依赖树构建。 |
-| <br><img src="./docs/logos/slang-logo.svg" height="60" alt="Slang"><br><br> | **Slang Shading Language** | Apache 2.0 | 着色器语言与编译服务，提供跨平台着色器生成与动态管理。 |
-| <br><img src="./docs/logos/Eigen_Silly_Professor_135x135.png" height="90" alt="Eigen3"><br><br> | **Eigen3** | MPL2 | 线性代数库，用于底层的矩阵变换与几何坐标求解。 |
-| <br><img src="./docs/logos/sdl-original.svg" height="90" alt="SDL3"><br><br> | **SDL3** | zlib | 跨平台底层开发库，提供窗口管理、事件捕获及多媒体上下文环境。 |
-
----
-
-### 🏷️ 商标与免责声明 (Trademarks & Disclaimers)
-
-* **Intel** 以及 **Intel Inside** 均为 Intel Corporation 及其子公司的注册商标。
-* **NVIDIA**、**GeForce** 均为 NVIDIA Corporation 的注册商标。
-* **Vulkan** 以及 Vulkan 徽标是 Khronos Group Inc. 的注册商标。
-* 本软件中所引用的各品牌 Logo 及注册商标仅用于标示系统底层的技术依赖与兼容性，其知识产权与版权均归属各对应商标持有人所有。
+<div align="center">
+  <h2>💬 技术交流与社群</h2>
+  <p>欢迎扫码加入 QQ 交流群，探讨计算机图形学、科学可视化及底层渲染技术：</p>
+  <img src="docs/pictures/qq_group.jpg" width="280" alt="StuCanvas QQ Group" />
+  <p><b>QQ 群号：960908849</b></p>
+</div>
