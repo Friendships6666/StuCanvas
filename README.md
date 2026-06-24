@@ -4,7 +4,7 @@
   <a href="https://stucanvas.org/"><strong>stucanvas.org</strong></a>
 </div>
 
-> 当前版本切勿使用，是内部测试版本。目前 StuCanvas 正式版的测试与开发工作即将完毕。开发者已倾注了最大时间和精力，致力于为广大用户提供一个最强大的可视化工具。
+> 当前版本切勿使用，是内部测试版本。目前 StuCanvas 正式版的测试与开发工作即将完毕。开发者已倾注了最大时间和精力，致力于提供一个强大的科学可视化引擎。
 >
 
 [![Language: Rust](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
