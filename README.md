@@ -56,7 +56,7 @@
 
 <div align="center">
   <h2>💬 技术交流与社群</h2>
-  <p>欢迎扫码加入 QQ 交流群，探讨计算机图形学、科学可视化及底层渲染技术：</p>
+  <p>欢迎加入 QQ 交流群，计算机图形学&科学可视化，数值分析交流群：</p>
   <img src="docs/pictures/qq_group.jpg" width="280" alt="StuCanvas QQ Group" />
   <p><b>QQ 群号：960908849</b></p>
 </div>
