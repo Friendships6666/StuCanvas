@@ -10,9 +10,13 @@
 #include <chrono>
 #include <iomanip>
 
-// 1. 定义隐式代数曲线方程：圆形 x^2 + y^2 - 4.0 = 0
+#include <cmath>
+
+// 1. 定义逆时针旋转 30 度后的隐式代数曲线方程：y - log(x) = 0
 double circle_equation(double x, double y) {
-    return y-sin(99999*x);
+
+    // 返回旋转后的隐式方程值
+    return y - std::log(x);
 }
 
 int main() {
@@ -25,21 +29,17 @@ int main() {
     std::vector<StuCanvas::plot::Point2D<T>> points;
 
     // 设定 2D 世界搜索边界范围
-    T x_min = -3.0, x_max = 3.0;
-    T y_min = -30.0, y_max = 3.0;
-
-    // 粗粒度主网格划分尺寸
-    size_t M = 15; // 横向划分为 12 块
-    size_t N = 15; // 纵向划分为 12 块
+    T x_min = -2.0, x_max = 2;
+    T y_min = -10, y_max = 2;
 
     // 终止细分的最小块物理尺寸（决定了最终绘图的分辨率）
-    T min_block_width = 0.02;
-    T min_block_height = 0.02;
+    T min_block_width = 0.1;
+    T min_block_height = 0.1;
 
     // 抢占式提前退出精度与容错条件
-    size_t exit_decimal_places = 10;  // 自变量逼近至双精度下溢区 (约 15 位有效数字) 视为有根
+    size_t exit_decimal_places = 5;  // 自变量逼近至双精度下溢区 (约 15 位有效数字) 视为有根
     T exit_value_low = -0.1;
-    T exit_value_high = 1e-2;         // |f(x, y)| 的绝对值降入 [0.0, 1e-4] 范围内视为有根
+    T exit_value_high = 1e-3;         // |f(x, y)| 的绝对值降入 [0.0, 1e-4] 范围内视为有根
 
     unsigned int threads = 0; // 0 代表自动分配 Intel oneTBB 的全部空闲线程
 

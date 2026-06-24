@@ -213,6 +213,7 @@ add_library(StuCanvasCore STATIC
         stucanvas/utils/l_shade.hpp
         stucanvas/utils/optimization_common.hpp
         stucanvas/plot/implicit_2d_scalar.hpp
+        stucanvas/utils/paaa.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
@@ -234,7 +235,7 @@ target_include_directories(StuCanvasCore PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/external
 )
 
-
+find_package(OpenMP REQUIRED)
 target_link_libraries(StuCanvasCore PUBLIC
         Vulkan::Vulkan
         Eigen3::Eigen
@@ -246,6 +247,9 @@ target_link_libraries(StuCanvasCore PUBLIC
         ${NVENC_LIB_PATH}
 
         /usr/local/lib/libminion.so
+        /home/friendships666/MCTS-4-SR/build/libimcts_core.a
+        /usr/lib/libCatch2Main.a
+        OpenMP::OpenMP_CXX
 )
 
 # ============================================================================
@@ -390,3 +394,15 @@ add_executable(plot_implicit_2d_scalar tests/algorithm/plot_implicit_2d_scalar.c
 )
 target_link_libraries(plot_implicit_2d_scalar PRIVATE StuCanvasCore)
 configure_stucanvas_target(plot_implicit_2d_scalar)
+
+
+add_executable(paaa tests/algorithm/paaa.cpp
+)
+target_link_libraries(paaa PRIVATE StuCanvasCore)
+configure_stucanvas_target(paaa)
+
+
+add_executable(mcts tests/algorithm/mcts.cpp
+)
+target_link_libraries(mcts PRIVATE StuCanvasCore)
+configure_stucanvas_target(mcts)

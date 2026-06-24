@@ -12,7 +12,7 @@
 
 // 1. 原生多自变量标量函数定义
 double f1_f2_scalar_direct(double x, double y) {
-    return std::abs(y - std::log(x));
+    return std::abs(1e306*y - 1e306*x);
 }
 
 double f3_scalar_direct(double x, double y) {
@@ -73,11 +73,12 @@ void run_comparison_test(
     StuCanvas::utils::optimization::l_shade_parameters<double, 2> l_shade_params;
     l_shade_params.lower_bounds = {bounds[0].first, bounds[1].first};
     l_shade_params.upper_bounds = {bounds[0].second, bounds[1].second};
-    l_shade_params.NP_init = 150;
+    l_shade_params.NP_init = 100;
     l_shade_params.NP_min = 4;
     l_shade_params.max_evaluations = 150000;
     l_shade_params.threads = 0;
-    l_shade_params.seed = 42;
+    l_shade_params.seed = 0;
+    l_shade_params.enable_early_exit = false;
 
     // 💡 如果是测试二，配置抢占式提前退出条件
     if (enable_early_exit_test) {
@@ -154,10 +155,14 @@ int main() {
     StuCanvas::utils::FfiFunction<double(double, double)> ffi_f1_f2(f1_f2_scalar_direct);
     StuCanvas::utils::FfiFunction<double(double, double)> ffi_f3(f3_scalar_direct);
 
-    // 测试一：奇异点精细寻优
+
+    // [Depth 0] ❌ 区间已被剪枝 (Pruned) | 满足条件 (y1 <= -10.0)
+    //   - 物理边界范围: [-2.0000000000e+00, 2.0000000000e+00] x [-1.1000000000e+02, -1.0000000000e+02]
+    //   - 最优局部坐标: (x=2.9249855168e-28, y=-1.0000000037e+02)
+    //   - 绝对值最小残差: 3.6600907293e+01 (未满足退出区间 [-1.0000000000e-01, 1.0000000000e-03])
     std::vector<std::pair<double, double>> bounds_1 = {
-        {-1, 0},
-        {2, 3}
+        {-10, 30},
+        {-10 ,10}
     };
     run_comparison_test(
         "测试一：奇异点附近的局部精细寻优",
