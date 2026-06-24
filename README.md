@@ -4,9 +4,9 @@
   <a href="https://stucanvas.org/"><strong>stucanvas.org</strong></a>
 </div>
 
-> 目前 StuCanvas 正式版的测试与开发工作即将完毕。开发者已倾注了最大时间和精力，致力于为广大用户提供一个最强大的可视化工具。
-> 
-> 
+> 当前版本切勿使用，是内部测试版本。目前 StuCanvas 正式版的测试与开发工作即将完毕。开发者已倾注了最大时间和精力，致力于为广大用户提供一个最强大的可视化工具。
+>
+
 [![Language: Rust](https://img.shields.io/badge/Language-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Language: C++23](https://img.shields.io/badge/Language-C%2B%2B23-blue.svg)](https://en.cppreference.com/w/cpp/23)
 [![API: Vulkan](https://img.shields.io/badge/API-Vulkan-red.svg)](https://www.vulkan.org/)
