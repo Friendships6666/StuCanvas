@@ -4,6 +4,7 @@
 #include "../utils/flat_map.hpp"
 #include "../types/point.hpp"
 #include "Eigen/Dense"
+
 namespace StuCanvas
 {
     template <typename T>

@@ -214,6 +214,10 @@ add_library(StuCanvasCore STATIC
         stucanvas/utils/optimization_common.hpp
         stucanvas/plot/implicit_2d_scalar.hpp
         stucanvas/utils/paaa.hpp
+        stucanvas/canvas/vulkan/raytracing_pipeline.hpp
+        stucanvas/canvas/vulkan/raytracing_pass.hpp
+        stucanvas/canvas/vulkan/rt_present.hpp
+        stucanvas/utils/pinned_vector.hpp
         # 💡 已从这里彻底移除了 test.cpp
 )
 
@@ -354,6 +358,7 @@ configure_stucanvas_target(pNext_test)
 
 
 add_executable(cpu_cache_test_1 tests/performance/cpu_cache_test_1.cpp
+        stucanvas/canvas/vulkan/geometry.hpp
 
 )
 target_link_libraries(cpu_cache_test_1 PRIVATE StuCanvasCore)
@@ -381,6 +386,13 @@ target_link_libraries(flex_list_test PRIVATE StuCanvasCore)
 configure_stucanvas_target(flex_list_test)
 
 
+add_executable(pinned_vector tests/performance/pinned_vector.cpp
+
+)
+target_link_libraries(pinned_vector PRIVATE StuCanvasCore)
+configure_stucanvas_target(pinned_vector)
+
+
 
 add_executable(L-Shade tests/algorithm/L-Shade.cpp
 
@@ -406,3 +418,9 @@ add_executable(mcts tests/algorithm/mcts.cpp
 )
 target_link_libraries(mcts PRIVATE StuCanvasCore)
 configure_stucanvas_target(mcts)
+
+
+add_executable(iron_solid tests/render/iron_solid.cpp
+)
+target_link_libraries(iron_solid PRIVATE StuCanvasCore)
+configure_stucanvas_target(iron_solid)

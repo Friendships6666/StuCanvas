@@ -19,6 +19,34 @@
 namespace StuCanvas::Vulkan {
 
 /**
+ * @brief 将 Slang 内置反射阶段类型转换为 Vulkan 标准 Shader Stage
+ */
+inline VkShaderStageFlagBits mapSlangStageToVulkan(SlangStage stage) {
+    switch (stage) {
+        case SLANG_STAGE_VERTEX:
+            return VK_SHADER_STAGE_VERTEX_BIT;
+        case SLANG_STAGE_FRAGMENT:
+            return VK_SHADER_STAGE_FRAGMENT_BIT;
+        case SLANG_STAGE_COMPUTE:
+            return VK_SHADER_STAGE_COMPUTE_BIT;
+        case SLANG_STAGE_RAY_GENERATION:
+            return VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+        case SLANG_STAGE_MISS:
+            return VK_SHADER_STAGE_MISS_BIT_KHR;
+        case SLANG_STAGE_CLOSEST_HIT:
+            return VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR;
+        case SLANG_STAGE_ANY_HIT:
+            return VK_SHADER_STAGE_ANY_HIT_BIT_KHR;
+        case SLANG_STAGE_INTERSECTION:
+            return VK_SHADER_STAGE_INTERSECTION_BIT_KHR;
+        case SLANG_STAGE_CALLABLE:
+            return VK_SHADER_STAGE_CALLABLE_BIT_KHR;
+        default:
+            return VK_SHADER_STAGE_VERTEX_BIT;
+    }
+}
+
+/**
  * @brief Slang 编译管理器（单例模式，全局共享一个会话以利用缓存）
  */
 class SlangManager {
@@ -57,7 +85,7 @@ struct ShaderCompileResult {
  */
 inline ShaderCompileResult compileSlangToSPIRV(
     const std::string& sourceCode,
-    const std::string& stage,
+    const std::string& stage, // 保留该参数以兼容旧版接口签名
     const std::string& entryPoint = "",
     const std::vector<std::string>& includes = {}
 ) {
@@ -133,7 +161,6 @@ inline ShaderCompileResult compileSlangToSPIRV(
         throw std::runtime_error("Failed to get SPIR-V code");
     }
 
-    // 核心修复：从已链接程序的 ProgramLayout 中安全提取 EntryPointReflection 派生的结构
     slang::ProgramLayout* programLayout = linkedProgram->getLayout();
     if (!programLayout) {
         throw std::runtime_error("Failed to get program layout from linked program");
@@ -147,13 +174,13 @@ inline ShaderCompileResult compileSlangToSPIRV(
     const size_t spvSize = spirvBlob->getBufferSize();
 
     ShaderCompileResult result;
-    result.entryPointName = entryPointLayout->getName();
+    // ─────────────────────────────────────────────────────────────
+    // 修复：由于 Slang 编译为 SPIR-V 时默认会将所有入口函数重命名为 "main"，
+    // 我们在此处直接返回 "main"，与 Vulkan 内核物理名对齐
+    // ─────────────────────────────────────────────────────────────
+    result.entryPointName = "main";
     result.spirv.assign(spvData, spvData + spvSize);
-    result.vulkanStage =
-        stage == "vertex"   ? VK_SHADER_STAGE_VERTEX_BIT :
-        stage == "fragment" ? VK_SHADER_STAGE_FRAGMENT_BIT :
-        stage == "compute"  ? VK_SHADER_STAGE_COMPUTE_BIT :
-                              VK_SHADER_STAGE_VERTEX_BIT;
+    result.vulkanStage = mapSlangStageToVulkan(entryPointLayout->getStage());
 
     return result;
 }
@@ -227,35 +254,22 @@ inline std::vector<ShaderCompileResult> compileAllEntryPointsFromSlang(
             continue;
         }
 
-        // 核心修复：从 linkedProgram 中安全获取 EntryPointReflection
         slang::ProgramLayout* programLayout = linkedProgram->getLayout();
         if (!programLayout) continue;
 
         slang::EntryPointLayout* entryPointLayout = programLayout->getEntryPointByIndex(0);
         if (!entryPointLayout) continue;
 
-        SlangStage stage = entryPointLayout->getStage();
-
-        VkShaderStageFlagBits vulkanStage = VK_SHADER_STAGE_VERTEX_BIT;
-        switch (stage) {
-            case SLANG_STAGE_VERTEX:
-                vulkanStage = VK_SHADER_STAGE_VERTEX_BIT;
-                break;
-            case SLANG_STAGE_FRAGMENT:
-                vulkanStage = VK_SHADER_STAGE_FRAGMENT_BIT;
-                break;
-            case SLANG_STAGE_COMPUTE:
-                vulkanStage = VK_SHADER_STAGE_COMPUTE_BIT;
-                break;
-            default:
-                continue; // 过滤非核心阶段以保证安全
-        }
+        VkShaderStageFlagBits vulkanStage = mapSlangStageToVulkan(entryPointLayout->getStage());
 
         const auto* spvData = static_cast<const uint8_t*>(spirvBlob->getBufferPointer());
         const size_t spvSize = spirvBlob->getBufferSize();
 
         ShaderCompileResult result;
-        result.entryPointName = entryPointLayout->getName();
+        // ─────────────────────────────────────────────────────────────
+        // 修复：同上，所有多入口自动提取也统一输出为 Vulkan 内核物理名 "main"
+        // ─────────────────────────────────────────────────────────────
+        result.entryPointName = "main";
         result.spirv.assign(spvData, spvData + spvSize);
         result.vulkanStage = vulkanStage;
         results.push_back(result);
@@ -390,7 +404,6 @@ private:
 
 /**
  * @brief 自动化着色器库管理器
- * 支持一键扫描、多入口编译与灵活检索获取
  */
 class ShaderLibrary {
 public:
@@ -403,9 +416,6 @@ public:
     ShaderLibrary(ShaderLibrary&&) noexcept = default;
     ShaderLibrary& operator=(ShaderLibrary&&) noexcept = default;
 
-    /**
-     * @brief 自动扫描并加载指定目录下的所有 Slang 着色器源码文件
-     */
     void loadDirectory(const std::string& directoryPath, const std::vector<std::string>& includes = {}) {
         namespace fs = std::filesystem;
         if (!fs::exists(directoryPath) || !fs::is_directory(directoryPath)) {
@@ -423,12 +433,10 @@ public:
                 std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
                 file.close();
 
-                // 编译源文件，自动识别并生成所有合法的 entry points 着色器模块
                 auto compileResults = compileAllEntryPointsFromSlang(source, filename, includes);
                 for (const auto& result : compileResults) {
                     ShaderModule module(device_, result);
 
-                    // 构造混合索引键名，例如 points.slang:vertexMain 以及 points:vertexMain
                     std::string fullKey = filename + ":" + result.entryPointName;
                     std::string stemKey = stemName + ":" + result.entryPointName;
 
@@ -443,11 +451,6 @@ public:
         }
     }
 
-    /**
-     * @brief 根据文件名和入口名直接检索获取着色器模块
-     * @param filename 可以是 points.slang 或 缩写 points
-     * @param entryPoint 例如 vertexMain
-     */
     const ShaderModule& get(const std::string& filename, const std::string& entryPoint) const {
         std::string key = filename + ":" + entryPoint;
         auto it = library_.find(key);

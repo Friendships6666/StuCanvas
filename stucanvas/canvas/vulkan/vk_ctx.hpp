@@ -2,6 +2,7 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
+#include <vk_mem_alloc.h> // 1. 引入 VMA 头文件
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
@@ -25,14 +26,15 @@ namespace StuCanvas::Vulkan
     };
 
     /**
-     * @brief 逻辑设备（含关联物理设备与异步队列）的独立 RAII 封装类
+     * @brief 逻辑设备（含关联物理设备、VMA分配器与异步队列）的独立 RAII 封装类
      */
     class VulkanDevice {
     public:
         VulkanDevice() = default;
 
-        VulkanDevice(VkDevice device, VkPhysicalDevice physicalDevice)
-            : device_(device), physicalDevice_(physicalDevice) {}
+        // 2. 构造函数：接入 VmaAllocator 指针
+        VulkanDevice(VkDevice device, VkPhysicalDevice physicalDevice, VmaAllocator allocator)
+            : device_(device), physicalDevice_(physicalDevice), allocator_(allocator) {}
 
         ~VulkanDevice() {
             destroy();
@@ -52,17 +54,21 @@ namespace StuCanvas::Vulkan
                 destroy();
                 device_ = other.device_;
                 physicalDevice_ = other.physicalDevice_;
+                allocator_ = other.allocator_; // 转移分配器所有权
                 graphicsQueue_ = other.graphicsQueue_;
                 presentQueue_ = other.presentQueue_;
                 computeQueue_ = other.computeQueue_;
                 transferQueue_ = other.transferQueue_;
+
                 other.device_ = VK_NULL_HANDLE;
+                other.allocator_ = VK_NULL_HANDLE; // 置空
             }
             return *this;
         }
 
         VkDevice get() const { return device_; }
         VkPhysicalDevice getPhysicalDevice() const { return physicalDevice_; }
+        VmaAllocator getAllocator() const { return allocator_; } // 3. 提供对外获取分配器的接口
 
         const QueueInfo& getGraphicsQueue() const { return graphicsQueue_; }
         const QueueInfo& getPresentQueue() const { return presentQueue_; }
@@ -70,6 +76,11 @@ namespace StuCanvas::Vulkan
         const QueueInfo& getTransferQueue() const { return transferQueue_; }
 
         void destroy() {
+            // 4. 必须遵守严格的反向销毁顺序：先 VMA，后 Device
+            if (allocator_ != VK_NULL_HANDLE) {
+                vmaDestroyAllocator(allocator_);
+                allocator_ = VK_NULL_HANDLE;
+            }
             if (device_ != VK_NULL_HANDLE) {
                 vkDestroyDevice(device_, nullptr);
                 device_ = VK_NULL_HANDLE;
@@ -79,6 +90,7 @@ namespace StuCanvas::Vulkan
     private:
         VkDevice device_ = VK_NULL_HANDLE;
         VkPhysicalDevice physicalDevice_ = VK_NULL_HANDLE;
+        VmaAllocator allocator_ = VK_NULL_HANDLE; // VMA 分配器句柄
 
         QueueInfo graphicsQueue_;
         QueueInfo presentQueue_;
@@ -131,10 +143,12 @@ namespace StuCanvas::Vulkan
                 physicalDevices_ = std::move(other.physicalDevices_);
                 logicalDevices_ = std::move(other.logicalDevices_);
                 validationEnabled_ = other.validationEnabled_;
+                apiVersion_ = other.apiVersion_;
 
                 other.instance_ = VK_NULL_HANDLE;
                 other.debugMessenger_ = VK_NULL_HANDLE;
                 other.surface_ = VK_NULL_HANDLE;
+                other.apiVersion_ = VK_API_VERSION_1_0;
             }
             return *this;
         }
@@ -144,6 +158,7 @@ namespace StuCanvas::Vulkan
          */
         void initInstance(const VulkanContextConfig& config) {
             validationEnabled_ = config.enableValidation;
+            apiVersion_ = config.apiVersion; // 暂存 apiVersion，以便后续初始化 VMA
 
             if (validationEnabled_ && !checkValidationLayerSupport(config.requiredValidationLayers)) {
                 throw std::runtime_error("VulkanContext: Validation layers requested but not supported.");
@@ -157,10 +172,8 @@ namespace StuCanvas::Vulkan
             appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
             appInfo.apiVersion = config.apiVersion;
 
-            // 拷贝一份临时扩展列表，进行自动补齐，防止修改只读入参 config
             std::vector<const char*> instanceExtensions = config.requiredInstanceExtensions;
 
-            // 安全机制：如果开启了 Validation 层，自动检测并补齐所需的 VK_EXT_debug_utils 实例扩展
             if (validationEnabled_) {
                 bool hasDebugUtils = false;
                 for (const auto& ext : instanceExtensions) {
@@ -199,7 +212,6 @@ namespace StuCanvas::Vulkan
                 setupDebugMessenger();
             }
 
-            // 获取系统中所有的物理显卡列表
             enumeratePhysicalDevices();
         }
 
@@ -232,10 +244,7 @@ namespace StuCanvas::Vulkan
         }
 
         /**
-         * @brief 在指定的物理设备上实例化独立的 RAII 逻辑设备
-         * @param physicalDeviceIndex 选中的 physicalDevices_ vector 下标
-         * @param requiredExtensions 需要为该逻辑设备开启的扩展
-         * @param pNextFeatures 可选的 1.1/1.2/1.3 链指针（如其它定制化的物理器件功能）
+         * @brief 在指定的物理设备上实例化独立的 RAII 逻辑设备并为其绑定 VMA 分配器
          */
         void createLogicalDevice(uint32_t physicalDeviceIndex,
                                  const std::vector<const char*>& requiredExtensions,
@@ -302,24 +311,21 @@ namespace StuCanvas::Vulkan
                 queueCreateInfos.push_back(queueCreateInfo);
             }
 
-            // 核心修改 1：在逻辑设备内部强制开启 Vulkan 1.3 中的 synchronization2 特征
             VkPhysicalDeviceVulkan13Features vulkan13Features{};
             vulkan13Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
-            vulkan13Features.synchronization2 = VK_TRUE; // 强制启用，解决 vkQueueSubmit2 报错
+            vulkan13Features.synchronization2 = VK_TRUE;
 
-            // 核心修改 2：强制配置 Vulkan 1.1 中的 shaderDrawParameters 特性 (与 1.3 链合)
             VkPhysicalDeviceVulkan11Features vulkan11Features{};
             vulkan11Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
             vulkan11Features.shaderDrawParameters = VK_TRUE;
 
-            // 链式组装：1.3 Features -> 1.1 Features -> 外部传参（如有）
             vulkan13Features.pNext = &vulkan11Features;
             vulkan11Features.pNext = const_cast<void*>(pNextFeatures);
 
             // C. 逻辑设备配置
             VkDeviceCreateInfo createInfo{};
             createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-            createInfo.pNext = &vulkan13Features; // 将组装好的配置特征链绑定至逻辑设备
+            createInfo.pNext = &vulkan13Features;
             createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
             createInfo.pQueueCreateInfos = queueCreateInfos.data();
 
@@ -335,8 +341,31 @@ namespace StuCanvas::Vulkan
                 throw std::runtime_error("VulkanContext: Failed to create logical device.");
             }
 
-            // D. 安全地包装入 RAII 的 VulkanDevice 智能指针中
-            auto vulkanDevice = std::make_unique<VulkanDevice>(device, physDev);
+            // ================================================================
+            // 5. 核心改动：在逻辑设备创建后，紧接着构建 VMA Allocator
+            // ================================================================
+            VmaAllocator allocator = VK_NULL_HANDLE;
+            VmaAllocatorCreateInfo allocatorInfo{};
+            allocatorInfo.physicalDevice = physDev;
+            allocatorInfo.device = device;
+            allocatorInfo.instance = instance_;
+            allocatorInfo.vulkanApiVersion = apiVersion_;
+
+            // ─────────────────────────────────────────────────────────────
+            // 修复：必须在此显式通知 VMA 开启 BDA 内存池分配器支持
+            // ─────────────────────────────────────────────────────────────
+            allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+
+
+
+
+            if (vmaCreateAllocator(&allocatorInfo, &allocator) != VK_SUCCESS) {
+                vkDestroyDevice(device, nullptr);
+                throw std::runtime_error("VulkanContext: Failed to create VmaAllocator.");
+            }
+
+            // 将分配器一同封入 VulkanDevice 中
+            auto vulkanDevice = std::make_unique<VulkanDevice>(device, physDev, allocator);
 
             if (graphicsFamily != 0xFFFFFFFF) {
                 vulkanDevice->graphicsQueue_.familyIndex = graphicsFamily;
@@ -358,21 +387,13 @@ namespace StuCanvas::Vulkan
             logicalDevices_.push_back(std::move(vulkanDevice));
         }
 
-        // ====================================================================
-        // 6. 属性访问器 (Accessors)
-        // ====================================================================
-
         VkInstance getInstance() const { return instance_; }
         VkSurfaceKHR getSurface() const { return surface_; }
 
         const std::vector<VkPhysicalDevice>& getPhysicalDevices() const { return physicalDevices_; }
 
-        // 外部通过 unique_ptr 的只读指针数组进行安全查询
         const std::vector<std::unique_ptr<VulkanDevice>>& getLogicalDevices() const { return logicalDevices_; }
 
-        /**
-         * @brief 获取首选的主逻辑设备上下文
-         */
         const VulkanDevice& getPrimaryDevice() const {
             if (logicalDevices_.empty() || !logicalDevices_[0]) {
                 throw std::runtime_error("VulkanContext: No primary device created.");
@@ -386,11 +407,10 @@ namespace StuCanvas::Vulkan
         VkSurfaceKHR surface_ = VK_NULL_HANDLE;
 
         std::vector<VkPhysicalDevice> physicalDevices_;
-
-        // 所有逻辑设备通过 RAII 独占智能指针容器存储，杜绝任何中途泄漏
         std::vector<std::unique_ptr<VulkanDevice>> logicalDevices_;
 
         bool validationEnabled_ = false;
+        uint32_t apiVersion_ = VK_API_VERSION_1_0; // 暂存实例版本
 
         void enumeratePhysicalDevices() {
             uint32_t count = 0;
@@ -461,26 +481,19 @@ namespace StuCanvas::Vulkan
             }
         }
 
-        /**
-         * @brief 严格的反向生命周期自动销毁流程
-         */
         void cleanup() {
-            // 1. vector 清空会自动触发其中每个 unique_ptr<VulkanDevice> 的析构，进而安全销毁各逻辑设备
             logicalDevices_.clear();
 
-            // 2. 销毁窗口表面
             if (surface_ != VK_NULL_HANDLE) {
                 vkDestroySurfaceKHR(instance_, surface_, nullptr);
                 surface_ = VK_NULL_HANDLE;
             }
 
-            // 3. 销毁调试接口
             if (debugMessenger_ != VK_NULL_HANDLE) {
                 DestroyDebugUtilsMessengerEXT(instance_, debugMessenger_, nullptr);
                 debugMessenger_ = VK_NULL_HANDLE;
             }
 
-            // 4. 最后销毁实例本身
             if (instance_ != VK_NULL_HANDLE) {
                 vkDestroyInstance(instance_, nullptr);
                 instance_ = VK_NULL_HANDLE;
