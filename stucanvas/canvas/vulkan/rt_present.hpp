@@ -221,7 +221,7 @@ private:
     VkFormat                 imageFormat_{};
     VkExtent2D               extent_{};
 
-    const int MAX_FRAMES_IN_FLIGHT = 2;
+    const int MAX_FRAMES_IN_FLIGHT = 1;
     std::vector<VkFence>     inFlightFences_;
     std::vector<VkSemaphore> imageAvailableSemaphores_;
     std::vector<VkSemaphore> renderFinishedSemaphores_;

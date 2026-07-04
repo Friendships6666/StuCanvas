@@ -350,10 +350,6 @@ namespace StuCanvas::Vulkan
             allocatorInfo.device = device;
             allocatorInfo.instance = instance_;
             allocatorInfo.vulkanApiVersion = apiVersion_;
-
-            // ─────────────────────────────────────────────────────────────
-            // 修复：必须在此显式通知 VMA 开启 BDA 内存池分配器支持
-            // ─────────────────────────────────────────────────────────────
             allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 
 

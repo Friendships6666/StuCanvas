@@ -8,6 +8,7 @@
 #include <vector>
 #include <memory>
 #include <chrono>
+#include <cmath>
 
 #include "stucanvas/canvas/vulkan/vk_ctx.hpp"
 #include "stucanvas/canvas/vulkan/buffer.hpp"
@@ -225,6 +226,9 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    // 默认开启相对鼠标模式以便进行 FPS 视角控制 (可通过 ESC 键进行释放/重新捕获)
+    SDL_SetWindowRelativeMouseMode(window, true);
+
     try {
         VulkanContextConfig contextConfig{};
         contextConfig.appName = "StuCanvasRayTracing";
@@ -295,12 +299,15 @@ int main(int argc, char* argv[]) {
         auto range = mesh.getASBuildRange();
         AccelerationStructure blas = builder.buildBLAS({ geom }, { range.primitiveCount }, { range }, commandPool, graphicsQueue);
 
+        // ─────────────────────────────────────────────────────────────
+        // 使用 Eigen 构建 TLAS 实例的仿射变换矩阵 (3x4 RowMajor)
+        // ─────────────────────────────────────────────────────────────
+        Eigen::Matrix<float, 3, 4, Eigen::RowMajor> tlasTransformMatrix;
+        tlasTransformMatrix.setIdentity(); // 默认为单位变换
+
         VkAccelerationStructureInstanceKHR instance{};
-        instance.transform = {
-            1.0f, 0.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f, 0.0f,
-            0.0f, 0.0f, 1.0f, 0.0f
-        };
+        std::memcpy(&instance.transform, tlasTransformMatrix.data(), sizeof(VkTransformMatrixKHR));
+
         instance.instanceCustomIndex = 0u;
         instance.mask = 0xFFu;
         instance.instanceShaderBindingTableRecordOffset = 0u;
@@ -324,7 +331,7 @@ int main(int argc, char* argv[]) {
         std::vector<std::string> includeDirs = { "shaders/" };
 
         // 2. 传入 includeDirs 作为第 5 个参数
-        ShaderModule rgenShader = ShaderModule::fromSlangFile(
+        ShaderModule rgenShader = ShaderModule::fromSlangFile( // 兼容 Slang 动态加载
             device, "shaders/raytracing.slang", "raygeneration", "rayGenMain", includeDirs);
 
         ShaderModule missShader = ShaderModule::fromSlangFile(
@@ -339,16 +346,45 @@ int main(int argc, char* argv[]) {
 
         bool running = true;
         uint32_t frameCounter = 0;
-        auto startTime = std::chrono::high_resolution_clock::now();
 
-        // ── 记录上一帧的相机位置以进行运动检测 ──
-        Eigen::Vector3f lastEye(0.0f, 0.0f, 0.0f);
+        // ── 初始化相机变量（WASD 飞行 + FPS 视角控制） ──
+        Eigen::Vector3f cameraPos(0.0f, 0.0f, 2.5f);
+        float yaw = -90.0f;  // 默认为偏航角 -90 度，朝向 -Z 方向
+        float pitch = 0.0f;  // 俯仰角，默认为 0 度
+        float mouseSensitivity = 0.1f;
+        float moveSpeed = 3.0f; // 飞行移动速度（单位 / 秒）
+
+        auto lastFrameTime = std::chrono::high_resolution_clock::now();
 
         while (running) {
+            // 计算两帧之间的 delta time
+            auto currentFrameTime = std::chrono::high_resolution_clock::now();
+            float dt = std::chrono::duration<float, std::chrono::seconds::period>(currentFrameTime - lastFrameTime).count();
+            lastFrameTime = currentFrameTime;
+
+            // 限制极端情况下的帧率跳变 (例如调试或卡顿)
+            if (dt < 0.0f) dt = 0.0f;
+            if (dt > 0.1f) dt = 0.1f;
+
+            float mouseDX = 0.0f;
+            float mouseDY = 0.0f;
+
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 if (event.type == SDL_EVENT_QUIT) {
                     running = false;
+                } else if (event.type == SDL_EVENT_MOUSE_MOTION) {
+                    // 仅在锁定鼠标焦点（Relative Mode）下累计视角偏移，允许用户按 ESC 临时释放鼠标
+                    if (SDL_GetWindowRelativeMouseMode(window)) {
+                        mouseDX += event.motion.xrel;
+                        mouseDY += event.motion.yrel;
+                    }
+                } else if (event.type == SDL_EVENT_KEY_DOWN) {
+                    if (event.key.key == SDLK_ESCAPE) {
+                        // 按 ESC 键切回/切出 相对鼠标状态
+                        bool relativeMode = SDL_GetWindowRelativeMouseMode(window);
+                        SDL_SetWindowRelativeMouseMode(window, !relativeMode);
+                    }
                 }
             }
 
@@ -363,46 +399,83 @@ int main(int argc, char* argv[]) {
                 frameCounter = 0;
             }
 
-            auto currentTime = std::chrono::high_resolution_clock::now();
-            float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+            // ─────────────────────────────────────────────────────────────
+            // 计算相机方向向量 (Euler 角度结合 Eigen 数学计算)
+            // ─────────────────────────────────────────────────────────────
+            float yawRad = yaw * 3.14159265f / 180.0f;
+            float pitchRad = pitch * 3.14159265f / 180.0f;
 
-            float radius = 2.5f;
-            float camX = std::sin(time * 0.5f) * radius;
-            float camZ = std::cos(time * 0.5f) * radius;
-            float camY = 0.2f;
+            Eigen::Vector3f front;
+            front.x() = std::cos(pitchRad) * std::cos(yawRad);
+            front.y() = std::sin(pitchRad);
+            front.z() = std::cos(pitchRad) * std::sin(yawRad);
+            front.normalize();
 
-            Eigen::Vector3f eye(camX, camY, camZ);
-            Eigen::Vector3f center(0.0f, 0.0f, 0.0f);
-            Eigen::Vector3f up(0.0f, 1.0f, 0.0f);
+            Eigen::Vector3f worldUp(0.0f, 1.0f, 0.0f);
+            // 解决视线贴近世界天顶时的奇异值退化问题
+            if (std::abs(front.dot(worldUp)) > 0.99f) {
+                worldUp = Eigen::Vector3f(0.0f, 0.0f, 1.0f);
+            }
 
-            float aspect = static_cast<float>(tempExtent.width) / static_cast<float>(tempExtent.height);
-            float fov = 45.0f * 3.14159265f / 180.0f;
-            float halfFovTan = std::tan(fov / 2.0f);
-
-            Eigen::Vector3f front = (center - eye).normalized();
-            Eigen::Vector3f right = front.cross(up).normalized();
+            Eigen::Vector3f right = front.cross(worldUp).normalized();
             Eigen::Vector3f cameraUpReal = right.cross(front).normalized();
 
-            Eigen::Vector3f rightScaled = right * halfFovTan * aspect;
-            Eigen::Vector3f upScaled = cameraUpReal * halfFovTan;
+            // ─────────────────────────────────────────────────────────────
+            // 处理 WASD 键盘和鼠标 FPS 移动控制
+            // ─────────────────────────────────────────────────────────────
+            const bool* keyStates = SDL_GetKeyboardState(nullptr);
+            Eigen::Vector3f moveDir(0.0f, 0.0f, 0.0f);
 
-            // ── 核心修复：时域累积运动状态检测 ──
-            bool cameraMoved = (eye - lastEye).squaredNorm() > 1e-6f;
-            lastEye = eye;
+            if (keyStates[SDL_SCANCODE_W]) moveDir += front;
+            if (keyStates[SDL_SCANCODE_S]) moveDir -= front;
+            if (keyStates[SDL_SCANCODE_A]) moveDir -= right;
+            if (keyStates[SDL_SCANCODE_D]) moveDir += right;
 
+            // 垂直升降飞行支持 (Space/E 上升，LCTRL/Q 下降)
+            if (keyStates[SDL_SCANCODE_SPACE] || keyStates[SDL_SCANCODE_E]) moveDir += cameraUpReal;
+            if (keyStates[SDL_SCANCODE_LCTRL] || keyStates[SDL_SCANCODE_Q]) moveDir -= cameraUpReal;
+
+            bool posMoved = false;
+            if (moveDir.squaredNorm() > 1e-6f) {
+                cameraPos += moveDir.normalized() * moveSpeed * dt;
+                posMoved = true;
+            }
+
+            bool rotMoved = (std::abs(mouseDX) > 1e-3f || std::abs(mouseDY) > 1e-3f);
+            if (rotMoved) {
+                yaw += mouseDX * mouseSensitivity;
+                pitch -= mouseDY * mouseSensitivity;
+
+                // 限制仰俯角防止视线翻转 (Gimbal Lock)
+                if (pitch > 89.0f) pitch = 89.0f;
+                if (pitch < -89.0f) pitch = -89.0f;
+            }
+
+            // ─────────────────────────────────────────────────────────────
+            // 时域累积运动状态检测
+            // ─────────────────────────────────────────────────────────────
+            bool cameraMoved = posMoved || rotMoved;
             if (cameraMoved) {
                 frameCounter = 1; // 运动中：重置累积，消除历史残影
             } else {
                 frameCounter++;   // 静止时：进行渐进式抗锯齿累积降噪
             }
 
+            // 依据视场计算物理缩放后的视口基底向量
+            float aspect = static_cast<float>(tempExtent.width) / static_cast<float>(tempExtent.height);
+            float fov = 45.0f * 3.14159265f / 180.0f;
+            float halfFovTan = std::tan(fov / 2.0f);
+
+            Eigen::Vector3f rightScaled = right * halfFovTan * aspect;
+            Eigen::Vector3f upScaled = cameraUpReal * halfFovTan;
+
             // ─────────────────────────────────────────────────────────────
-            // 对准 Slang 高保真相机正交基物理对齐
+            // 传递对准 Slang 参数的物理 UBO
             // ─────────────────────────────────────────────────────────────
             CameraUniforms cameraUBO{};
-            cameraUBO.cameraPos[0] = eye.x();
-            cameraUBO.cameraPos[1] = eye.y();
-            cameraUBO.cameraPos[2] = eye.z();
+            cameraUBO.cameraPos[0] = cameraPos.x();
+            cameraUBO.cameraPos[1] = cameraPos.y();
+            cameraUBO.cameraPos[2] = cameraPos.z();
             cameraUBO.pad0 = 0.0f;
 
             cameraUBO.cameraFront[0] = front.x();
