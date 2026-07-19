@@ -24,7 +24,6 @@ int main ()
         VulkanQueue queue;
 
 
-
         int bbbbbbabbbbbbbbbbbbba;
 
         AppearanceSimplePoint app{};

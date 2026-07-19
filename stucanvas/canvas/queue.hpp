@@ -786,15 +786,12 @@ namespace StuCanvas
                 // 后续其他缓存资源的释放 (按逆序完美流转) [1]
                 // =================================================================
                 // 使用构造函数中已加载的函数指针成员销毁 Shader Objects
-                if ( pfnDestroyShader ) [[likely]]
+                for ( VkShaderEXT shader : shader_objects )
                 {
-                    for ( VkShaderEXT shader : shader_objects )
+                    if ( shader != VK_NULL_HANDLE )
                     {
-                        if ( shader != VK_NULL_HANDLE )
-                        {
-                            // 🚀 采用动态加载的函数指针执行物理销毁
-                            pfnDestroyShader ( device, shader, nullptr );
-                        }
+                        // 🚀 采用动态加载的函数指针执行物理销毁
+                        pfnDestroyShader ( device, shader, nullptr );
                     }
                 }
                 shader_objects.clear ();
@@ -1863,7 +1860,6 @@ namespace StuCanvas
                     // =====================================================================
                     // 🚀 点外观分发：完美兼容 SimplePoint 和 SimpleLine 穿透，绝不漏掉任何默认粒子
                     // =====================================================================
-                    case AppearanceType::SimpleLine:
 
                     case AppearanceType::SimplePoint:
                     {
@@ -1940,30 +1936,16 @@ namespace StuCanvas
                         vkCmdSetFrontFace ( graphics, VK_FRONT_FACE_COUNTER_CLOCKWISE );
 
                         // 使用构造函数中已加载的函数指针成员设置扩展动态状态
-                        if ( pfnCmdSetPolygonMode )
-                        {
-                            pfnCmdSetPolygonMode ( graphics, VK_POLYGON_MODE_FILL );
-                        }
-                        if ( pfnCmdSetRasterizationSamples )
-                        {
-                            pfnCmdSetRasterizationSamples ( graphics, VK_SAMPLE_COUNT_8_BIT );
-                        }
-                        if ( pfnCmdSetSampleMask )
+                        pfnCmdSetPolygonMode ( graphics, VK_POLYGON_MODE_FILL );
+                        pfnCmdSetRasterizationSamples ( graphics, VK_SAMPLE_COUNT_8_BIT );
                         {
                             VkSampleMask mask = 0xFFFFFFFF;   // 允许所有 8 个采样点写入
                             pfnCmdSetSampleMask ( graphics, VK_SAMPLE_COUNT_8_BIT, &mask );
                         }
-                        if ( pfnCmdSetAlphaToCoverageEnable )
-                        {
-                            pfnCmdSetAlphaToCoverageEnable ( graphics, VK_FALSE );
-                        }
-                        if ( pfnCmdSetVertexInput )
-                        {
-                            pfnCmdSetVertexInput ( graphics, 0, nullptr, 0, nullptr );
-                        }
+                        pfnCmdSetAlphaToCoverageEnable ( graphics, VK_FALSE );
+                        pfnCmdSetVertexInput ( graphics, 0, nullptr, 0, nullptr );
 
                         // 配置混合状态 (使用成员函数指针)
-                        if ( pfnCmdSetColorBlendEnable && pfnCmdSetColorBlendEquation && pfnCmdSetColorWriteMask )
                         {
                             VkBool32 blend_enable = VK_TRUE;
                             pfnCmdSetColorBlendEnable ( graphics, 0, 1, &blend_enable );
