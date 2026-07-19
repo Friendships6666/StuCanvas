@@ -351,11 +351,7 @@ namespace StuCanvas
             VkPhysicalDeviceProperties deviceProps;
             vkGetPhysicalDeviceProperties ( physDevice, &deviceProps );
 
-            // 动态加载着色器对象扩展的底层函数指针，防止链接错误并保持绝对的兼容性
-            auto pfnCreateShaders = ( PFN_vkCreateShadersEXT ) vkGetDeviceProcAddr ( device, "vkCreateShadersEXT" );
-            auto pfnGetShaderBinaryData =
-                ( PFN_vkGetShaderBinaryDataEXT ) vkGetDeviceProcAddr ( device, "vkGetShaderBinaryDataEXT" );
-
+            // 使用构造函数中已加载的函数指针成员，无需重复动态查询
             if ( !pfnCreateShaders || !pfnGetShaderBinaryData ) [[unlikely]]
             {
                 throw std::runtime_error (
@@ -619,6 +615,34 @@ namespace StuCanvas
             const auto& primaryDevice = ctx.getPrimaryDevice ();
             VkDevice device = primaryDevice.get ();
 
+            // 🚀 一次性加载所有 Vulkan 扩展函数指针，避免每次调用时重复动态查询
+            pfnCreateShaders =
+                ( PFN_vkCreateShadersEXT ) vkGetDeviceProcAddr ( device, "vkCreateShadersEXT" );
+            pfnGetShaderBinaryData =
+                ( PFN_vkGetShaderBinaryDataEXT ) vkGetDeviceProcAddr ( device, "vkGetShaderBinaryDataEXT" );
+            pfnDestroyShader =
+                ( PFN_vkDestroyShaderEXT ) vkGetDeviceProcAddr ( device, "vkDestroyShaderEXT" );
+            pfnCmdSetPolygonMode =
+                ( PFN_vkCmdSetPolygonModeEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetPolygonModeEXT" );
+            pfnCmdSetRasterizationSamples =
+                ( PFN_vkCmdSetRasterizationSamplesEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetRasterizationSamplesEXT" );
+            pfnCmdSetSampleMask =
+                ( PFN_vkCmdSetSampleMaskEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetSampleMaskEXT" );
+            pfnCmdSetAlphaToCoverageEnable =
+                ( PFN_vkCmdSetAlphaToCoverageEnableEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetAlphaToCoverageEnableEXT" );
+            pfnCmdSetVertexInput =
+                ( PFN_vkCmdSetVertexInputEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetVertexInputEXT" );
+            pfnCmdSetColorBlendEnable =
+                ( PFN_vkCmdSetColorBlendEnableEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetColorBlendEnableEXT" );
+            pfnCmdSetColorBlendEquation =
+                ( PFN_vkCmdSetColorBlendEquationEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetColorBlendEquationEXT" );
+            pfnCmdSetColorWriteMask =
+                ( PFN_vkCmdSetColorWriteMaskEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetColorWriteMaskEXT" );
+            pfnCmdBindShaders =
+                ( PFN_vkCmdBindShadersEXT ) vkGetDeviceProcAddr ( device, "vkCmdBindShadersEXT" );
+            pfnGetBufferDeviceAddress =
+                ( PFN_vkGetBufferDeviceAddress ) vkGetDeviceProcAddr ( device, "vkGetBufferDeviceAddress" );
+
             const uint32_t graphics_family = primaryDevice.getGraphicsQueue ().familyIndex;
             const uint32_t compute_family = primaryDevice.getComputeQueue ().familyIndex;
 
@@ -765,8 +789,7 @@ namespace StuCanvas
                 // =================================================================
                 // 后续其他缓存资源的释放 (按逆序完美流转) [1]
                 // =================================================================
-                auto pfnDestroyShader = ( PFN_vkDestroyShaderEXT ) vkGetDeviceProcAddr ( device, "vkDestroyShaderEXT" );
-
+                // 使用构造函数中已加载的函数指针成员销毁 Shader Objects
                 if ( pfnDestroyShader ) [[likely]]
                 {
                     for ( VkShaderEXT shader : shader_objects )
@@ -1667,6 +1690,21 @@ namespace StuCanvas
         RecordState graphics_record_state = RecordState::Initial;
         VkPipelineLayout pipeline_layout;
 
+        // 🚀 Vulkan 扩展函数指针 (构造函数中一次性加载，避免反复动态查询)
+        PFN_vkCreateShadersEXT pfnCreateShaders = nullptr;
+        PFN_vkGetShaderBinaryDataEXT pfnGetShaderBinaryData = nullptr;
+        PFN_vkDestroyShaderEXT pfnDestroyShader = nullptr;
+        PFN_vkCmdSetPolygonModeEXT pfnCmdSetPolygonMode = nullptr;
+        PFN_vkCmdSetRasterizationSamplesEXT pfnCmdSetRasterizationSamples = nullptr;
+        PFN_vkCmdSetSampleMaskEXT pfnCmdSetSampleMask = nullptr;
+        PFN_vkCmdSetAlphaToCoverageEnableEXT pfnCmdSetAlphaToCoverageEnable = nullptr;
+        PFN_vkCmdSetVertexInputEXT pfnCmdSetVertexInput = nullptr;
+        PFN_vkCmdSetColorBlendEnableEXT pfnCmdSetColorBlendEnable = nullptr;
+        PFN_vkCmdSetColorBlendEquationEXT pfnCmdSetColorBlendEquation = nullptr;
+        PFN_vkCmdSetColorWriteMaskEXT pfnCmdSetColorWriteMask = nullptr;
+        PFN_vkCmdBindShadersEXT pfnCmdBindShaders = nullptr;
+        PFN_vkGetBufferDeviceAddress pfnGetBufferDeviceAddress = nullptr;
+
         struct AppearanceGroup
         {
             AppearanceType type;
@@ -1884,20 +1922,7 @@ namespace StuCanvas
                         vkCmdSetCullMode ( graphics, VK_CULL_MODE_NONE );
                         vkCmdSetFrontFace ( graphics, VK_FRONT_FACE_COUNTER_CLOCKWISE );
 
-                        // 扩展状态动态获取：
-                        auto pfnCmdSetPolygonMode =
-                            ( PFN_vkCmdSetPolygonModeEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetPolygonModeEXT" );
-                        auto pfnCmdSetRasterizationSamples =
-                            ( PFN_vkCmdSetRasterizationSamplesEXT ) vkGetDeviceProcAddr (
-                                device, "vkCmdSetRasterizationSamplesEXT" );
-                        auto pfnCmdSetSampleMask =
-                            ( PFN_vkCmdSetSampleMaskEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetSampleMaskEXT" );
-                        auto pfnCmdSetAlphaToCoverageEnable =
-                            ( PFN_vkCmdSetAlphaToCoverageEnableEXT ) vkGetDeviceProcAddr (
-                                device, "vkCmdSetAlphaToCoverageEnableEXT" );
-                        auto pfnCmdSetVertexInput =
-                            ( PFN_vkCmdSetVertexInputEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetVertexInputEXT" );
-
+                        // 使用构造函数中已加载的函数指针成员设置扩展动态状态
                         if ( pfnCmdSetPolygonMode )
                         {
                             pfnCmdSetPolygonMode ( graphics, VK_POLYGON_MODE_FILL );
@@ -1920,14 +1945,7 @@ namespace StuCanvas
                             pfnCmdSetVertexInput ( graphics, 0, nullptr, 0, nullptr );
                         }
 
-                        // 配置混合状态
-                        auto pfnCmdSetColorBlendEnable = ( PFN_vkCmdSetColorBlendEnableEXT ) vkGetDeviceProcAddr (
-                            device, "vkCmdSetColorBlendEnableEXT" );
-                        auto pfnCmdSetColorBlendEquation = ( PFN_vkCmdSetColorBlendEquationEXT ) vkGetDeviceProcAddr (
-                            device, "vkCmdSetColorBlendEquationEXT" );
-                        auto pfnCmdSetColorWriteMask = ( PFN_vkCmdSetColorWriteMaskEXT ) vkGetDeviceProcAddr (
-                            device, "vkCmdSetColorWriteMaskEXT" );
-
+                        // 配置混合状态 (使用成员函数指针)
                         if ( pfnCmdSetColorBlendEnable && pfnCmdSetColorBlendEquation && pfnCmdSetColorWriteMask )
                         {
                             VkBool32 blend_enable = VK_TRUE;
@@ -1952,8 +1970,6 @@ namespace StuCanvas
                                                               VK_SHADER_STAGE_FRAGMENT_BIT };
                         VkShaderEXT bound_shaders[ 2 ] = { shader_objects[ 0 ], shader_objects[ 1 ] };
 
-                        auto pfnCmdBindShaders =
-                            ( PFN_vkCmdBindShadersEXT ) vkGetDeviceProcAddr ( device, "vkCmdBindShadersEXT" );
                         if ( !pfnCmdBindShaders ) [[unlikely]]
                         {
                             throw std::runtime_error ( "VulkanQueue: Driver does not support vkCmdBindShadersEXT." );
@@ -2030,8 +2046,7 @@ namespace StuCanvas
                             addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
                             addressInfo.buffer = staging_buffer;
 
-                            auto pfnGetBufferDeviceAddress = ( PFN_vkGetBufferDeviceAddress ) vkGetDeviceProcAddr (
-                                device, "vkGetBufferDeviceAddress" );
+                            // 使用构造函数中已加载的函数指针
                             VkDeviceAddress gpu_address = pfnGetBufferDeviceAddress ( device, &addressInfo );
 
                             registerTransientBuffer ( staging_buffer, staging_allocation );

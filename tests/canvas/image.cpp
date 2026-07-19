@@ -43,6 +43,7 @@ int main ()
         camera_ref.target[ 0 ] = 0.0;
         camera_ref.target[ 1 ] = 0.0;
         camera_ref.target[ 2 ] = 0.0;
+        
 
         camera_ref.up[ 0 ] = 0.0;
         camera_ref.up[ 1 ] = 1.0;
