@@ -68,7 +68,10 @@ int main ()
         DAGObject point_obj{};
         point_obj.type = NodeType::POINT_3D_FREE;
         point_obj.data.point_3d.x = 0.0;
+
         point_obj.data.point_3d.y = 0.0;
+
+
         point_obj.data.point_3d.z = 0.0;
 
 

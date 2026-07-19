@@ -1705,6 +1705,12 @@ namespace StuCanvas
             std::vector< DAGObjectInstance* > instances;
         };
 
+        struct InstanceTransformData
+        {
+            Eigen::Vector3d local_pt;
+            Eigen::Matrix4f M_norm_model_float;
+        };
+
         /**
          * @brief 将 MSAA 颜色/深度图像及解析目标图像从 VK_IMAGE_LAYOUT_UNDEFINED
          *        过渡到对应的最佳写入布局（颜色附件/深度模板附件）
@@ -1811,6 +1817,195 @@ namespace StuCanvas
             return groups;
         }
 
+        inline InstanceTransformData computeInstanceTransform ( DAGObjectInstance* instance,
+                                                                const DAGObject& object,
+                                                                const Eigen::Matrix4d& M_norm ) const
+        {
+            const Eigen::Vector3d local_pt = extractLocalPoint ( object );
+
+            const Eigen::Quaterniond rot_q ( instance->world_rotation[ 3 ],   // w
+                                             instance->world_rotation[ 0 ],   // x
+                                             instance->world_rotation[ 1 ],   // y
+                                             instance->world_rotation[ 2 ]    // z
+            );
+            const Eigen::Matrix3d S_mat =
+                Eigen::Vector3d ( instance->world_scales[ 0 ], instance->world_scales[ 1 ],
+                                  instance->world_scales[ 2 ] )
+                    .asDiagonal ();
+
+            Eigen::Matrix4d M_world = Eigen::Matrix4d::Identity ();
+            M_world.block< 3, 3 > ( 0, 0 ) = rot_q.normalized ().toRotationMatrix () * S_mat;
+            M_world.block< 3, 1 > ( 0, 3 ) =
+                Eigen::Vector3d ( instance->world_position[ 0 ], instance->world_position[ 1 ],
+                                  instance->world_position[ 2 ] );
+
+            Eigen::Matrix4d M_norm_model = M_norm * M_world;
+            Eigen::Matrix4f M_norm_model_float = M_norm_model.cast< float > ();
+
+            return { local_pt, M_norm_model_float };
+        }
+
+        /**
+         * @brief 通用 GPU staging buffer 创建与上传：分配、拷贝、获取显存地址、注册为垃圾
+         *
+         * 封装 VMA buffer 创建、数据上传、vmaMapMemory/设备地址查询、临时生存期注册的完整流程。
+         * 调用方预先将数据打包为连续内存块传入即可。
+         *
+         * @param allocator  VMA 分配器
+         * @param device     Vulkan 逻辑设备
+         * @param buffer_size 缓冲区总字节数
+         * @param data        待上传的连续数据指针
+         * @return VkDeviceAddress  GPU 可寻址的设备地址
+         */
+        inline VkDeviceAddress createAndUploadStagingBuffer ( VmaAllocator allocator, VkDevice device,
+                                                              size_t buffer_size, const void* data )
+        {
+            VkBuffer staging_buffer = VK_NULL_HANDLE;
+            VmaAllocation staging_allocation = VK_NULL_HANDLE;
+
+            VkBufferCreateInfo bufferInfo{};
+            bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bufferInfo.size = buffer_size;
+            bufferInfo.usage =
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+            bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+            VmaAllocationCreateInfo allocInfo{};
+            allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+            allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                              VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+            VmaAllocationInfo allocationInfo{};
+            if ( vmaCreateBuffer ( allocator, &bufferInfo, &allocInfo, &staging_buffer,
+                                   &staging_allocation, &allocationInfo ) != VK_SUCCESS )
+            {
+                throw std::runtime_error (
+                    "VulkanQueue::createAndUploadStagingBuffer: Failed to allocate GPU staging buffer." );
+            }
+
+            std::memcpy ( allocationInfo.pMappedData, data, buffer_size );
+
+            VkBufferDeviceAddressInfo addressInfo{};
+            addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+            addressInfo.buffer = staging_buffer;
+
+            VkDeviceAddress gpu_address = pfnGetBufferDeviceAddress ( device, &addressInfo );
+
+            registerTransientBuffer ( staging_buffer, staging_allocation );
+
+            return gpu_address;
+        }
+
+        /**
+         * @brief 配置 SimplePoint 外观的渲染通道：视口、裁减、RenderPass 附件、MSAA 转换、动态状态、混合状态
+         * @param width  渲染目标宽度
+         * @param height 渲染目标高度
+         * @param target_frame 渲染帧 (提供 resolve 视图和图像)
+         */
+        inline void setupSimplePointRenderPass ( uint32_t width, uint32_t height, const RenderFrame& target_frame )
+        {
+            // 配置动态视口与剪裁区域 (使用 target_frame 真实的宽高信息) [1.1.1]
+            VkViewport viewport{};
+            viewport.x = 0.0f;
+            viewport.y = static_cast< float > ( height );
+            viewport.width = static_cast< float > ( width );
+            viewport.height = -static_cast< float > ( height );   // Y 轴翻转，左下角为原点 [1.1.4]
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+
+            VkRect2D scissor{};
+            scissor.offset = { 0, 0 };
+            scissor.extent = { width, height };
+
+            // 物理动态设置 (着色器对象必须使用带 Count 接口)
+            vkCmdSetViewportWithCount ( graphics, 1, &viewport );
+            vkCmdSetScissorWithCount ( graphics, 1, &scissor );
+
+            // 物理配置动态渲染 Render Pass [1.1.1, 1.2.9]
+            VkRenderingInfo renderingInfo{};
+            renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            renderingInfo.renderArea.offset = { 0, 0 };
+            renderingInfo.renderArea.extent = { width, height };
+            renderingInfo.layerCount = 1;
+
+            VkRenderingAttachmentInfo colorAttachment{};
+            colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            colorAttachment.imageView = msaa_color_view;   // 🚀 直接使用成员变量 [1.1.1]
+            colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;   // 一键清屏
+            colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            colorAttachment.resolveImageView =
+                target_frame.view;   // 🚀 1x 解析目标 (frames[image_slot].view) [1.1.1, 1.2.9]
+            colorAttachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
+            colorAttachment.resolveImageLayout =
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;   // 🚀 显式声明解析目标写入布局
+            colorAttachment.clearValue.color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
+
+            VkRenderingAttachmentInfo depthAttachment{};
+            depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            depthAttachment.imageView = msaa_depth_view;   // 🚀 直接使用成员变量 [1.1.1]
+            depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            depthAttachment.clearValue.depthStencil = { 1.0f, 0 };
+
+            renderingInfo.colorAttachmentCount = 1;
+            renderingInfo.pColorAttachments = &colorAttachment;
+            renderingInfo.pDepthAttachment = &depthAttachment;
+
+            // =====================================================================
+            // 🚀 3路合并物理布局转换屏障 (一键解决 8x颜色、8x深度、1x解析目标的未定义状态)
+            // =====================================================================
+            transitionMSAAImages ( graphics, target_frame.image );
+            // 开始录制通道
+            vkCmdBeginRendering ( graphics, &renderingInfo );
+
+            // 🚀 动态状态配置：一键动态声明和补齐 Shader Objects 缺失的全部寄存器状态！ [1.1.2]
+            vkCmdSetRasterizerDiscardEnable ( graphics, VK_FALSE );
+            vkCmdSetPrimitiveTopology ( graphics, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST );
+            // 🚀 临时强行关闭深度测试，进行诊断测试
+            // 🚀 临时强行关闭深度测试，进行诊断测试
+            vkCmdSetDepthTestEnable ( graphics, VK_FALSE );
+            vkCmdSetDepthWriteEnable ( graphics, VK_FALSE );
+            vkCmdSetDepthCompareOp ( graphics, VK_COMPARE_OP_LESS );
+
+
+            vkCmdSetStencilTestEnable ( graphics, VK_FALSE );
+            vkCmdSetDepthBiasEnable ( graphics, VK_FALSE );
+            vkCmdSetPrimitiveRestartEnable ( graphics, VK_FALSE );
+            vkCmdSetCullMode ( graphics, VK_CULL_MODE_NONE );
+            vkCmdSetFrontFace ( graphics, VK_FRONT_FACE_COUNTER_CLOCKWISE );
+
+            // 使用构造函数中已加载的函数指针成员设置扩展动态状态
+            pfnCmdSetPolygonMode ( graphics, VK_POLYGON_MODE_FILL );
+            pfnCmdSetRasterizationSamples ( graphics, VK_SAMPLE_COUNT_8_BIT );
+            {
+                VkSampleMask mask = 0xFFFFFFFF;   // 允许所有 8 个采样点写入
+                pfnCmdSetSampleMask ( graphics, VK_SAMPLE_COUNT_8_BIT, &mask );
+            }
+            pfnCmdSetAlphaToCoverageEnable ( graphics, VK_FALSE );
+            pfnCmdSetVertexInput ( graphics, 0, nullptr, 0, nullptr );
+
+            // 配置混合状态 (使用成员函数指针)
+            {
+                VkBool32 blend_enable = VK_TRUE;
+                pfnCmdSetColorBlendEnable ( graphics, 0, 1, &blend_enable );
+
+                VkColorBlendEquationEXT blend_eq{};
+                blend_eq.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+                blend_eq.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                blend_eq.colorBlendOp = VK_BLEND_OP_ADD;
+                blend_eq.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                blend_eq.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+                blend_eq.alphaBlendOp = VK_BLEND_OP_ADD;
+                pfnCmdSetColorBlendEquation ( graphics, 0, 1, &blend_eq );
+
+                VkColorComponentFlags write_mask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                                   VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+                pfnCmdSetColorWriteMask ( graphics, 0, 1, &write_mask );
+            }
+        }
+
         /**
          * @brief 点云材质一键批量录制函数 (SDF Billboarding 实例化分发)
          *
@@ -1863,106 +2058,7 @@ namespace StuCanvas
 
                     case AppearanceType::SimplePoint:
                     {
-                        // 配置动态视口与剪裁区域 (使用 target_frame 真实的宽高信息) [1.1.1]
-                        VkViewport viewport{};
-                        viewport.x = 0.0f;
-                        viewport.y = static_cast< float > ( height );
-                        viewport.width = static_cast< float > ( width );
-                        viewport.height = -static_cast< float > ( height );   // Y 轴翻转，左下角为原点 [1.1.4]
-                        viewport.minDepth = 0.0f;
-                        viewport.maxDepth = 1.0f;
-
-                        VkRect2D scissor{};
-                        scissor.offset = { 0, 0 };
-                        scissor.extent = { width, height };
-
-                        // 物理动态设置 (着色器对象必须使用带 Count 接口)
-                        vkCmdSetViewportWithCount ( graphics, 1, &viewport );
-                        vkCmdSetScissorWithCount ( graphics, 1, &scissor );
-
-                        // 物理配置动态渲染 Render Pass [1.1.1, 1.2.9]
-                        VkRenderingInfo renderingInfo{};
-                        renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-                        renderingInfo.renderArea.offset = { 0, 0 };
-                        renderingInfo.renderArea.extent = { width, height };
-                        renderingInfo.layerCount = 1;
-
-                        VkRenderingAttachmentInfo colorAttachment{};
-                        colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-                        colorAttachment.imageView = msaa_color_view;   // 🚀 直接使用成员变量 [1.1.1]
-                        colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-                        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;   // 一键清屏
-                        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-                        colorAttachment.resolveImageView =
-                            target_frame.view;   // 🚀 1x 解析目标 (frames[image_slot].view) [1.1.1, 1.2.9]
-                        colorAttachment.resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT;
-                        colorAttachment.resolveImageLayout =
-                            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;   // 🚀 显式声明解析目标写入布局
-                        colorAttachment.clearValue.color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
-
-                        VkRenderingAttachmentInfo depthAttachment{};
-                        depthAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-                        depthAttachment.imageView = msaa_depth_view;   // 🚀 直接使用成员变量 [1.1.1]
-                        depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-                        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-                        depthAttachment.clearValue.depthStencil = { 1.0f, 0 };
-
-                        renderingInfo.colorAttachmentCount = 1;
-                        renderingInfo.pColorAttachments = &colorAttachment;
-                        renderingInfo.pDepthAttachment = &depthAttachment;
-
-                        // =====================================================================
-                        // 🚀 3路合并物理布局转换屏障 (一键解决 8x颜色、8x深度、1x解析目标的未定义状态)
-                        // =====================================================================
-                        transitionMSAAImages ( graphics, target_frame.image );
-                        // 开始录制通道
-                        vkCmdBeginRendering ( graphics, &renderingInfo );
-
-                        // 🚀 动态状态配置：一键动态声明和补齐 Shader Objects 缺失的全部寄存器状态！ [1.1.2]
-                        vkCmdSetRasterizerDiscardEnable ( graphics, VK_FALSE );
-                        vkCmdSetPrimitiveTopology ( graphics, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST );
-                        // 🚀 临时强行关闭深度测试，进行诊断测试
-                        // 🚀 临时强行关闭深度测试，进行诊断测试
-                        vkCmdSetDepthTestEnable ( graphics, VK_FALSE );
-                        vkCmdSetDepthWriteEnable ( graphics, VK_FALSE );
-                        vkCmdSetDepthCompareOp ( graphics, VK_COMPARE_OP_LESS );
-
-
-                        vkCmdSetStencilTestEnable ( graphics, VK_FALSE );
-                        vkCmdSetDepthBiasEnable ( graphics, VK_FALSE );
-                        vkCmdSetPrimitiveRestartEnable ( graphics, VK_FALSE );
-                        vkCmdSetCullMode ( graphics, VK_CULL_MODE_NONE );
-                        vkCmdSetFrontFace ( graphics, VK_FRONT_FACE_COUNTER_CLOCKWISE );
-
-                        // 使用构造函数中已加载的函数指针成员设置扩展动态状态
-                        pfnCmdSetPolygonMode ( graphics, VK_POLYGON_MODE_FILL );
-                        pfnCmdSetRasterizationSamples ( graphics, VK_SAMPLE_COUNT_8_BIT );
-                        {
-                            VkSampleMask mask = 0xFFFFFFFF;   // 允许所有 8 个采样点写入
-                            pfnCmdSetSampleMask ( graphics, VK_SAMPLE_COUNT_8_BIT, &mask );
-                        }
-                        pfnCmdSetAlphaToCoverageEnable ( graphics, VK_FALSE );
-                        pfnCmdSetVertexInput ( graphics, 0, nullptr, 0, nullptr );
-
-                        // 配置混合状态 (使用成员函数指针)
-                        {
-                            VkBool32 blend_enable = VK_TRUE;
-                            pfnCmdSetColorBlendEnable ( graphics, 0, 1, &blend_enable );
-
-                            VkColorBlendEquationEXT blend_eq{};
-                            blend_eq.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-                            blend_eq.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-                            blend_eq.colorBlendOp = VK_BLEND_OP_ADD;
-                            blend_eq.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-                            blend_eq.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-                            blend_eq.alphaBlendOp = VK_BLEND_OP_ADD;
-                            pfnCmdSetColorBlendEquation ( graphics, 0, 1, &blend_eq );
-
-                            VkColorComponentFlags write_mask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-                            pfnCmdSetColorWriteMask ( graphics, 0, 1, &write_mask );
-                        }
+                        setupSimplePointRenderPass ( width, height, target_frame );
 
                         // 绑定着色器：顶点是 0 号，片元是 1 号
                         VkShaderStageFlagBits stages[ 2 ] = { VK_SHADER_STAGE_VERTEX_BIT,
@@ -1978,27 +2074,7 @@ namespace StuCanvas
                         // 开始顺序录制并绘制该外观下的每个实例
                         for ( DAGObjectInstance* instance : group.instances )
                         {
-                            const Eigen::Vector3d local_pt = extractLocalPoint ( object );
-
-                            const Eigen::Quaterniond rot_q ( instance->world_rotation[ 3 ],   // w
-                                                             instance->world_rotation[ 0 ],   // x
-                                                             instance->world_rotation[ 1 ],   // y
-                                                             instance->world_rotation[ 2 ]    // z
-                            );
-                            const Eigen::Matrix3d S_mat =
-                                Eigen::Vector3d ( instance->world_scales[ 0 ], instance->world_scales[ 1 ],
-                                                  instance->world_scales[ 2 ] )
-                                    .asDiagonal ();
-
-                            Eigen::Matrix4d M_world = Eigen::Matrix4d::Identity ();
-                            M_world.block< 3, 3 > ( 0, 0 ) = rot_q.normalized ().toRotationMatrix () * S_mat;
-                            M_world.block< 3, 1 > ( 0, 3 ) =
-                                Eigen::Vector3d ( instance->world_position[ 0 ], instance->world_position[ 1 ],
-                                                  instance->world_position[ 2 ] );
-
-                            Eigen::Matrix4d M_norm_model = M_norm * M_world;
-                            // =====================================================================
-                            Eigen::Matrix4f M_norm_model_float = M_norm_model.cast< float > ();   // 强转单精度
+                            auto [ local_pt, M_norm_model_float ] = computeInstanceTransform ( instance, object, M_norm );
 
                             PointData pt{};
                             pt.worldPos[ 0 ] = static_cast< float > ( local_pt.x () );
@@ -2010,45 +2086,16 @@ namespace StuCanvas
                             pt.color[ 2 ] = group.appearance_ptr->blue;
                             pt.color[ 3 ] = group.appearance_ptr->alpha;
 
-                            size_t header_size = 64;
-                            size_t payload_size = sizeof ( PointData );
-                            size_t total_size = header_size + payload_size;
+                            constexpr size_t header_size = 64;
+                            constexpr size_t payload_size = sizeof ( PointData );
+                            constexpr size_t total_size = header_size + payload_size;
 
-                            VkBuffer staging_buffer = VK_NULL_HANDLE;
-                            VmaAllocation staging_allocation = VK_NULL_HANDLE;
+                            std::array< char, total_size > staging_data;
+                            std::memcpy ( staging_data.data (), M_norm_model_float.data (), header_size );
+                            std::memcpy ( staging_data.data () + header_size, &pt, payload_size );
 
-                            VkBufferCreateInfo bufferInfo{};
-                            bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-                            bufferInfo.size = total_size;
-                            bufferInfo.usage =
-                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-                            bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-                            VmaAllocationCreateInfo allocInfo{};
-                            allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
-                            allocInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
-                                              VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-                            VmaAllocationInfo allocationInfo{};
-                            if ( vmaCreateBuffer ( allocator, &bufferInfo, &allocInfo, &staging_buffer,
-                                                   &staging_allocation, &allocationInfo ) != VK_SUCCESS )
-                            {
-                                throw std::runtime_error (
-                                    "recordImage_DAGInstPoint: Failed to allocate GPU staging buffer." );
-                            }
-
-                            std::memcpy ( allocationInfo.pMappedData, M_norm_model_float.data (), header_size );
-                            std::memcpy ( static_cast< char* > ( allocationInfo.pMappedData ) + header_size, &pt,
-                                          payload_size );
-
-                            VkBufferDeviceAddressInfo addressInfo{};
-                            addressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-                            addressInfo.buffer = staging_buffer;
-
-                            // 使用构造函数中已加载的函数指针
-                            VkDeviceAddress gpu_address = pfnGetBufferDeviceAddress ( device, &addressInfo );
-
-                            registerTransientBuffer ( staging_buffer, staging_allocation );
+                            VkDeviceAddress gpu_address = createAndUploadStagingBuffer (
+                                allocator, device, total_size, staging_data.data () );
 
                             PointSDFConstants pc{};
                             std::memcpy ( pc.vp, VP_norm_float.data (), 16 * sizeof ( float ) );
