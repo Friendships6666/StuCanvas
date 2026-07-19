@@ -1,0 +1,13 @@
+{
+  "enumTag": "CameraType",
+  "enumPredicate": "CameraPredicate",
+  "types": {
+    "Orthographic": [
+      "is_linear",
+      "is_orthogonal"
+    ],
+    "Perspective": [
+      "is_linear"
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "enumTag": "AppearanceType",
+  "enumPredicate": "AppearancePredicate",
+  "types": {
+    "SimplePoint": [
+      "TwoD",
+      "ThreeD"
+    ],
+    "SimpleLine": [
+      "TwoD",
+      "ThreeD"
+    ],
+    "OpenPBR": [
+      "ThreeD"
+    ],
+    "OpenPBR_RayTracing": [
+      "ThreeD",
+      "RayTracing"
+    ]
+  }
+}

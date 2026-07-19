@@ -12,9 +12,9 @@ set(CMAKE_CXX_EXTENSIONS OFF) # 严格遵循 C++23 标准
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
 if(ipo_supported)
-    message(STATUS "IPO/LTO is supported and will be applied to StuCanvas.")
+  message(STATUS "IPO/LTO is supported and will be applied to StuCanvas.")
 else()
-    message(WARNING "IPO/LTO is not supported on this platform: ${error}")
+  message(WARNING "IPO/LTO is not supported on this platform: ${error}")
 endif()
 
 # ============================================================================
@@ -176,7 +176,6 @@ add_library(StuCanvasCore STATIC
         stucanvas/utils/ivf_writer.hpp
         stucanvas/canvas/vulkan/compute_pipeline.hpp
         stucanvas/canvas/vulkan/nvenc_cuda_encoder.hpp
-        external/nvidia/cuda.h
         stucanvas/canvas/vulkan/vk_ctx.hpp
         stucanvas/canvas/vulkan/config.hpp
         stucanvas/utils/av1_writer.hpp
@@ -229,7 +228,7 @@ target_compile_options(StuCanvasCore PUBLIC -O3 -march=native -funroll-loops)
 target_compile_definitions(StuCanvasCore PUBLIC BUILD_GTK)
 
 if(ipo_supported)
-    set_target_properties(StuCanvasCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
+  set_target_properties(StuCanvasCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
 endif()
 
 target_include_directories(StuCanvasCore PUBLIC
@@ -249,8 +248,6 @@ target_link_libraries(StuCanvasCore PUBLIC
         "${SDL3_EXTERNAL_LIB}"
         "${SLANG_EXTERNAL_LIB}"
         ${NVENC_LIB_PATH}
-
-        /usr/local/lib/libminion.so
         /home/friendships666/MCTS-4-SR/build/libimcts_core.a
         /usr/lib/libCatch2Main.a
         OpenMP::OpenMP_CXX
@@ -261,17 +258,17 @@ target_link_libraries(StuCanvasCore PUBLIC
 # （一键为任何测试注入：RPATH指向、LTO状态以及 POST_BUILD 高保真资产与动态库复制脚本）
 # ============================================================================
 function(configure_stucanvas_target target_name)
-    # 1. 注入 RPATH 指向以实现零配置动态库查找
-    set_target_properties(${target_name} PROPERTIES
+  # 1. 注入 RPATH 指向以实现零配置动态库查找
+  set_target_properties(${target_name} PROPERTIES
             INSTALL_RPATH "$ORIGIN"
             BUILD_WITH_INSTALL_RPATH TRUE
     )
-    if(ipo_supported)
-        set_target_properties(${target_name} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
-    endif()
+  if(ipo_supported)
+    set_target_properties(${target_name} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
+  endif()
 
-    # 2. 注入高精、纯净的 POST_BUILD 同步指令（仅拷贝 .so，丢弃所有 .part.a* 分片，并安全拷贝重组后的 .so）
-    add_custom_command(TARGET ${target_name} POST_BUILD
+  # 2. 注入高精、纯净的 POST_BUILD 同步指令（仅拷贝 .so，丢弃所有 .part.a* 分片，并安全拷贝重组后的 .so）
+  add_custom_command(TARGET ${target_name} POST_BUILD
             COMMAND ${CMAKE_COMMAND}
             -DSRC_DIR="${LIBS_DIR}"
             -DDST_DIR="$<TARGET_FILE_DIR:${target_name}>"
@@ -327,7 +324,7 @@ configure_stucanvas_target(deque_test)
 
 
 add_executable(flat_map_test tests/performance/flat_map_test.cpp
-        
+
 )
 target_link_libraries(flat_map_test PRIVATE StuCanvasCore)
 configure_stucanvas_target(flat_map_test)
@@ -391,6 +388,56 @@ add_executable(pinned_vector tests/performance/pinned_vector.cpp
 )
 target_link_libraries(pinned_vector PRIVATE StuCanvasCore)
 configure_stucanvas_target(pinned_vector)
+
+
+add_executable(taskflow_test tests/performance/taskflow_test.cpp
+
+)
+target_link_libraries(taskflow_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(taskflow_test)
+
+
+add_executable(taskflow_test2 tests/performance/taskflow_test2.cpp
+
+)
+target_link_libraries(taskflow_test2 PRIVATE StuCanvasCore)
+configure_stucanvas_target(taskflow_test2)
+
+
+
+add_executable(virtual_case_test tests/performance/virtual_case_test.cpp
+)
+target_link_libraries(virtual_case_test PRIVATE StuCanvasCore)
+configure_stucanvas_target(virtual_case_test)
+
+
+add_executable(block_deque_test2
+ tests/performance/block_deque_test2.cpp
+)
+target_link_libraries(block_deque_test2
+ PRIVATE StuCanvasCore)
+configure_stucanvas_target(block_deque_test2
+)
+
+
+add_executable(allocator_test
+ tests/performance/allocator_test.cpp
+)
+target_link_libraries(allocator_test
+PRIVATE StuCanvasCore)
+configure_stucanvas_target(allocator_test
+)
+
+add_executable(compact_ptr_test
+ tests/performance/compact_ptr_test.cpp
+)
+target_link_libraries(compact_ptr_test
+PRIVATE StuCanvasCore)
+configure_stucanvas_target(compact_ptr_test
+)
+
+
+
 
 
 

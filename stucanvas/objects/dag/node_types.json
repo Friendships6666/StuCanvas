@@ -1,0 +1,221 @@
+{
+  "enumTag": "NodeType",
+  "enumPredicate": "NodePredicate",
+  "types": {
+    "POINT_2D_FREE": [
+      "WORLD_2D",
+      "CAT_POINT"
+    ],
+    "POINT_2D_MID": [
+      "WORLD_2D",
+      "CAT_POINT"
+    ],
+    "POINT_2D_SNAP": [
+      "WORLD_2D",
+      "CAT_POINT"
+    ],
+    "POINT_2D_SECTION": [
+      "WORLD_2D",
+      "CAT_POINT"
+    ],
+    "POINT_2D_INTERSECT": [
+      "WORLD_2D",
+      "CAT_POINT"
+    ],
+    "LINE_2D_SEGMENT": [
+      "WORLD_2D",
+      "CAT_LINEAR"
+    ],
+    "LINE_2D_STRAIGHT": [
+      "WORLD_2D",
+      "CAT_LINEAR"
+    ],
+    "LINE_2D_RAY": [
+      "WORLD_2D",
+      "CAT_LINEAR"
+    ],
+    "LINE_2D_PERPENDICULAR": [
+      "WORLD_2D",
+      "CAT_LINEAR"
+    ],
+    "LINE_2D_PARALLEL": [
+      "WORLD_2D",
+      "CAT_LINEAR"
+    ],
+    "TANGENT_2D": [
+      "WORLD_2D",
+      "CAT_LINEAR",
+      "CAT_CURVE"
+    ],
+    "TANGENT_3D": [
+      "WORLD_3D",
+      "CAT_LINEAR",
+      "CAT_CURVE"
+    ],
+    "CIRCLE_2D": [
+      "WORLD_2D",
+      "CAT_CURVE"
+    ],
+    "CIRCLE_2D_THREE_POINTS": [
+      "WORLD_2D",
+      "CAT_CURVE"
+    ],
+    "ARC_2D": [
+      "WORLD_2D",
+      "CAT_CURVE"
+    ],
+    "ELLIPSE_2D": [
+      "WORLD_2D",
+      "CAT_CURVE"
+    ],
+    "HYPERBOLA_2D": [
+      "WORLD_2D",
+      "CAT_CURVE"
+    ],
+    "PARABOLA_2D": [
+      "WORLD_2D",
+      "CAT_CURVE"
+    ],
+    "POLY_2D_GENERATIVE": [
+      "WORLD_2D",
+      "CAT_LINEAR",
+      "CAT_CURVE"
+    ],
+    "POINT_3D_FREE": [
+      "WORLD_3D",
+      "CAT_POINT"
+    ],
+    "POINT_3D_MID": [
+      "WORLD_3D",
+      "CAT_POINT"
+    ],
+    "POINT_3D_SNAP": [
+      "WORLD_3D",
+      "CAT_POINT"
+    ],
+    "POINT_3D_SECTION": [
+      "WORLD_3D",
+      "CAT_POINT"
+    ],
+    "POINT_3D_INTERSECT": [
+      "WORLD_3D",
+      "CAT_POINT"
+    ],
+    "LINE_3D_SEGMENT": [
+      "WORLD_3D",
+      "CAT_LINEAR"
+    ],
+    "LINE_3D_STRAIGHT": [
+      "WORLD_3D",
+      "CAT_LINEAR"
+    ],
+    "LINE_3D_RAY": [
+      "WORLD_3D",
+      "CAT_LINEAR"
+    ],
+    "LINE_3D_PERPENDICULAR": [
+      "WORLD_3D",
+      "CAT_LINEAR"
+    ],
+    "LINE_3D_PARALLEL": [
+      "WORLD_3D",
+      "CAT_LINEAR"
+    ],
+    "PLANE_3D": [
+      "WORLD_3D",
+      "CAT_LINEAR",
+      "CAT_SURFACE"
+    ],
+    "PLANE_3D_PARALLEL": [
+      "WORLD_3D",
+      "CAT_LINEAR",
+      "CAT_SURFACE"
+    ],
+    "PLANE_3D_PERPENDICULAR": [
+      "WORLD_3D",
+      "CAT_LINEAR",
+      "CAT_SURFACE"
+    ],
+    "SPHERE_3D": [
+      "WORLD_3D",
+      "CAT_SURFACE"
+    ],
+    "SPHERE_3D_FOUR_POINTS": [
+      "WORLD_3D",
+      "CAT_SURFACE"
+    ],
+    "CYLINDER_3D": [
+      "WORLD_3D",
+      "CAT_SURFACE"
+    ],
+    "CONE_3D": [
+      "WORLD_3D",
+      "CAT_SURFACE"
+    ],
+    "CUBOID_3D": [
+      "WORLD_3D",
+      "CAT_SURFACE"
+    ],
+    "PLATONIC_SOLID_3D": [
+      "WORLD_3D",
+      "CAT_SURFACE"
+    ],
+    "CIRCLE_3D": [
+      "WORLD_3D",
+      "CAT_CURVE"
+    ],
+    "ARC_3D": [
+      "WORLD_3D",
+      "CAT_CURVE"
+    ],
+    "ELLIPSE_3D": [
+      "WORLD_3D",
+      "CAT_CURVE"
+    ],
+    "HYPERBOLA_3D": [
+      "WORLD_3D",
+      "CAT_CURVE"
+    ],
+    "PARABOLA_3D": [
+      "WORLD_3D",
+      "CAT_CURVE"
+    ],
+    "POLY_3D_GENERATIVE": [
+      "WORLD_3D",
+      "CAT_LINEAR",
+      "CAT_CURVE"
+    ],
+    "SCALAR": [
+      "WORLD_META",
+      "CAT_SCALAR"
+    ],
+    "FUNC_EXPLICIT_2D": [
+      "WORLD_META",
+      "CAT_FUNCTION"
+    ],
+    "FUNC_EXPLICIT_3D": [
+      "WORLD_META",
+      "CAT_FUNCTION"
+    ],
+    "FUNC_IMPLICIT_2D": [
+      "WORLD_META",
+      "CAT_FUNCTION"
+    ],
+    "FUNC_IMPLICIT_3D": [
+      "WORLD_META",
+      "CAT_FUNCTION"
+    ],
+    "FUNC_PARAMETRIC_2D": [
+      "WORLD_META",
+      "CAT_FUNCTION"
+    ],
+    "FUNC_PARAMETRIC_3D": [
+      "WORLD_META",
+      "CAT_FUNCTION"
+    ],
+    "UNKNOWN": [
+      "WORLD_META",
+      "CAT_POINT"
+    ]
+  }
+}

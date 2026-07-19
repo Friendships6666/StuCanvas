@@ -1055,14 +1055,13 @@ void NLECanvas<T>::render(uint64_t start_frame)
         auto descriptors = CreateDescriptors(device, descSetLayout);
 
         // 初始化呈现同步控制器
-        Presenter presenter(
-            primaryDev.getPhysicalDevice(), device,
-            vkCtx.getSurface(),
-            primaryDev.getGraphicsQueue().familyIndex,
-            primaryDev.getPresentQueue().familyIndex,
-            primaryDev.getGraphicsQueue().handle,
-            primaryDev.getPresentQueue().handle,
-            renderPass.get(), window, settings_.msaaSamples);
+        Presenter presenter(primaryDev.getPhysicalDevice(), device,
+                            vkCtx.getSurface(),
+                            primaryDev.getGraphicsQueue().familyIndex,
+                            primaryDev.getPresentQueue().familyIndex,
+                            primaryDev.getGraphicsQueue().handle,
+                            primaryDev.getPresentQueue().handle,
+                            renderPass.get(), window, settings_.msaaSamples);
 
         uint64_t current_frame = start_frame;
         bool is_paused = false;

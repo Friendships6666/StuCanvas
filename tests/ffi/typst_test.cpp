@@ -55,8 +55,7 @@ int main() {
         ]
     )";
 
-
-   struct test {
+    struct test {
       float a;
       double b;
       char c;

@@ -1,322 +1,286 @@
-/***************************************************************************
-* Copyright (c) 2026 Tian Yuxuan (Friendships666)                          *
-*                                                                          *
-* Distributed under the terms of the MIT License.                          *
-*                                                                          *
-* The full license is in the file LICENSE, distributed with this software. *
-***************************************************************************/
-
+// main.cpp
 #include <iostream>
 #include <vector>
 #include <chrono>
-#include <iomanip>
-#include <variant>
+#include <memory>
+#include <random>
 #include <algorithm>
-#include <cstring>
-#include <cstdlib>
+#include <iomanip>
+#include <string>
+#include <vector>
+#include "flex_vector.hpp"
 
-// include 物理头文件
-#include "../stucanvas/utils/flex_buffer.hpp"
-
+// 防止编译器优化掉测试结果
 template <typename T>
-void do_not_optimize(T&& val) {
+void do_not_optimize(const T& val) {
 #if defined(__GNUC__) || defined(__clang__)
-    asm volatile("" : : "g"(val) : "memory");
+    asm volatile("" : : "g"(&val) : "memory");
 #else
-    volatile T dummy = val;
+    const volatile void* p = static_cast<const volatile void*>(&val);
+    (void)p;
 #endif
 }
 
-// 物理资产
-struct AssetA { double x, y; };
-struct AssetB { double data[4]; };
-struct AssetC { double data[8]; };
-
-// C 风格 pNext 链表
-struct SObjectAssetHeader {
-    uint32_t id;
-    SObjectAssetHeader* pNext;
-};
-
-struct RawMaterialAsset {
-    SObjectAssetHeader header;
-    AssetA payload;
-};
-
-struct RawPhysicsAsset {
-    SObjectAssetHeader header;
-    AssetB payload;
-};
-
-struct RawMetadataAsset {
-    SObjectAssetHeader header;
-    AssetC payload;
-};
-
-// 侧表 FlatMap
-template <typename Key, typename Value>
-class FlatMap {
-private:
-    struct Entry {
-        Key key;
-        Value value;
-        bool operator<(const Entry& other) const noexcept { return key < other.key; }
-    };
-    std::vector<Entry> m_data;
-
-public:
-    void reserve(size_t cap) { m_data.reserve(cap); }
-    void push_back_unsorted(const Key& key, const Value& val) { m_data.push_back({key, val}); }
-    void sort_map() { std::sort(m_data.begin(), m_data.end()); }
-
-    [[nodiscard]] inline const Value* find(const Key& key) const noexcept {
-        int low = 0;
-        int high = static_cast<int>(m_data.size()) - 1;
-        while (low <= high) {
-            int mid = low + (high - low) / 2;
-            const auto& entry = m_data[mid];
-            if (entry.key == key) return &entry.value;
-            if (entry.key < key) low = mid + 1;
-            else high = mid - 1;
-        }
-        return nullptr;
+// 计时辅助器
+struct Timer {
+    std::string name;
+    std::chrono::high_resolution_clock::time_point start;
+    Timer(std::string n) : name(std::move(n)), start(std::chrono::high_resolution_clock::now()) {}
+    ~Timer() {
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration<double, std::milli>(end - start).count();
+        std::cout << "  " << std::left << std::setw(50) << name << " : "
+                  << std::right << std::setw(10) << std::fixed << std::setprecision(3)
+                  << duration << " ms" << std::endl;
     }
 };
 
-struct SObjectFlex {
-    uint32_t id;
-    StuCanvas::utils::FlexBuffer assets;
+// =========================================================================
+// 🚀 1. 定义标准 OOP 多态基类 (用于 RTTI 对比)
+// =========================================================================
+struct OOPBase {
+    virtual ~OOPBase() = default;
+    virtual void update() noexcept = 0; // 模拟虚调用
 };
 
-struct SObjectpNext {
-    uint32_t id;
-    SObjectAssetHeader* assets_head = nullptr;
+// =========================================================================
+// 🚀 2. 定义 24 个异构组件类型 (12个 Trivial + 12个 Non-Trivial)
+// =========================================================================
+#define DEFINE_TRIVIAL_TYPE(ID, ... ) \
+struct Trivial##ID { \
+    __VA_ARGS__ \
+    inline void update() noexcept { (void)this; } \
+}; \
+struct OOPTrivial##ID : public OOPBase { \
+    __VA_ARGS__ \
+    void update() noexcept override { (void)this; } \
 };
 
-struct SObjectFlatMap {
-    uint32_t id;
+#define DEFINE_NON_TRIVIAL_TYPE(ID, ... ) \
+struct NonTrivial##ID { \
+    __VA_ARGS__ \
+    NonTrivial##ID() = default; \
+    ~NonTrivial##ID() { (void)this; } \
+    NonTrivial##ID(const NonTrivial##ID&) = default; \
+    NonTrivial##ID(NonTrivial##ID&&) noexcept = default; \
+    inline void update() noexcept { (void)this; } \
+}; \
+struct OOPNonTrivial##ID : public OOPBase { \
+    __VA_ARGS__ \
+    OOPNonTrivial##ID() = default; \
+    ~OOPNonTrivial##ID() override { (void)this; } \
+    OOPNonTrivial##ID(const OOPNonTrivial##ID&) = default; \
+    OOPNonTrivial##ID(OOPNonTrivial##ID&&) noexcept = default; \
+    void update() noexcept override { (void)this; } \
 };
 
-struct SObjectInline {
-    uint32_t id;
-    AssetA a;
-    AssetB b;
-    AssetC c;
-};
+// 12 个物理对齐、尺寸不同的 Trivial (POD) 类型 [1.1.1]
+DEFINE_TRIVIAL_TYPE(0, int a = 1; float b = 1.1f;)
+DEFINE_TRIVIAL_TYPE(1, double c = 2.2; int d = 2;)
+DEFINE_TRIVIAL_TYPE(2, char e[16] = "trivial_2";)
+DEFINE_TRIVIAL_TYPE(3, float f = 3.3f; double g = 4.4;)
+DEFINE_TRIVIAL_TYPE(4, int h = 4; char i = 'A';)
+DEFINE_TRIVIAL_TYPE(5, uint64_t j = 555; uint32_t k = 5;)
+DEFINE_TRIVIAL_TYPE(6, float l[4] = {1, 2, 3, 4};)
+DEFINE_TRIVIAL_TYPE(7, double m = 7.7; float n = 8.8f;)
+DEFINE_TRIVIAL_TYPE(8, uint16_t o = 88; char p[8] = "test";)
+DEFINE_TRIVIAL_TYPE(9, int q = 9; float r = 9.9f;)
+DEFINE_TRIVIAL_TYPE(10, double s = 10.10; int t = 10;)
+DEFINE_TRIVIAL_TYPE(11, char u[32] = "trivial_last";)
 
-// 使用 30,000 个对象进行测试，完全还原你上一轮的运行环境
-const size_t NUM_ELEMENTS = 300'00;
-const int RUN_COUNT = 5;
-
-FlatMap<const SObjectFlatMap*, AssetA> map_a;
-FlatMap<const SObjectFlatMap*, AssetB> map_b;
-FlatMap<const SObjectFlatMap*, AssetC> map_c;
+// 12 个含有动态分配资源的 Non-Trivial 类型 (用于测试强移动重定位与 RAII 销毁)
+DEFINE_NON_TRIVIAL_TYPE(0, std::string a = "non_trivial_0";)
+DEFINE_NON_TRIVIAL_TYPE(1, std::vector<int> b = {1, 2, 3};)
+DEFINE_NON_TRIVIAL_TYPE(2, std::string c = "non_trivial_2_long_string_to_force_heap_allocation";)
+DEFINE_NON_TRIVIAL_TYPE(3, std::vector<double> d = {1.1, 2.2, 3.3};)
+DEFINE_NON_TRIVIAL_TYPE(4, std::string e = "short"; std::vector<char> f = {'a', 'b'};)
+DEFINE_NON_TRIVIAL_TYPE(5, std::vector<std::string> g = {"hello", "world"};)
+DEFINE_NON_TRIVIAL_TYPE(6, std::string h = "non_trivial_6";)
+DEFINE_NON_TRIVIAL_TYPE(7, std::vector<int> i = {7, 8, 9, 10};)
+DEFINE_NON_TRIVIAL_TYPE(8, std::string j = "another_string_eight_eight_eight";)
+DEFINE_NON_TRIVIAL_TYPE(9, std::vector<float> k = {9.9f};)
+DEFINE_NON_TRIVIAL_TYPE(10, std::string l = "string_ten_ten_ten_ten";)
+DEFINE_NON_TRIVIAL_TYPE(11, std::vector<uint32_t> m = {11, 22, 33};)
 
 int main() {
-    std::cout << "================================================================================" << std::endl;
-    std::cout << "             多态与异构数据存储 —— 终极五路对决 (5-Way Benchmark)              " << std::endl;
-    std::cout << "             测试对象规模: " << NUM_ELEMENTS << " 个，支持 uint32_t 级超大稀疏编号" << std::endl;
-    std::cout << "================================================================================" << std::endl;
+    std::cout << "==================================================================" << std::endl;
+    std::cout << "         FlexVector vs C++ Standard OOP & RTTI Benchmark          " << std::endl;
+    std::cout << "==================================================================" << std::endl;
+
+    constexpr size_t NUM_ENTITIES = 50'000; // 50,000 个实体
+    std::cout << "异构实体(Entities) 数量 : " << NUM_ENTITIES << " 个" << std::endl;
+    std::cout << "每个实体的最大组件数   : 24 个 (12个 Trivial + 12个 Non-Trivial)" << std::endl;
+    std::cout << "总对象存储体量          : " << NUM_ENTITIES * 24 << " 个" << std::endl;
+    std::cout << "------------------------------------------------------------------" << std::endl;
 
     // =========================================================================
-    // 1. 方案 A 的初始化 (FlexBuffer)
+    // 🚀 测试一：批量异构原位构造性能 (Bulk Insertion)
     // =========================================================================
-    std::cout << "\n[方案 A] 正在初始化 FlexBuffer (高密度双端键值对，彻底消灭内存空洞)..." << std::endl;
-    auto start_alloc_a = std::chrono::high_resolution_clock::now();
-    std::vector<SObjectFlex*> list_flex(NUM_ELEMENTS);
-    for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-        list_flex[i] = new SObjectFlex();
-        list_flex[i]->id = static_cast<uint32_t>(i);
-    }
-    for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-        // 🚀 核心优化：不再需要高昂的 240KB 圈地！
-        // 挂载 3 个资产，即便 ID 是 50000 级别的稀疏大编号，实际占用也仅需 128 字节！
-        list_flex[i]->assets.reserve(128);
+    std::cout << "\n[1] Bulk Insertion Performance (Memory Layout Setup):" << std::endl;
 
-        list_flex[i]->assets.push_back<AssetA>(3,     {static_cast<double>(i), 2.0});
-        list_flex[i]->assets.push_back<AssetB>(10000, {{3.0, 4.0, 5.0, 6.0}});
-        list_flex[i]->assets.push_back<AssetC>(50000, {{7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0}});
-    }
-    auto end_alloc_a = std::chrono::high_resolution_clock::now();
-    double alloc_time_a = std::chrono::duration<double, std::milli>(end_alloc_a - start_alloc_a).count();
+    std::vector<StuCanvas::utils::FlexVector<>> flex_entities;
+    {
+        Timer t("A. FlexVector (Flat Buffer Merged Allocation)");
+        flex_entities.resize(NUM_ENTITIES);
+        for (size_t i = 0; i < NUM_ENTITIES; ++i) {
+            auto& entity = flex_entities[i];
+            
+            // 写入 12 个 Trivial 组件
+            entity.emplace_back<Trivial0>();
+            entity.emplace_back<Trivial1>();
+            entity.emplace_back<Trivial2>();
+            entity.emplace_back<Trivial3>();
+            entity.emplace_back<Trivial4>();
+            entity.emplace_back<Trivial5>();
+            entity.emplace_back<Trivial6>();
+            entity.emplace_back<Trivial7>();
+            entity.emplace_back<Trivial8>();
+            entity.emplace_back<Trivial9>();
+            entity.emplace_back<Trivial10>();
+            entity.emplace_back<Trivial11>();
 
-    // =========================================================================
-    // 2. 方案 B 的初始化 (pNext 指针链)
-    // =========================================================================
-    std::cout << "[方案 B] 正在初始化 pNext 裸指针链..." << std::endl;
-    auto start_alloc_b = std::chrono::high_resolution_clock::now();
-    std::vector<SObjectpNext*> list_pnext(NUM_ELEMENTS);
-    for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-        list_pnext[i] = new SObjectpNext();
-        list_pnext[i]->id = static_cast<uint32_t>(i);
-    }
-    for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-        auto* a = static_cast<RawMaterialAsset*>(std::malloc(sizeof(RawMaterialAsset)));
-        a->header.id = 3;
-        a->header.pNext = list_pnext[i]->assets_head;
-        a->payload = AssetA{static_cast<double>(i), 2.0};
-        list_pnext[i]->assets_head = &a->header;
-
-        auto* b = static_cast<RawPhysicsAsset*>(std::malloc(sizeof(RawPhysicsAsset)));
-        b->header.id = 10000;
-        b->header.pNext = list_pnext[i]->assets_head;
-        b->payload = AssetB{{3.0, 4.0, 5.0, 6.0}};
-        list_pnext[i]->assets_head = &b->header;
-
-        auto* c = static_cast<RawMetadataAsset*>(std::malloc(sizeof(RawMetadataAsset)));
-        c->header.id = 50000;
-        c->header.pNext = list_pnext[i]->assets_head;
-        c->payload = AssetC{{7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0}};
-        list_pnext[i]->assets_head = &c->header;
-    }
-    auto end_alloc_b = std::chrono::high_resolution_clock::now();
-    double alloc_time_b = std::chrono::duration<double, std::milli>(end_alloc_b - start_alloc_b).count();
-
-    // =========================================================================
-    // 3. 方案 C 的初始化 (FlatMap 侧边存储)
-    // =========================================================================
-    std::cout << "[方案 C] 正在初始化 FlatMap 侧边存储..." << std::endl;
-    auto start_alloc_c = std::chrono::high_resolution_clock::now();
-    std::vector<SObjectFlatMap*> list_flatmap(NUM_ELEMENTS);
-    map_a.reserve(NUM_ELEMENTS);
-    map_b.reserve(NUM_ELEMENTS);
-    map_c.reserve(NUM_ELEMENTS);
-
-    for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-        list_flatmap[i] = new SObjectFlatMap();
-        map_a.push_back_unsorted(list_flatmap[i], AssetA{static_cast<double>(i), 2.0});
-        map_b.push_back_unsorted(list_flatmap[i], AssetB{{3.0, 4.0, 5.0, 6.0}});
-        map_c.push_back_unsorted(list_flatmap[i], AssetC{{7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0}});
-    }
-    map_a.sort_map();
-    map_b.sort_map();
-    map_c.sort_map();
-
-    auto end_alloc_c = std::chrono::high_resolution_clock::now();
-    double alloc_time_c = std::chrono::duration<double, std::milli>(end_alloc_c - start_alloc_c).count();
-
-    // =========================================================================
-    // 5. 方案 E 的初始化 (纯内联扁平结构体)
-    // =========================================================================
-    std::cout << "[方案 E] 正在初始化纯内联结构体..." << std::endl;
-    auto start_alloc_e = std::chrono::high_resolution_clock::now();
-    std::vector<SObjectInline*> list_inline(NUM_ELEMENTS);
-    for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-        list_inline[i] = new SObjectInline();
-        list_inline[i]->id = static_cast<uint32_t>(i);
-        list_inline[i]->a = AssetA{static_cast<double>(i), 2.0};
-        list_inline[i]->b = AssetB{{3.0, 4.0, 5.0, 6.0}};
-        list_inline[i]->c = AssetC{{7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0}};
-    }
-    auto end_alloc_e = std::chrono::high_resolution_clock::now();
-    double alloc_time_e = std::chrono::duration<double, std::milli>(end_alloc_e - start_alloc_e).count();
-
-
-    std::cout << "\n----------------------- 初始化分配耗时对比 -----------------------" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 A] FlexBuffer 耗时:" << std::fixed << std::setprecision(2) << alloc_time_a << " ms" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 B] pNext 指针链 耗时:" << alloc_time_b << " ms" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 C] FlatMap 侧存储 耗时:" << alloc_time_c << " ms" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 E] 纯内联结构体 耗时:" << alloc_time_e << " ms" << std::endl;
-
-    // =========================================================================
-    // 核心性能读取对决
-    // =========================================================================
-    std::cout << "\n开始进行高频遍历读取测试..." << std::endl;
-
-    // A. 方案 A 测试 (FlexBuffer)
-    double read_time_a = 0.0;
-    for (int r = 0; r < RUN_COUNT; ++r) {
-        auto start = std::chrono::high_resolution_clock::now();
-        double sum = 0.0;
-        for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-            // 🚀 双端键值对表高速检索！3个元素遍历完全在 1个 Cache Line 里，0 间接跳转
-            auto* a = list_flex[i]->assets.get_unsafe<AssetA>(3);
-            auto* b = list_flex[i]->assets.get_unsafe<AssetB>(10000);
-            auto* c = list_flex[i]->assets.get_unsafe<AssetC>(50000);
-            sum += a->x + b->data[0] + c->data[0];
+            // 写入 12 个 Non-Trivial 组件
+            entity.emplace_back<NonTrivial0>();
+            entity.emplace_back<NonTrivial1>();
+            entity.emplace_back<NonTrivial2>();
+            entity.emplace_back<NonTrivial3>();
+            entity.emplace_back<NonTrivial4>();
+            entity.emplace_back<NonTrivial5>();
+            entity.emplace_back<NonTrivial6>();
+            entity.emplace_back<NonTrivial7>();
+            entity.emplace_back<NonTrivial8>();
+            entity.emplace_back<NonTrivial9>();
+            entity.emplace_back<NonTrivial10>();
+            entity.emplace_back<NonTrivial11>();
         }
-        auto end = std::chrono::high_resolution_clock::now();
-        do_not_optimize(sum);
-        read_time_a += std::chrono::duration<double, std::milli>(end - start).count();
     }
-    read_time_a /= RUN_COUNT;
 
-    // B. 方案 B 测试 (pNext 指针链)
-    double read_time_b = 0.0;
-    for (int r = 0; r < RUN_COUNT; ++r) {
-        auto start = std::chrono::high_resolution_clock::now();
-        double sum = 0.0;
-        for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-            SObjectAssetHeader* curr = list_pnext[i]->assets_head;
-            AssetA* a = nullptr;
-            AssetB* b = nullptr;
-            AssetC* c = nullptr;
-            while (curr != nullptr) {
-                if (curr->id == 3)        a = &reinterpret_cast<RawMaterialAsset*>(curr)->payload;
-                else if (curr->id == 10000) b = &reinterpret_cast<RawPhysicsAsset*>(curr)->payload;
-                else if (curr->id == 50000) c = &reinterpret_cast<RawMetadataAsset*>(curr)->payload;
-                curr = curr->pNext;
+    std::vector<std::vector<std::unique_ptr<OOPBase>>> oop_entities;
+    {
+        Timer t("B. C++ Standard OOP (24 heap allocs per entity!)");
+        oop_entities.resize(NUM_ENTITIES);
+        for (size_t i = 0; i < NUM_ENTITIES; ++i) {
+            auto& entity = oop_entities[i];
+            entity.reserve(24);
+            
+            entity.push_back(std::make_unique<OOPTrivial0>());
+            entity.push_back(std::make_unique<OOPTrivial1>());
+            entity.push_back(std::make_unique<OOPTrivial2>());
+            entity.push_back(std::make_unique<OOPTrivial3>());
+            entity.push_back(std::make_unique<OOPTrivial4>());
+            entity.push_back(std::make_unique<OOPTrivial5>());
+            entity.push_back(std::make_unique<OOPTrivial6>());
+            std::vector<std::unique_ptr<OOPBase>> temp;
+            entity.push_back(std::make_unique<OOPTrivial7>());
+            entity.push_back(std::make_unique<OOPTrivial8>());
+            entity.push_back(std::make_unique<OOPTrivial9>());
+            entity.push_back(std::make_unique<OOPTrivial10>());
+            entity.push_back(std::make_unique<OOPTrivial11>());
+
+            entity.push_back(std::make_unique<OOPNonTrivial0>());
+            entity.push_back(std::make_unique<OOPNonTrivial1>());
+            entity.push_back(std::make_unique<OOPNonTrivial2>());
+            entity.push_back(std::make_unique<OOPNonTrivial3>());
+            entity.push_back(std::make_unique<OOPNonTrivial4>());
+            entity.push_back(std::make_unique<OOPNonTrivial5>());
+            entity.push_back(std::make_unique<OOPNonTrivial6>());
+            entity.push_back(std::make_unique<OOPNonTrivial7>());
+            entity.push_back(std::make_unique<OOPNonTrivial8>());
+            entity.push_back(std::make_unique<OOPNonTrivial9>());
+            entity.push_back(std::make_unique<OOPNonTrivial10>());
+            entity.push_back(std::make_unique<OOPNonTrivial11>());
+        }
+    }
+
+    // =========================================================================
+    // 🚀 测试二：类型动态检索性能 (Type Retrieval / get<T>() vs dynamic_cast)
+    // =========================================================================
+    std::cout << "\n[2] Type Retrieval/Query Performance (O(1) Slot vs dynamic_cast):" << std::endl;
+
+    {
+        Timer t("A. FlexVector O(1) Flat Slot Directory");
+        uint64_t checksum = 0;
+        for (size_t i = 0; i < NUM_ENTITIES; ++i) {
+            auto& entity = flex_entities[i];
+            
+            // 检索平凡对象并读取值
+            auto* comp_t5 = entity.get<Trivial5>();
+            if (comp_t5) [[likely]] {
+                checksum += comp_t5->j;
             }
-            sum += a->x + b->data[0] + c->data[0];
+            // 检索非平凡对象并读取 vector 长度
+            auto* comp_nt7 = entity.get<NonTrivial7>();
+            if (comp_nt7) [[likely]] {
+                checksum += comp_nt7->i.size();
+            }
         }
-        auto end = std::chrono::high_resolution_clock::now();
-        do_not_optimize(sum);
-        read_time_b += std::chrono::duration<double, std::milli>(end - start).count();
-    }
-    read_time_b /= RUN_COUNT;
-
-    // C. 方案 C 测试 (FlatMap 侧存储)
-    double read_time_c = 0.0;
-    for (int r = 0; r < RUN_COUNT; ++r) {
-        auto start = std::chrono::high_resolution_clock::now();
-        double sum = 0.0;
-        for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-            const auto* a = map_a.find(list_flatmap[i]);
-            const auto* b = map_b.find(list_flatmap[i]);
-            const auto* c = map_c.find(list_flatmap[i]);
-            sum += a->x + b->data[0] + c->data[0];
-        }
-        auto end = std::chrono::high_resolution_clock::now();
-        do_not_optimize(sum);
-        read_time_c += std::chrono::duration<double, std::milli>(end - start).count();
-    }
-    read_time_c /= RUN_COUNT;
-
-    // E. 方案 E 测试 (纯内联扁平结构体)
-    double read_time_e = 0.0;
-    for (int r = 0; r < RUN_COUNT; ++r) {
-        auto start = std::chrono::high_resolution_clock::now();
-        double sum = 0.0;
-        for (size_t i = 0; i < NUM_ELEMENTS; ++i) {
-            auto* p = list_inline[i];
-            sum += p->a.x + p->b.data[0] + p->c.data[0];
-        }
-        auto end = std::chrono::high_resolution_clock::now();
-        do_not_optimize(sum);
-        read_time_e += std::chrono::duration<double, std::milli>(end - start).count();
-    }
-    read_time_e /= RUN_COUNT;
-
-    std::cout << "\n----------------------- 遍历读取耗时对比 -----------------------" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 A] FlexBuffer 耗时:" << std::fixed << std::setprecision(4) << read_time_a << " ms" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 B] pNext 指针链 耗时:" << read_time_b << " ms (慢了 " << (read_time_b/read_time_a) << " 倍)" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 C] FlatMap 侧存储 耗时:" << read_time_c << " ms (慢了 " << (read_time_c/read_time_a) << " 倍)" << std::endl;
-    std::cout << std::left << std::setw(35) << "[方案 E] 纯内联结构体 耗时:" << read_time_e << " ms (最快极限，理论上限)" << std::endl;
-    std::cout << "================================================================================" << std::endl;
-
-    // 清理内存
-    for (auto* p : list_flex) delete p;
-    for (auto* p : list_inline) delete p;
-    for (auto* p : list_flatmap) delete p;
-    for (auto* p : list_pnext) {
-        SObjectAssetHeader* curr = p->assets_head;
-        while (curr != nullptr) {
-            SObjectAssetHeader* next = curr->pNext;
-            std::free(curr);
-            curr = next;
-        }
-        delete p;
+        do_not_optimize(checksum);
+        std::cout << "     (Checksum: " << checksum << ")\n";
     }
 
+    {
+        Timer t("B. C++ Standard OOP RTTI dynamic_cast (Array Scan)");
+        uint64_t checksum = 0;
+        for (size_t i = 0; i < NUM_ENTITIES; ++i) {
+            auto& entity = oop_entities[i];
+            OOPTrivial5* comp_t5 = nullptr;
+            OOPNonTrivial7* comp_nt7 = nullptr;
+
+            // 传统的指针数组扫描，对每一个多态指针尝试进行 RTTI dynamic_cast 判定 [1.2.4]
+            for (auto& base_ptr : entity) {
+                if (!comp_t5) {
+                    comp_t5 = dynamic_cast<OOPTrivial5*>(base_ptr.get());
+                }
+                if (!comp_nt7) {
+                    comp_nt7 = dynamic_cast<OOPNonTrivial7*>(base_ptr.get());
+                }
+                if (comp_t5 && comp_nt7) break; // 提前找到终止
+            }
+
+            if (comp_t5) [[likely]] {
+                checksum += comp_t5->j;
+            }
+            if (comp_nt7) [[likely]] {
+                checksum += comp_nt7->i.size();
+            }
+        }
+        do_not_optimize(checksum);
+        std::cout << "     (Checksum: " << checksum << ")\n";
+    }
+
+    // =========================================================================
+    // 🚀 测试三：链表顺序迭代性能 (Sequential Iteration)
+    // =========================================================================
+    std::cout << "\n[3] Sequential Iteration Performance (Object Traversal):" << std::endl;
+
+    {
+        Timer t("A. FlexVector Intrusive Singly-Linked List Iteration");
+        uint64_t object_count = 0;
+        for (size_t i = 0; i < NUM_ENTITIES; ++i) {
+            auto& entity = flex_entities[i];
+            for (auto it = entity.begin(); it != entity.end(); ++it) {
+                // 沿着 Flat Buffer 中的 `next_oh_offset` 指针链快速滑行
+                object_count++;
+            }
+        }
+        do_not_optimize(object_count);
+        std::cout << "     (Total elements iterated: " << object_count << ")\n";
+    }
+
+    {
+        Timer t("B. C++ Standard OOP Array Iteration (Virtual Call)");
+        uint64_t object_count = 0;
+        for (size_t i = 0; i < NUM_ENTITIES; ++i) {
+            auto& entity = oop_entities[i];
+            for (auto& base_ptr : entity) {
+                base_ptr->update(); // 虚拟多态调用
+                object_count++;
+            }
+        }
+        do_not_optimize(object_count);
+        std::cout << "     (Total elements iterated: " << object_count << ")\n";
+    }
+
+    std::cout << "==================================================================" << std::endl;
     return 0;
 }

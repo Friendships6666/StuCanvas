@@ -20,10 +20,6 @@ namespace StuCanvas
 
     struct SObjectAppearance;
 
-    // ========================================================================
-    // SObjectInstance 享元空间实例 (100% 纯裸指针，数据导向设计，零 CPU 锁开销)
-    // 🚀 已完美契合 64 字节（CPU 缓存行）对齐边界。
-    // ========================================================================
     struct VisualConfig;
     template <typename T>
     struct SObjectInstance

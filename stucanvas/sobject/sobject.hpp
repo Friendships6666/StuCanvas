@@ -45,26 +45,17 @@ namespace StuCanvas
         NodeType type = NodeType::UNKNOWN;
         mutable uint64_t mask = 0;
         std::string name;
-        uint64_t id{};
-
 
         utils::BlockDeque<const SObject*, 4> parents;
         utils::BlockDeque<const SObject*, 16> children;
-        T discretization_step_points{};
-        union
-        {
-            T discretization_step_strips{};
-            T discretization_step_triangles;
-        } discretization_step_union;
 
 
         utils::FlexList assets;
 
 
-        utils::BlockDeque<const SObjectInstance<T>*, 16> instances;
         SObjectData<T> data;
 
-        const SObjectVTable<T>* vptr = nullptr;
+
 
         SObjectGraph<T>* graph = nullptr; // 反向指针
 
@@ -82,14 +73,11 @@ namespace StuCanvas
             : type(other.type),
               mask(other.mask),
               name(std::move(other.name)),
-              id(other.id),
               parents(std::move(other.parents)),
               children(std::move(other.children)),
               data(other.data),
-              vptr(other.vptr),
-              graph(other.graph),
-              discretization_step_points(other.discretization_step_points),
-              discretization_step_union(other.discretization_step_union)
+
+              graph(other.graph)
         {
             // 因为我们的物理内存地址变了（从 &other 变成了 this），
             // 必须让所有父子节点将指向 &other 的指针重新修正为指向 this！
@@ -98,8 +86,8 @@ namespace StuCanvas
             // 将原临时对象置于安全、无害的默认状态
             other.type = NodeType::UNKNOWN;
             other.mask = 0;
-            other.id = 0;
-            other.vptr = nullptr;
+
+ 
             other.graph = nullptr;
         }
 
@@ -114,22 +102,18 @@ namespace StuCanvas
                 type = other.type;
                 mask = other.mask;
                 name = std::move(other.name);
-                id = other.id;
                 parents = std::move(other.parents);
                 children = std::move(other.children);
                 data = other.data;
-                vptr = other.vptr;
+
                 graph = other.graph;
-                discretization_step_points = other.discretization_step_points;
-                discretization_step_union = other.discretization_step_union;
 
                 // 重新为计算图打上物理指针补丁
                 patch_connections(&other, this);
 
                 other.type = NodeType::UNKNOWN;
                 other.mask = 0;
-                other.id = 0;
-                other.vptr = nullptr;
+
                 other.graph = nullptr;
             }
             return *this;

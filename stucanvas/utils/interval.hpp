@@ -8,9 +8,9 @@
 #pragma once
 #include "../utils/math_traits.hpp"
 
-namespace StuCanvas
+namespace StuCanvas::utils
 {
-    namespace utils
+    namespace detals
     {
         struct FastRNG
         {
@@ -755,7 +755,7 @@ namespace StuCanvas
         });
     }
 
-    namespace utils
+    namespace detals
     {
         template <typename T>
         T scalar_round(T v)
@@ -771,8 +771,8 @@ namespace StuCanvas
     {
         if (iv.is_poisoned()) return Interval<T>::poisoned();
 
-        T r_low = utils::scalar_round(iv.lower);
-        T r_high = utils::scalar_round(iv.upper);
+        T r_low = detals::scalar_round(iv.lower);
+        T r_high = detals::scalar_round(iv.upper);
 
 
         if (r_low == r_high) return IntervalSet<T>(r_low);
@@ -1203,7 +1203,7 @@ namespace StuCanvas
         return map_set(is, [](const auto& iv) { return tgamma(iv); });
     }
 
-    namespace utils
+    namespace detals
     {
         template <typename T>
         inline IntervalSet<T> lgamma_positive(const Interval<T>& iv)
@@ -1247,7 +1247,7 @@ namespace StuCanvas
         if (iv.lower >= zero)
         {
             if (iv.lower == zero && iv.upper == zero) return Interval<T>::universe();
-            return utils::lgamma_positive(iv);
+            return detals::lgamma_positive(iv);
         }
 
 
@@ -1259,7 +1259,7 @@ namespace StuCanvas
 
 
         Interval<T> reflected_iv(one - iv.upper, one - iv.lower);
-        IntervalSet<T> lg_reflected = utils::lgamma_positive(reflected_iv);
+        IntervalSet<T> lg_reflected = detals::lgamma_positive(reflected_iv);
 
 
         return ln_pi - ln_abs_sin - lg_reflected;
@@ -1411,7 +1411,7 @@ namespace StuCanvas
         return map_set(s, [](const auto& i) { return atanh(i); });
     }
 
-    namespace utils
+    namespace detals
     {
         template <typename T>
         bool is_integer(const T& val)
@@ -1808,7 +1808,7 @@ namespace StuCanvas
         return result;
     }
 
-    namespace utils
+    namespace detals
     {
         template <typename T>
         inline T scalar_rint(T v)
@@ -1826,8 +1826,8 @@ namespace StuCanvas
     {
         if (iv.is_poisoned()) return IntervalSet<T>(Interval<T>::poisoned());
 
-        T r_low = utils::scalar_rint(iv.lower);
-        T r_high = utils::scalar_rint(iv.upper);
+        T r_low = detals::scalar_rint(iv.lower);
+        T r_high = detals::scalar_rint(iv.upper);
 
 
         if (r_low == r_high) return IntervalSet<T>(r_low);
@@ -1943,7 +1943,7 @@ namespace StuCanvas
         return remainder(x, IntervalSet<T>(static_cast<T>(y_val)));
     }
 
-    namespace utils
+    namespace detals
     {
         template <typename T>
         bool is_unbounded(const IntervalSet<T>& set)
@@ -1974,7 +1974,7 @@ namespace StuCanvas
 
 
 
-    namespace utils
+    namespace detals
     {
 
         template <typename T>
@@ -2178,38 +2178,7 @@ namespace StuCanvas
             Interval<T> S_sq = strict_interval_sqr(S);
             Interval<T> P_sq = strict_interval_sqr(P);
 
-            // 返回 F = S_sq + P_sq
-            // 注意：这里存在微小的过度估计，因为同一个点 P 不一定能同时使 S 和 P 取得各自的最小值。
-            // 但这是区间算术处理这类问题的最严密上限。
             return S_sq + P_sq;
         }
     }
 }
-
-#if !defined(STUCANVAS_HEADER_ONLY) && !defined(STUCANVAS_COMPILING_LIBRARY)
-
-// 1. 拦截 Interval 和 IntervalSet 的 double 实例
-extern template struct StuCanvas::Interval<double>;
-extern template struct StuCanvas::IntervalSet<double>;
-
-namespace StuCanvas {
-    // 2. 拦截核心运算符 (这是编译最慢的地方)
-    extern template IntervalSet<double> operator+(const IntervalSet<double>&, const IntervalSet<double>&);
-    extern template IntervalSet<double> operator-(const IntervalSet<double>&, const IntervalSet<double>&);
-    extern template IntervalSet<double> operator*(const IntervalSet<double>&, const IntervalSet<double>&);
-    extern template IntervalSet<double> operator/(const IntervalSet<double>&, const IntervalSet<double>&);
-
-    // 3. 拦截高频数学函数
-    extern template Interval<double> exp2(const Interval<double>&);
-    extern template IntervalSet<double> sin(const IntervalSet<double>&);
-    extern template IntervalSet<double> cos(const IntervalSet<double>&);
-
-
-
-
-    namespace utils {
-        extern template Interval<double> evaluate_circle_implicit(const Interval<double>&, const Interval<double>&, double, double, double);
-        extern template Interval<double> evaluate_sphere_implicit(const Interval<double>&, const Interval<double>&, const Interval<double>&, double, double, double, double);
-    }
-}
-#endif

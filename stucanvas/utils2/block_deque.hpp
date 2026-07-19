@@ -68,7 +68,7 @@ namespace StuCanvas::utils
             }
         };
 
-        static inline StaticBlockCache s_block_cache;
+        static thread_local inline StaticBlockCache s_block_cache;
 
         [[nodiscard]] inline Header* get_header() const noexcept
         {
