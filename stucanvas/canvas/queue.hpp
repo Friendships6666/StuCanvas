@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <cstring>
 #include <eigen3/Eigen/Dense>
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -35,7 +36,6 @@
 #include "pinned_vector.hpp"
 #include "stb/stb_image_write.h"
 #include "vulkan/vk_ctx.hpp"
-#include <filesystem>
 namespace StuCanvas
 {
 
@@ -332,7 +332,7 @@ namespace StuCanvas
             return viewport;
         }
 
-       /**
+        /**
          * @brief 创建、编译并物理缓存一个现代着色器对象，并直接返回其物理句柄 (VkShaderEXT)
          *
          * @param stage 着色器流水线阶段 (如 VK_SHADER_STAGE_VERTEX_BIT / VK_SHADER_STAGE_FRAGMENT_BIT)
@@ -416,7 +416,7 @@ namespace StuCanvas
             if ( !cache_loaded )
             {
                 std::cout << "正在以冷启动方式编译并分析着色器字节码...\n";
-                
+
                 VkShaderCreateInfoEXT createInfo{};
                 createInfo.sType = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT;
                 createInfo.stage = stage;
@@ -478,9 +478,9 @@ namespace StuCanvas
 
             // 4. 直接返回成功创建的着色器对象句柄
             return shader;
-        }        /**
-         * @brief 自动遍历静态着色器资产表，零多余转换，极速完成硬件载入与 O(1) 物理索引对齐
-         */
+        } /**
+           * @brief 自动遍历静态着色器资产表，零多余转换，极速完成硬件载入与 O(1) 物理索引对齐
+           */
         void initializeAllShaders ()
         {
             // 1. 物理探测用户注册的最高 slot 索引，以此来规划 shader_objects 的容量
@@ -616,20 +616,17 @@ namespace StuCanvas
             VkDevice device = primaryDevice.get ();
 
             // 🚀 一次性加载所有 Vulkan 扩展函数指针，避免每次调用时重复动态查询
-            pfnCreateShaders =
-                ( PFN_vkCreateShadersEXT ) vkGetDeviceProcAddr ( device, "vkCreateShadersEXT" );
+            pfnCreateShaders = ( PFN_vkCreateShadersEXT ) vkGetDeviceProcAddr ( device, "vkCreateShadersEXT" );
             pfnGetShaderBinaryData =
                 ( PFN_vkGetShaderBinaryDataEXT ) vkGetDeviceProcAddr ( device, "vkGetShaderBinaryDataEXT" );
-            pfnDestroyShader =
-                ( PFN_vkDestroyShaderEXT ) vkGetDeviceProcAddr ( device, "vkDestroyShaderEXT" );
+            pfnDestroyShader = ( PFN_vkDestroyShaderEXT ) vkGetDeviceProcAddr ( device, "vkDestroyShaderEXT" );
             pfnCmdSetPolygonMode =
                 ( PFN_vkCmdSetPolygonModeEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetPolygonModeEXT" );
-            pfnCmdSetRasterizationSamples =
-                ( PFN_vkCmdSetRasterizationSamplesEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetRasterizationSamplesEXT" );
-            pfnCmdSetSampleMask =
-                ( PFN_vkCmdSetSampleMaskEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetSampleMaskEXT" );
-            pfnCmdSetAlphaToCoverageEnable =
-                ( PFN_vkCmdSetAlphaToCoverageEnableEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetAlphaToCoverageEnableEXT" );
+            pfnCmdSetRasterizationSamples = ( PFN_vkCmdSetRasterizationSamplesEXT ) vkGetDeviceProcAddr (
+                device, "vkCmdSetRasterizationSamplesEXT" );
+            pfnCmdSetSampleMask = ( PFN_vkCmdSetSampleMaskEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetSampleMaskEXT" );
+            pfnCmdSetAlphaToCoverageEnable = ( PFN_vkCmdSetAlphaToCoverageEnableEXT ) vkGetDeviceProcAddr (
+                device, "vkCmdSetAlphaToCoverageEnableEXT" );
             pfnCmdSetVertexInput =
                 ( PFN_vkCmdSetVertexInputEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetVertexInputEXT" );
             pfnCmdSetColorBlendEnable =
@@ -638,8 +635,7 @@ namespace StuCanvas
                 ( PFN_vkCmdSetColorBlendEquationEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetColorBlendEquationEXT" );
             pfnCmdSetColorWriteMask =
                 ( PFN_vkCmdSetColorWriteMaskEXT ) vkGetDeviceProcAddr ( device, "vkCmdSetColorWriteMaskEXT" );
-            pfnCmdBindShaders =
-                ( PFN_vkCmdBindShadersEXT ) vkGetDeviceProcAddr ( device, "vkCmdBindShadersEXT" );
+            pfnCmdBindShaders = ( PFN_vkCmdBindShadersEXT ) vkGetDeviceProcAddr ( device, "vkCmdBindShadersEXT" );
             pfnGetBufferDeviceAddress =
                 ( PFN_vkGetBufferDeviceAddress ) vkGetDeviceProcAddr ( device, "vkGetBufferDeviceAddress" );
 
@@ -1712,6 +1708,111 @@ namespace StuCanvas
             std::vector< DAGObjectInstance* > instances;
         };
 
+        /**
+         * @brief 将 MSAA 颜色/深度图像及解析目标图像从 VK_IMAGE_LAYOUT_UNDEFINED
+         *        过渡到对应的最佳写入布局（颜色附件/深度模板附件）
+         * @param cmd 目标命令缓冲区
+         * @param target_image 解析目标图像 (1x resolve target)
+         */
+        inline void transitionMSAAImages ( VkCommandBuffer cmd, VkImage target_image ) const
+        {
+            VkImageMemoryBarrier barriers[ 3 ]{};
+
+            // 1. 过渡 8x MSAA 颜色附件 (msaa_color_image)
+            barriers[ 0 ].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[ 0 ].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barriers[ 0 ].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            barriers[ 0 ].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[ 0 ].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[ 0 ].image = msaa_color_image;
+            barriers[ 0 ].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barriers[ 0 ].subresourceRange.baseMipLevel = 0;
+            barriers[ 0 ].subresourceRange.levelCount = 1;
+            barriers[ 0 ].subresourceRange.baseArrayLayer = 0;
+            barriers[ 0 ].subresourceRange.layerCount = 1;
+            barriers[ 0 ].srcAccessMask = 0;
+            barriers[ 0 ].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+            // 2. 过渡 8x MSAA 深度附件 (msaa_depth_image)
+            barriers[ 1 ].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[ 1 ].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barriers[ 1 ].newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            barriers[ 1 ].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[ 1 ].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[ 1 ].image = msaa_depth_image;
+            barriers[ 1 ].subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            barriers[ 1 ].subresourceRange.baseMipLevel = 0;
+            barriers[ 1 ].subresourceRange.levelCount = 1;
+            barriers[ 1 ].subresourceRange.baseArrayLayer = 0;
+            barriers[ 1 ].subresourceRange.layerCount = 1;
+            barriers[ 1 ].srcAccessMask = 0;
+            barriers[ 1 ].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+            // 3. 过渡 1x 解析目标 (target_image)
+            barriers[ 2 ].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barriers[ 2 ].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barriers[ 2 ].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            barriers[ 2 ].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[ 2 ].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barriers[ 2 ].image = target_image;
+            barriers[ 2 ].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            barriers[ 2 ].subresourceRange.baseMipLevel = 0;
+            barriers[ 2 ].subresourceRange.levelCount = 1;
+            barriers[ 2 ].subresourceRange.baseArrayLayer = 0;
+            barriers[ 2 ].subresourceRange.layerCount = 1;
+            barriers[ 2 ].srcAccessMask = 0;
+            barriers[ 2 ].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+            vkCmdPipelineBarrier (
+                cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0,
+                nullptr, 0, nullptr, 3, barriers );
+        }
+
+        /**
+         * @brief 将实例列表按外观类型 (AppearanceType) 分组为二维列表
+         * @param instances 实例指针列表
+         * @return 按 AppearanceType 分组后的 AppearanceGroup 向量
+         */
+        inline std::vector< AppearanceGroup > groupInstancesByAppearance (
+            utils::TinyVector< DAGObjectInstance* >& instances ) const
+        {
+            std::vector< AppearanceGroup > groups;
+            groups.reserve ( 4 );
+
+            for ( DAGObjectInstance* instance : instances )
+            {
+                if ( !instance )
+                    continue;
+
+                // 🚀 如果 instance->appearance 为空，直接抛出异常，不再执行默认外观兜底
+                if ( !instance->appearance ) [[unlikely]]
+                {
+                    throw std::runtime_error (
+                        "VulkanQueue::groupInstancesByAppearance: DAGObjectInstance has a null appearance pointer." );
+                }
+
+                const auto* app = static_cast< const AppearanceSimplePoint* > ( instance->appearance );
+
+                auto it = std::find_if ( groups.begin (), groups.end (),
+                                         [ app ] ( const AppearanceGroup& g ) { return g.type == app->type; } );
+
+                if ( it != groups.end () )
+                {
+                    it->instances.push_back ( instance );
+                }
+                else
+                {
+                    AppearanceGroup new_group{};
+                    new_group.type = app->type;
+                    new_group.appearance_ptr = app;
+                    new_group.instances.push_back ( instance );
+                    groups.push_back ( std::move ( new_group ) );
+                }
+            }
+
+            return groups;
+        }
 
         /**
          * @brief 点云材质一键批量录制函数 (SDF Billboarding 实例化分发)
@@ -1749,40 +1850,7 @@ namespace StuCanvas
             // =====================================================================
             // 1. 提取 Instances 列表并根据外观 (Appearance) 进行归类分组 (构造二维数组) [1]
             // =====================================================================
-            std::vector< AppearanceGroup > groups;
-            groups.reserve ( 4 );   // 通常外观数量极少，小容量 reserve 避免二次扩容
-
-            // 声明一个默认外观，用于在 instance 挂载空指针时进行物理兜底
-            AppearanceSimplePoint default_app{};
-
-            for ( DAGObjectInstance* instance : object.instances )
-            {
-                if ( !instance )
-                    continue;
-
-                const AppearanceSimplePoint* app = &default_app;
-                if ( instance->appearance ) [[likely]]
-                {
-                    app = static_cast< const AppearanceSimplePoint* > ( instance->appearance );
-                }
-
-                // 按 AppearanceType 物理分组
-                auto it = std::find_if ( groups.begin (), groups.end (),
-                                         [ app ] ( const AppearanceGroup& g ) { return g.type == app->type; } );
-
-                if ( it != groups.end () )
-                {
-                    it->instances.push_back ( instance );
-                }
-                else
-                {
-                    AppearanceGroup new_group{};
-                    new_group.type = app->type;
-                    new_group.appearance_ptr = app;
-                    new_group.instances.push_back ( instance );
-                    groups.push_back ( std::move ( new_group ) );
-                }
-            }
+            std::vector< AppearanceGroup > groups = groupInstancesByAppearance ( object.instances );
 
             // =====================================================================
             // 2. 循环遍历二维分组，执行基于材质状态的分发与绘制
@@ -1796,6 +1864,7 @@ namespace StuCanvas
                     // 🚀 点外观分发：完美兼容 SimplePoint 和 SimpleLine 穿透，绝不漏掉任何默认粒子
                     // =====================================================================
                     case AppearanceType::SimpleLine:
+
                     case AppearanceType::SimplePoint:
                     {
                         // 配置动态视口与剪裁区域 (使用 target_frame 真实的宽高信息) [1.1.1]
@@ -1848,61 +1917,9 @@ namespace StuCanvas
                         renderingInfo.pDepthAttachment = &depthAttachment;
 
                         // =====================================================================
-                        // 🚀 核心重构：3路合并物理布局转换屏障 (一键解决 8x颜色、8x深度、1x解析目标的未定义状态)
-                        // 🚀 彻底清除所有关于 "current layout is VK_IMAGE_LAYOUT_UNDEFINED" 校验红字 [1.1.1]
+                        // 🚀 3路合并物理布局转换屏障 (一键解决 8x颜色、8x深度、1x解析目标的未定义状态)
                         // =====================================================================
-                        VkImageMemoryBarrier barriers[ 3 ]{};
-
-                        // 1. 过渡 8x MSAA 颜色附件 (msaa_color_image)
-                        barriers[ 0 ].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                        barriers[ 0 ].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                        barriers[ 0 ].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-                        barriers[ 0 ].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barriers[ 0 ].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barriers[ 0 ].image = msaa_color_image;   // 🚀 物理对齐：指向 8x 颜色图
-                        barriers[ 0 ].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                        barriers[ 0 ].subresourceRange.baseMipLevel = 0;
-                        barriers[ 0 ].subresourceRange.levelCount = 1;
-                        barriers[ 0 ].subresourceRange.baseArrayLayer = 0;
-                        barriers[ 0 ].subresourceRange.layerCount = 1;
-                        barriers[ 0 ].srcAccessMask = 0;
-                        barriers[ 0 ].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-                        // 2. 过渡 8x MSAA 深度附件 (msaa_depth_image)
-                        barriers[ 1 ].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                        barriers[ 1 ].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                        barriers[ 1 ].newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                        barriers[ 1 ].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barriers[ 1 ].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barriers[ 1 ].image = msaa_depth_image;   // 🚀 物理对齐：指向 8x 深度图
-                        barriers[ 1 ].subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-                        barriers[ 1 ].subresourceRange.baseMipLevel = 0;
-                        barriers[ 1 ].subresourceRange.levelCount = 1;
-                        barriers[ 1 ].subresourceRange.baseArrayLayer = 0;
-                        barriers[ 1 ].subresourceRange.layerCount = 1;
-                        barriers[ 1 ].srcAccessMask = 0;
-                        barriers[ 1 ].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-                        // 3. 过渡 1x 解析目标 (target_frame.image)
-                        barriers[ 2 ].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-                        barriers[ 2 ].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                        barriers[ 2 ].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-                        barriers[ 2 ].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barriers[ 2 ].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-                        barriers[ 2 ].image = target_frame.image;   // 🚀 物理对齐：指向 1x 目标图
-                        barriers[ 2 ].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-                        barriers[ 2 ].subresourceRange.baseMipLevel = 0;
-                        barriers[ 2 ].subresourceRange.levelCount = 1;
-                        barriers[ 2 ].subresourceRange.baseArrayLayer = 0;
-                        barriers[ 2 ].subresourceRange.layerCount = 1;
-                        barriers[ 2 ].srcAccessMask = 0;
-                        barriers[ 2 ].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-
-                        // 一键并行提交 3 个屏障，GPU 底层并行处理，零流水线气泡
-                        vkCmdPipelineBarrier (
-                            graphics, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-                            0, 0, nullptr, 0, nullptr, 3, barriers );
+                        transitionMSAAImages ( graphics, target_frame.image );
                         // 开始录制通道
                         vkCmdBeginRendering ( graphics, &renderingInfo );
 

@@ -12,6 +12,7 @@
 #include "../objects/dag/graph.hpp"
 using namespace StuCanvas;
 
+
 int main ()
 {
 
@@ -21,7 +22,13 @@ int main ()
         std::cout << "正在初始化 Vulkan 纯无头（Headless）管线...\n";
 
         VulkanQueue queue;
+
+
+
         int bbbbbbabbbbbbbbbbbbba;
+
+        AppearanceSimplePoint app{};
+
 
         // 分配 1080p 离屏渲染画布目标
         uint32_t slot = queue.createImage ( 2560, 1600 );
@@ -43,7 +50,7 @@ int main ()
         camera_ref.target[ 0 ] = 0.0;
         camera_ref.target[ 1 ] = 0.0;
         camera_ref.target[ 2 ] = 0.0;
-        
+
 
         camera_ref.up[ 0 ] = 0.0;
         camera_ref.up[ 1 ] = 1.0;
@@ -74,16 +81,18 @@ int main ()
         point_inst.world_position[ 1 ] = 0.0;
         point_inst.world_position[ 2 ] = 0.0;
 
+
         point_inst.world_rotation[ 0 ] = 0.0;
         point_inst.world_rotation[ 1 ] = 0.0;
         point_inst.world_rotation[ 2 ] = 0.0;
         point_inst.world_rotation[ 3 ] = 1.0;
 
+
         point_inst.world_scales[ 0 ] = 1.0;
         point_inst.world_scales[ 1 ] = 1.0;
         point_inst.world_scales[ 2 ] = 1.0;
 
-        point_inst.appearance = nullptr;   // 自动挂载默认外观
+        point_inst.appearance = &app;   // 自动挂载默认外观
 
         // 必须登记到 Object 自身维护的 instances 列表中 [1]
         point_obj.instances.push_back ( &point_inst );
